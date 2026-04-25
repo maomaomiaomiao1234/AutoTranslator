@@ -8,7 +8,7 @@ import signal
 import Quartz
 import objc
 
-# 动态添加项目根目录到 sys.path，以便导入 frontend 模块
+# 动态添加项目根目录到 sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
@@ -25,26 +25,51 @@ from ApplicationServices import (
 )
 
 from deep_translator import GoogleTranslator
-
-# 导入前端窗口组件
 from frontend.window import FloatingWindow
 
-TARGET_LANG = "zh-CN"
+# 常用语言映射 (名称 -> 代码)
+LANGUAGES = {
+    "自动检测": "auto",
+    "中文简体": "zh-CN",
+    "英语": "en",
+    "日语": "ja",
+    "韩语": "ko",
+    "法语": "fr",
+    "德语": "de",
+    "俄语": "ru"
+}
 
-
-# ---------------- 主逻辑 ----------------
 class AutoTranslator(NSObject):
     def init(self):
         self = objc.super(AutoTranslator, self).init()
         if self is None: return None
 
+        self.src_lang = "auto"
+        self.dest_lang = "zh-CN"
         self.last_text = ""
-        self.translator = GoogleTranslator(source="auto", target=TARGET_LANG)
+        
+        self.translator = GoogleTranslator(source=self.src_lang, target=self.dest_lang)
+        
         self.window = FloatingWindow.alloc().init()
+        self.window.delegate = self
+        self.window.set_languages(LANGUAGES, self.src_lang, self.dest_lang)
 
         self.last_copy_time = 0
         self.copy_interval = 0.4
         return self
+
+    @objc.python_method
+    def language_changed(self, src_name, dest_name):
+        self.src_lang = LANGUAGES.get(src_name, "auto")
+        self.dest_lang = LANGUAGES.get(dest_name, "zh-CN")
+        print(f"语言切换: {src_name}({self.src_lang}) -> {dest_name}({self.dest_lang})")
+        
+        # 更新翻译器
+        self.translator = GoogleTranslator(source=self.src_lang, target=self.dest_lang)
+        
+        # 如果当前有选中的文本，立即重新翻译
+        if self.last_text:
+            self.on_mouse_up(force=True)
 
     def start_mouse_monitor(self):
         def callback(proxy, type_, event, refcon):
@@ -66,14 +91,18 @@ class AutoTranslator(NSObject):
         Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), run_loop_source, Quartz.kCFRunLoopCommonModes)
         Quartz.CGEventTapEnable(self.event_tap, True)
 
-    def on_mouse_up(self):
+    def on_mouse_up(self, force=False):
         time.sleep(0.05)
         text = self.get_selected_text()
-        if not text or text == self.last_text:
+        
+        if not text:
+            return
+            
+        if not force and text == self.last_text:
             return
 
         self.last_text = text
-        self.window.show(text, None) # 显示加载状态
+        self.window.show(text, None)
 
         try:
             translated = self.translator.translate(text)
@@ -146,7 +175,7 @@ def main():
     t = AutoTranslator.alloc().init()
     t.start_mouse_monitor()
 
-    print("🚀 启动成功：模块化结构 (右键可固定)")
+    print("🚀 翻译器已启动：左上角固定，支持语言切换")
     app.run()
 
 
