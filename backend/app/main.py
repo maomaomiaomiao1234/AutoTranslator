@@ -71,6 +71,9 @@ class AutoTranslator(NSObject):
         #self = NSObject.init()
         if self is None:
             return None
+        self.last_copy_time = 0
+
+        self.copy_interval = 0.5 
 
         self.last_text = ""
         self.translator = GoogleTranslator(source="auto", target=TARGET_LANG)
@@ -133,6 +136,15 @@ class AutoTranslator(NSObject):
         return self.get_by_clipboard()
 
     def get_by_clipboard(self):
+        now = time.time()
+
+        # ❗ 节流：避免频繁 Cmd+C
+        print("时间间隔：",now - self.last_copy_time)
+        if now - self.last_copy_time < self.copy_interval:
+
+            return None
+
+        self.last_copy_time = now
         pb = NSPasteboard.generalPasteboard()
 
         old = pb.stringForType_("public.utf8-plain-text")
@@ -168,7 +180,7 @@ class AutoTranslator(NSObject):
 # ---------------- 入口 ----------------
 def main():
     if not AXIsProcessTrusted():
-        print("需要辅助功能权限")
+        print("需要辅助功能权限:请在「系统设置 > 隐私与安全性 > 辅助功能」中勾选你运行程序的终端（如 iTerm 或 Terminal)")
         sys.exit(1)
 
     app = NSApplication.sharedApplication()
