@@ -30,7 +30,7 @@ TARGET_LANG = "zh-CN"
 class FloatingWindow:
     def __init__(self):
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (320, 120)),
+            ((0, 0), (400, 200)),
             0,
             NSBackingStoreBuffered,
             False
@@ -38,23 +38,40 @@ class FloatingWindow:
 
         self.window.setLevel_(NSFloatingWindowLevel)
         self.window.setOpaque_(False)
-        self.window.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0, 0.85))
+        self.window.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0, 0.9))
         self.window.setHasShadow_(True)
+        self.window.setReleasedWhenClosed_(False)
 
-        self.label = NSTextField.alloc().initWithFrame_(((10, 10), (300, 100)))
+        # 文本容器
+        self.label = NSTextField.alloc().initWithFrame_(((15, 15), (370, 170)))
         self.label.setEditable_(False)
         self.label.setBordered_(False)
         self.label.setDrawsBackground_(False)
         self.label.setTextColor_(NSColor.whiteColor())
-        self.label.setFont_(NSFont.systemFontOfSize_(13))
-
+        self.label.setFont_(NSFont.systemFontOfSize_(14))
+        
         self.window.contentView().addSubview_(self.label)
 
     def show(self, text):
         self.label.setStringValue_(text)
-
+        
+        # 计算最适合文本的尺寸
+        max_width = 500
+        padding = 30
+        
+        # 获取文本渲染所需的大小
+        cell = self.label.cell()
+        rect = cell.cellSizeForBounds_(((0, 0), (max_width - padding, 1000)))
+        
+        new_width = max(240, min(max_width, rect.width + padding))
+        new_height = max(60, min(600, rect.height + padding))
+        
+        # 更新组件尺寸
+        self.label.setFrame_(((15, 15), (new_width - padding, new_height - padding)))
+        
+        # 定位窗口 (显示在鼠标右下方)
         loc = Quartz.NSEvent.mouseLocation()
-        self.window.setFrameTopLeftPoint_((loc.x + 10, loc.y - 10))
+        self.window.setFrame_display_(((loc.x + 10, loc.y - new_height - 10), (new_width, new_height)), True)
         self.window.makeKeyAndOrderFront_(None)
 
     def hide(self):
@@ -114,18 +131,25 @@ class AutoTranslator(NSObject):
         time.sleep(0.05)  # 等待选区稳定
 
         text = self.get_selected_text()
-        print(f"选区文本: '{text}'")
         if not text or text == self.last_text:
             return
 
         self.last_text = text
-        print("正在翻译...")
+        
+        # 显示加载状态，告知用户程序已响应
+        self.window.show("正在翻译...")
+
         try:
             translated = self.translator.translate(text)
-            display = f"{text[:60]}\n——\n{translated[:120]}"
-            self.window.show(display)
+            if translated:
+                # 移除硬截断，改为完整显示原文和译文
+                display = f"{text}\n\n───\n\n{translated}"
+                self.window.show(display)
+            else:
+                self.window.show("翻译结果为空")
         except Exception as e:
-            print("翻译失败:", e)
+            print(f"翻译异常: {e}")
+            self.window.show(f"翻译出错: {str(e)[:50]}")
 
     # ---------- 获取选区 ----------
     def get_selected_text(self):
