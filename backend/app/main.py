@@ -3,15 +3,15 @@
 import sys
 import time
 import signal
-import subprocess
 
 import Quartz
+import objc
+
 from Cocoa import NSObject, NSApplication, NSWorkspace
 from AppKit import (
     NSWindow, NSTextField, NSBackingStoreBuffered,
     NSFloatingWindowLevel, NSColor, NSFont, NSPasteboard
 )
-from Foundation import NSTimer
 from ApplicationServices import (
     AXUIElementCreateApplication,
     AXUIElementCopyAttributeValue,
@@ -24,40 +24,36 @@ from deep_translator import GoogleTranslator
 
 
 TARGET_LANG = "zh-CN"
-CHECK_INTERVAL = 0.6
 
 
-# ---------------- UI 窗口 ----------------
+# ---------------- 悬浮窗口 ----------------
 class FloatingWindow:
     def __init__(self):
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (320, 100)),
-            0,  # 无边框
+            ((0, 0), (320, 120)),
+            0,
             NSBackingStoreBuffered,
             False
         )
 
         self.window.setLevel_(NSFloatingWindowLevel)
         self.window.setOpaque_(False)
-        self.window.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0, 0.8))
+        self.window.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0, 0.85))
         self.window.setHasShadow_(True)
 
-        self.label = NSTextField.alloc().initWithFrame_(((10, 10), (300, 80)))
+        self.label = NSTextField.alloc().initWithFrame_(((10, 10), (300, 100)))
         self.label.setEditable_(False)
         self.label.setBordered_(False)
         self.label.setDrawsBackground_(False)
         self.label.setTextColor_(NSColor.whiteColor())
         self.label.setFont_(NSFont.systemFontOfSize_(13))
-        self.label.setLineBreakMode_(0)
 
         self.window.contentView().addSubview_(self.label)
 
     def show(self, text):
         self.label.setStringValue_(text)
 
-        # 获取鼠标位置
         loc = Quartz.NSEvent.mouseLocation()
-
         self.window.setFrameTopLeftPoint_((loc.x + 10, loc.y - 10))
         self.window.makeKeyAndOrderFront_(None)
 
@@ -68,31 +64,57 @@ class FloatingWindow:
 # ---------------- 主逻辑 ----------------
 class AutoTranslator(NSObject):
     def init(self):
-        #self = NSObject.init()
-        if self is None:
-            return None
-        self.last_copy_time = 0
-
-        self.copy_interval = 0.5 
-
         self.last_text = ""
         self.translator = GoogleTranslator(source="auto", target=TARGET_LANG)
         self.window = FloatingWindow()
-        self.active = True
+
+        # 防止频繁 Cmd+C
+        self.last_copy_time = 0
+        self.copy_interval = 0.4
+
+        # 切窗口冷却
+        self.last_app_pid = None
+        self.last_switch_time = 0
+        self.switch_cooldown = 0.5
         return self
 
-    def start(self):
-        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            CHECK_INTERVAL,
-            self,
-            "tick:",
-            None,
-            True
+    # ---------- 鼠标监听 ----------
+    def start_mouse_monitor(self):
+        def callback(proxy, type_, event, refcon):
+            if type_ == Quartz.kCGEventLeftMouseUp:
+                self.on_mouse_up()
+            return event
+
+        mask = Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseUp)
+
+        self.event_tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly,
+            mask,
+            callback,
+            None
         )
 
-    def tick_(self, _):
-        text = self.get_selected_text()
+        if not self.event_tap:
+            print("❌ 无法创建 EventTap（请开启输入监控权限）")
+            return
 
+        run_loop_source = Quartz.CFMachPortCreateRunLoopSource(None, self.event_tap, 0)
+        Quartz.CFRunLoopAddSource(
+            Quartz.CFRunLoopGetCurrent(),
+            run_loop_source,
+            Quartz.kCFRunLoopCommonModes
+        )
+
+        Quartz.CGEventTapEnable(self.event_tap, True)
+
+    # ---------- 鼠标松开 ----------
+    def on_mouse_up(self):
+        time.sleep(0.05)  # 等待选区稳定
+
+        text = self.get_selected_text()
+        print(f"选区文本: '{text}'")
         if not text or text == self.last_text:
             return
 
@@ -100,53 +122,77 @@ class AutoTranslator(NSObject):
 
         try:
             translated = self.translator.translate(text)
-            display = f"{text[:60]}\n——\n{translated[:100]}"
+            display = f"{text[:60]}\n——\n{translated[:120]}"
             self.window.show(display)
         except Exception as e:
             print("翻译失败:", e)
 
-    # -------- 核心：选区获取 --------
+    # ---------- 获取选区 ----------
     def get_selected_text(self):
+        front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+
+        if not front_app:
+            return None
+
+        print(f"前台应用: {front_app.localizedName()} (PID: {front_app.processIdentifier()})")
+
+        pid = front_app.processIdentifier()
+
+        #print(f"当前 PID: {pid}, 上次 PID: {self.last_app_pid}")
+
+        #now = time.time()
+
+        #if pid != self.last_app_pid:
+        #    self.last_app_pid = pid
+        #    self.last_switch_time = now
+        #    print("🔄 App 切换")
+
+        #print(f"尝试获取选区（冷却: {time.time() - self.last_switch_time:.2f}s）")
+
+        ## 冷却
+        #if now - self.last_switch_time < self.switch_cooldown:
+        #    return None
+
         # AX 尝试
         try:
-            front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-            if front_app:
-                pid = front_app.processIdentifier()
-                app_ref = AXUIElementCreateApplication(pid)
+            app_ref = AXUIElementCreateApplication(pid)
 
-                focused, err = AXUIElementCopyAttributeValue(
-                    app_ref,
-                    kAXFocusedUIElementAttribute,
+            focused, err = AXUIElementCopyAttributeValue(
+                app_ref,
+                kAXFocusedUIElementAttribute,
+                None
+            )
+
+            print(f"AX 获取焦点元素: {focused}, err={err}")
+
+            if err == 0 and focused:
+                selected, err = AXUIElementCopyAttributeValue(
+                    focused,
+                    kAXSelectedTextAttribute,
                     None
                 )
 
-                if err == 0 and focused:
-                    selected, err = AXUIElementCopyAttributeValue(
-                        focused,
-                        kAXSelectedTextAttribute,
-                        None
-                    )
+                if err == 0 and selected and selected.strip():
+                    return selected.strip()
+        except Exception as e:
+            import traceback
+            print(f"get_selected_text 异常: {e}")
+            traceback.print_exc()
+            return None
 
-                    if err == 0 and selected and selected.strip():
-                        return selected.strip()
-        except:
-            pass
-
-        # fallback：Cmd+C
+        # fallback
         return self.get_by_clipboard()
 
+    # ---------- 剪贴板 ----------
     def get_by_clipboard(self):
         now = time.time()
-
-        # ❗ 节流：避免频繁 Cmd+C
-        print("时间间隔：",now - self.last_copy_time)
+        print(f"尝试剪贴板获取（冷却: {now - self.last_copy_time:.2f}s）")
         if now - self.last_copy_time < self.copy_interval:
-
             return None
 
         self.last_copy_time = now
-        pb = NSPasteboard.generalPasteboard()
 
+        pb = NSPasteboard.generalPasteboard()
         old = pb.stringForType_("public.utf8-plain-text")
 
         pb.clearContents()
@@ -156,6 +202,8 @@ class AutoTranslator(NSObject):
 
         new = pb.stringForType_("public.utf8-plain-text")
 
+        print(f"剪贴板：'{new}' (之前: '{old}')")
+        # 恢复剪贴板
         if old:
             pb.clearContents()
             pb.setString_forType_(old, "public.utf8-plain-text")
@@ -165,6 +213,7 @@ class AutoTranslator(NSObject):
 
         return None
 
+    # ---------- 模拟 Cmd+C ----------
     def simulate_cmd_c(self):
         keycode = 8
 
@@ -180,7 +229,7 @@ class AutoTranslator(NSObject):
 # ---------------- 入口 ----------------
 def main():
     if not AXIsProcessTrusted():
-        print("需要辅助功能权限:请在「系统设置 > 隐私与安全性 > 辅助功能」中勾选你运行程序的终端（如 iTerm 或 Terminal)")
+        print("❌ 需要辅助功能权限")
         sys.exit(1)
 
     app = NSApplication.sharedApplication()
@@ -188,10 +237,12 @@ def main():
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    t = AutoTranslator()
-    t.start()
+    #t = AutoTranslator()
+    #t = AutoTranslator()配合__init__() VS init() 的区别：前者会调用__init__()，后者需要手动调用init()。由于我们重写了init()，所以需要使用后者并手动调用init()来正确初始化对象。
+    t = AutoTranslator.alloc().init()
+    t.start_mouse_monitor()
 
-    print("🚀 悬浮翻译已启动")
+    print("🚀 已启动：鼠标松开即翻译")
     app.run()
 
 
