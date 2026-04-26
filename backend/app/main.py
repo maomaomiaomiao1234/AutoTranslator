@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import signal
+import threading
 
 import Quartz
 import objc
@@ -56,6 +57,7 @@ class AutoTranslator(NSObject):
 
         self.last_copy_time = 0
         self.copy_interval = 0.4
+        self._translate_version = 0
         return self
 
     @objc.python_method
@@ -94,24 +96,42 @@ class AutoTranslator(NSObject):
     def on_mouse_up(self, force=False):
         time.sleep(0.05)
         text = self.get_selected_text()
-        
+
         if not text:
             return
-            
+
         if not force and text == self.last_text:
             return
 
         self.last_text = text
         self.window.show(text, None)
 
+        self._translate_version += 1
+        version = self._translate_version
+        threading.Thread(
+            target=self._do_translate,
+            args=(text, version),
+            daemon=True
+        ).start()
+
+    def _do_translate(self, text, version):
         try:
             translated = self.translator.translate(text)
             if translated:
-                self.window.show(text, translated)
+                result = (text, translated)
             else:
-                self.window.show(text, "翻译结果为空")
+                result = (text, "翻译结果为空")
         except Exception as e:
-            self.window.show(text, f"错误: {str(e)[:50]}")
+            result = (text, f"错误: {str(e)[:50]}")
+
+        if version == self._translate_version:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "showTranslationResult:", result, False
+            )
+
+    def showTranslationResult_(self, result):
+        text, translated = result
+        self.window.show(text, translated)
 
     def get_selected_text(self):
         front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
