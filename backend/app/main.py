@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 
+import logging
 import os
 import sys
 import time
 import signal
 import threading
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 import Quartz
 import objc
@@ -64,7 +71,7 @@ class AutoTranslator(NSObject):
     def language_changed(self, src_name, dest_name):
         self.src_lang = LANGUAGES.get(src_name, "auto")
         self.dest_lang = LANGUAGES.get(dest_name, "zh-CN")
-        print(f"语言切换: {src_name}({self.src_lang}) -> {dest_name}({self.dest_lang})")
+        logging.info("语言切换: %s(%s) -> %s(%s)", src_name, self.src_lang, dest_name, self.dest_lang)
         
         # 更新翻译器
         self.translator = GoogleTranslator(source=self.src_lang, target=self.dest_lang)
@@ -86,7 +93,7 @@ class AutoTranslator(NSObject):
         )
 
         if not self.event_tap:
-            print("❌ 无法创建 EventTap")
+            logging.error("无法创建 EventTap")
             return
 
         run_loop_source = Quartz.CFMachPortCreateRunLoopSource(None, self.event_tap, 0)
@@ -185,7 +192,7 @@ class AutoTranslator(NSObject):
 
 def main():
     if not AXIsProcessTrusted():
-        print("❌ 需要辅助功能权限")
+        logging.error("需要辅助功能权限")
         sys.exit(1)
 
     app = NSApplication.sharedApplication()
@@ -195,7 +202,7 @@ def main():
     t = AutoTranslator.alloc().init()
     t.start_mouse_monitor()
 
-    print("🚀 翻译器已启动：左上角固定，支持语言切换")
+    logging.info("翻译器已启动：左上角固定，支持语言切换")
     app.run()
 
 
