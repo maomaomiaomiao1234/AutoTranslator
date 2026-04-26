@@ -151,7 +151,8 @@ class AutoTranslator(NSObject):
                 selected, err = AXUIElementCopyAttributeValue(focused, kAXSelectedTextAttribute, None)
                 if err == 0 and selected and selected.strip():
                     return selected.strip()
-        except: pass
+        except Exception:
+            logging.debug("Accessibility API 获取选中文本失败，回退到剪贴板", exc_info=True)
         return self.get_by_clipboard()
 
     def get_by_clipboard(self):
@@ -182,11 +183,13 @@ class AutoTranslator(NSObject):
         return None
 
     def simulate_cmd_c(self):
-        keycode = 8
-        event_down = Quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+        event_down = Quartz.CGEventCreateKeyboardEvent(None, 8, True)
         Quartz.CGEventSetFlags(event_down, Quartz.kCGEventFlagMaskCommand)
-        event_up = Quartz.CGEventCreateKeyboardEvent(None, keycode, False)
+        Quartz.CGEventKeyboardSetUnicodeString(event_down, 1, "c")
+        event_up = Quartz.CGEventCreateKeyboardEvent(None, 8, False)
+        Quartz.CGEventKeyboardSetUnicodeString(event_up, 0, "")
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
+        time.sleep(0.01)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
 
 
