@@ -33,6 +33,7 @@ from ApplicationServices import (
 )
 
 from deep_translator import GoogleTranslator
+from backend.LLM_set import LLMTranslator
 from frontend.window import FloatingWindow
 
 # 常用语言映射 (名称 -> 代码)
@@ -55,9 +56,10 @@ class AutoTranslator(NSObject):
         self.src_lang = "auto"
         self.dest_lang = "zh-CN"
         self.last_text = ""
-        
-        self.translator = GoogleTranslator(source=self.src_lang, target=self.dest_lang)
-        
+
+        self.translator_backend = os.environ.get("TRANSLATOR_BACKEND", "google")
+        self.translator = self._create_translator()
+
         self.window = FloatingWindow.alloc().init()
         self.window.delegate = self
         self.window.set_languages(LANGUAGES, self.src_lang, self.dest_lang)
@@ -68,13 +70,21 @@ class AutoTranslator(NSObject):
         return self
 
     @objc.python_method
+    def _create_translator(self):
+        if self.translator_backend == "llm":
+            logging.info("使用大模型翻译 (LLM)")
+            return LLMTranslator(source=self.src_lang, target=self.dest_lang)
+        else:
+            logging.info("使用谷歌翻译 (Google)")
+            return GoogleTranslator(source=self.src_lang, target=self.dest_lang)
+
+    @objc.python_method
     def language_changed(self, src_name, dest_name):
         self.src_lang = LANGUAGES.get(src_name, "auto")
         self.dest_lang = LANGUAGES.get(dest_name, "zh-CN")
         logging.info("语言切换: %s(%s) -> %s(%s)", src_name, self.src_lang, dest_name, self.dest_lang)
         
-        # 更新翻译器
-        self.translator = GoogleTranslator(source=self.src_lang, target=self.dest_lang)
+        self.translator = self._create_translator()
         
         # 如果当前有选中的文本，立即重新翻译
         if self.last_text:
@@ -185,11 +195,8 @@ class AutoTranslator(NSObject):
     def simulate_cmd_c(self):
         event_down = Quartz.CGEventCreateKeyboardEvent(None, 8, True)
         Quartz.CGEventSetFlags(event_down, Quartz.kCGEventFlagMaskCommand)
-        Quartz.CGEventKeyboardSetUnicodeString(event_down, 1, "c")
         event_up = Quartz.CGEventCreateKeyboardEvent(None, 8, False)
-        Quartz.CGEventKeyboardSetUnicodeString(event_up, 0, "")
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
-        time.sleep(0.01)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
 
 
@@ -198,6 +205,18 @@ def main():
         logging.error("需要辅助功能权限")
         sys.exit(1)
 
+    backend = os.environ.get("TRANSLATOR_BACKEND", "google")
+    if backend == "llm":
+        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY")
+        if not api_key:
+            logging.error(
+                "大模型翻译需要 API Key。请设置环境变量：\n"
+                "  export DEEPSEEK_API_KEY=sk-xxx\n"
+                "或切换回谷歌翻译：\n"
+                "  unset TRANSLATOR_BACKEND"
+            )
+            sys.exit(1)
+
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(1)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -205,7 +224,8 @@ def main():
     t = AutoTranslator.alloc().init()
     t.start_mouse_monitor()
 
-    logging.info("翻译器已启动：左上角固定，支持语言切换")
+    backend_name = "大模型" if backend == "llm" else "谷歌翻译"
+    logging.info("翻译器已启动（%s），支持语言切换", backend_name)
     app.run()
 
 
