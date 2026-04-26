@@ -63,6 +63,7 @@ class AutoTranslator(NSObject):
         self.window = FloatingWindow.alloc().init()
         self.window.delegate = self
         self.window.set_languages(LANGUAGES, self.src_lang, self.dest_lang)
+        self.window.set_backend_label(self.translator_backend)
 
         self.last_copy_time = 0
         self.copy_interval = 0.4
@@ -72,11 +73,24 @@ class AutoTranslator(NSObject):
     @objc.python_method
     def _create_translator(self):
         if self.translator_backend == "llm":
-            logging.info("使用大模型翻译 (LLM)")
-            return LLMTranslator(source=self.src_lang, target=self.dest_lang)
-        else:
-            logging.info("使用谷歌翻译 (Google)")
-            return GoogleTranslator(source=self.src_lang, target=self.dest_lang)
+            try:
+                logging.info("使用大模型翻译 (LLM)")
+                return LLMTranslator(source=self.src_lang, target=self.dest_lang)
+            except ValueError:
+                logging.warning("大模型翻译初始化失败，回退到谷歌翻译")
+                self.translator_backend = "google"
+                self.window.set_backend_label("google")
+        logging.info("使用谷歌翻译 (Google)")
+        return GoogleTranslator(source=self.src_lang, target=self.dest_lang)
+
+    @objc.python_method
+    def toggle_translator(self):
+        self.translator_backend = "llm" if self.translator_backend == "google" else "google"
+        self.translator = self._create_translator()
+        logging.info("翻译后端切换为: %s", self.translator_backend)
+
+        if self.last_text:
+            self.on_mouse_up(force=True)
 
     @objc.python_method
     def language_changed(self, src_name, dest_name):
@@ -209,13 +223,9 @@ def main():
     if backend == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY")
         if not api_key:
-            logging.error(
-                "大模型翻译需要 API Key。请设置环境变量：\n"
-                "  export DEEPSEEK_API_KEY=sk-xxx\n"
-                "或切换回谷歌翻译：\n"
-                "  unset TRANSLATOR_BACKEND"
-            )
-            sys.exit(1)
+            logging.warning("未设置 API Key，回退到谷歌翻译。设置 DEEPSEEK_API_KEY 后可在窗口内切换。")
+            os.environ["TRANSLATOR_BACKEND"] = "google"
+            backend = "google"
 
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(1)

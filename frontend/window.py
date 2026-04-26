@@ -77,7 +77,7 @@ class FloatingWindow(NSObject):
         # 允许通过背景移动
         self.window.setMovableByWindowBackground_(True)
 
-        # 1. 左上角固定按钮
+        # 1. 左上角控制按钮
         self.pin_btn = NSButton.alloc().initWithFrame_(((10, 420), (30, 30)))
         self.pin_btn.setTitle_("📌")
         self.pin_btn.setBezelStyle_(NSBezelStyleRegularSquare)
@@ -87,11 +87,21 @@ class FloatingWindow(NSObject):
         self.pin_btn.setAlphaValue_(0.4)
         self.window.contentView().addSubview_(self.pin_btn)
 
+        self.backend_btn = NSButton.alloc().initWithFrame_(((45, 420), (30, 30)))
+        self.backend_btn.setTitle_("G")
+        self.backend_btn.setBezelStyle_(NSBezelStyleRegularSquare)
+        self.backend_btn.setBordered_(False)
+        self.backend_btn.setTarget_(self)
+        self.backend_btn.setAction_("onBackendToggle:")
+        self.backend_btn.setAlphaValue_(0.4)
+        self.window.contentView().addSubview_(self.backend_btn)
+
         # 2. 原文区域
         self.src_label = create_styled_label(font_size=14)
         self.window.contentView().addSubview_(self.src_label)
         
         self.src_copy_btn = NSButton.alloc().init()
+
         self.src_copy_btn.setTitle_("📋")
         self.src_copy_btn.setBezelStyle_(NSBezelStyleRegularSquare)
         self.src_copy_btn.setBordered_(False)
@@ -174,6 +184,14 @@ class FloatingWindow(NSObject):
         self.is_pinned = not self.is_pinned
         self.pin_btn.setAlphaValue_(1.0 if self.is_pinned else 0.4)
 
+    def onBackendToggle_(self, sender):
+        if self.delegate:
+            self.delegate.toggle_translator()
+
+    @objc.python_method
+    def set_backend_label(self, backend):
+        self.backend_btn.setTitle_("AI" if backend == "llm" else "G")
+
     def setup_menu(self):
         self.menu = NSMenu.alloc().initWithTitle_("Options")
         close_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("隐藏窗口", "hideWindow:", "")
@@ -228,6 +246,7 @@ class FloatingWindow(NSObject):
             self.window.setFrame_display_(((f.origin.x, top - total_height), (width, total_height)), True)
         
         self.pin_btn.setFrame_(((10, total_height - 35), (30, 30)))
+        self.backend_btn.setFrame_(((45, total_height - 35), (30, 30)))
         self.window.makeKeyAndOrderFront_(None)
 
     @objc.python_method
