@@ -2,179 +2,443 @@ import Quartz
 import objc
 from Cocoa import NSObject
 from AppKit import (
-    NSWindow, NSTextField, NSBackingStoreBuffered,
-    NSFloatingWindowLevel, NSColor, NSFont,
-    NSMenu, NSMenuItem, NSButton, NSPopUpButton,
-    NSImage, NSBezelStyleRegularSquare, NSNoBorder,
-    NSPanel, NSWindowStyleMaskNonactivatingPanel,
-    NSWindowStyleMaskTitled, NSWindowStyleMaskFullSizeContentView,
-    NSWindowTitleHidden, NSEvent, NSEventMaskKeyDown, NSPointInRect,
-    NSWindowStyleMaskBorderless
+    NSBackingStoreBuffered,
+    NSBezelStyleRegularSquare,
+    NSButton,
+    NSColor,
+    NSEvent,
+    NSEventMaskKeyDown,
+    NSFloatingWindowLevel,
+    NSFont,
+    NSImage,
+    NSImageScaleProportionallyUpOrDown,
+    NSImageSymbolConfiguration,
+    NSLineBreakByWordWrapping,
+    NSMenu,
+    NSMenuItem,
+    NSPanel,
+    NSPasteboard,
+    NSPointInRect,
+    NSPopUpButton,
+    NSTextAlignmentCenter,
+    NSTextField,
+    NSView,
+    NSWindowStyleMaskBorderless,
+    NSWindowStyleMaskNonactivatingPanel,
 )
 
-def create_styled_label(font_size=13, color=NSColor.blackColor()):
+
+WINDOW_WIDTH = 540
+WINDOW_MIN_HEIGHT = 348
+OUTER_PADDING = 16
+SECTION_GAP = 12
+TOOLBAR_BUTTON_SIZE = 30
+CARD_RADIUS = 18
+
+
+def rgb(r, g, b, a=1.0):
+    return NSColor.colorWithCalibratedRed_green_blue_alpha_(
+        r / 255.0, g / 255.0, b / 255.0, a
+    )
+
+
+WINDOW_BG = rgb(247, 247, 249)
+CARD_BG = rgb(240, 241, 244)
+CARD_BG_ALT = rgb(235, 236, 240)
+SURFACE_BG = rgb(255, 255, 255, 0.92)
+TEXT_PRIMARY = rgb(40, 42, 48)
+TEXT_SECONDARY = rgb(116, 121, 130)
+TEXT_MUTED = rgb(147, 151, 160)
+BLUE_ACCENT = rgb(51, 109, 245)
+PURPLE_ACCENT = rgb(110, 83, 244)
+CHIP_BG = rgb(228, 236, 255)
+
+
+def style_surface(view, background, radius, border=None):
+    view.setWantsLayer_(True)
+    layer = view.layer()
+    layer.setCornerRadius_(radius)
+    layer.setMasksToBounds_(True)
+    layer.setBackgroundColor_(background.CGColor())
+    if border is not None:
+        layer.setBorderWidth_(1.0)
+        layer.setBorderColor_(border.CGColor())
+
+
+def create_label(font_size, color=TEXT_PRIMARY, bold=False, selectable=False, wraps=True):
     label = NSTextField.alloc().init()
     label.setEditable_(False)
+    label.setSelectable_(selectable)
     label.setBordered_(False)
-    label.setDrawsBackground_(True)
-    label.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.96, 1.0))
+    label.setBezeled_(False)
+    label.setDrawsBackground_(False)
     label.setTextColor_(color)
-    label.setFont_(NSFont.systemFontOfSize_(14))
-    label.setWantsLayer_(True)
-    label.layer().setCornerRadius_(8.0)
-    label.layer().setMasksToBounds_(True)
+    label.setFont_(
+        NSFont.boldSystemFontOfSize_(font_size)
+        if bold
+        else NSFont.systemFontOfSize_(font_size)
+    )
+    label.cell().setWraps_(wraps)
+    label.cell().setScrollable_(False)
+    label.cell().setLineBreakMode_(NSLineBreakByWordWrapping)
+    label.cell().setUsesSingleLineMode_(not wraps)
     return label
 
-# ---------------- 自定义窗口类 ----------------
+
+def create_pill_label(font_size=13, color=TEXT_SECONDARY, background=CHIP_BG):
+    label = create_label(font_size, color=color, bold=True, selectable=False, wraps=False)
+    label.setAlignment_(NSTextAlignmentCenter)
+    style_surface(label, background, 15)
+    return label
+
+
+def apply_symbol(button, symbol_name, fallback, point_size=16, tint=TEXT_SECONDARY):
+    image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
+    if image is not None:
+        config = NSImageSymbolConfiguration.configurationWithPointSize_weight_(
+            point_size, 0.25
+        )
+        image = image.imageWithSymbolConfiguration_(config)
+        button.setImage_(image)
+        button.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+        button.setTitle_("")
+        button.setContentTintColor_(tint)
+    else:
+        button.setImage_(None)
+        button.setTitle_(fallback)
+        button.setFont_(NSFont.systemFontOfSize_(point_size))
+
+
+def create_icon_button(
+    symbol_name,
+    fallback,
+    point_size=16,
+    tint=TEXT_SECONDARY,
+    background=SURFACE_BG,
+):
+    button = NSButton.alloc().init()
+    button.setBordered_(False)
+    button.setBezelStyle_(NSBezelStyleRegularSquare)
+    style_surface(button, background, TOOLBAR_BUTTON_SIZE / 2)
+    apply_symbol(button, symbol_name, fallback, point_size=point_size, tint=tint)
+    return button
+
+
+def measure_text_height(text, width, font_size, bold=False, minimum=0):
+    probe = create_label(font_size, bold=bold, wraps=True)
+    probe.setStringValue_(text or "")
+    size = probe.cell().cellSizeForBounds_(((0, 0), (width, 10000)))
+    return max(minimum, int(size.height) + 2)
+
+
+def measure_text_width(text, font_size, bold=False):
+    probe = create_label(font_size, bold=bold, wraps=False)
+    probe.setStringValue_(text or "")
+    return int(probe.cell().cellSize().width)
+
+
 class BorderlessWindow(NSPanel):
     def canBecomeKeyWindow(self):
         return True
-    
+
     def canBecomeMainWindow(self):
         return True
 
-    # 关键：告知系统此窗口在第一次点击时即激活交互，不触发报警
     def acceptsFirstMouse_(self, event):
         return True
 
-    # 处理鼠标按下，用于拖拽
     def mouseDown_(self, event):
-        # 记录起始位置并允许拖拽
         self.performWindowDragWithEvent_(event)
-        
-    # 处理键盘等其他未捕获事件，防止冒泡到系统产生 beep
+
     def keyDown_(self, event):
-        # 如果是 Esc，由我们的 monitor 处理；其他按键在这里吞掉
         if event.keyCode() == 53:
-            pass # 允许传递
+            pass
         else:
-            return # 吞掉，防止报警音
+            return
+
 
 class FloatingWindow(NSObject):
     def init(self):
         self = objc.super(FloatingWindow, self).init()
-        if self is None: return None
+        if self is None:
+            return None
 
-        # 尝试回归 Borderless 模式，但配合 Panel 属性
         style_mask = (
-            NSWindowStyleMaskBorderless | 
-            NSWindowStyleMaskNonactivatingPanel
+            NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
         )
-        
         self.window = BorderlessWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((0, 0), (380, 450)),
+            ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT)),
             style_mask,
             NSBackingStoreBuffered,
-            False
+            False,
         )
 
         self.window.setLevel_(NSFloatingWindowLevel)
-        self.window.setOpaque_(True)
-        self.window.setBackgroundColor_(NSColor.whiteColor())
+        self.window.setOpaque_(False)
+        self.window.setBackgroundColor_(NSColor.clearColor())
         self.window.setHasShadow_(True)
         self.window.setReleasedWhenClosed_(False)
-        
-        # 允许通过背景移动
         self.window.setMovableByWindowBackground_(True)
 
-        # 1. 左上角控制按钮
-        self.pin_btn = NSButton.alloc().initWithFrame_(((10, 420), (30, 30)))
-        self.pin_btn.setTitle_("📌")
-        self.pin_btn.setBezelStyle_(NSBezelStyleRegularSquare)
-        self.pin_btn.setBordered_(False)
-        self.pin_btn.setTarget_(self)
-        self.pin_btn.setAction_("togglePin:")
-        self.pin_btn.setAlphaValue_(0.4)
-        self.window.contentView().addSubview_(self.pin_btn)
+        self.root_view = NSView.alloc().initWithFrame_(
+            ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT))
+        )
+        style_surface(self.root_view, WINDOW_BG, 24)
+        self.window.setContentView_(self.root_view)
 
-        self.backend_btn = NSButton.alloc().initWithFrame_(((45, 420), (30, 30)))
-        self.backend_btn.setTitle_("G")
-        self.backend_btn.setBezelStyle_(NSBezelStyleRegularSquare)
-        self.backend_btn.setBordered_(False)
-        self.backend_btn.setTarget_(self)
-        self.backend_btn.setAction_("onBackendToggle:")
-        self.backend_btn.setAlphaValue_(0.4)
-        self.window.contentView().addSubview_(self.backend_btn)
-
-        # 2. 原文区域
-        self.src_label = create_styled_label(font_size=14)
-        self.window.contentView().addSubview_(self.src_label)
-        
-        self.src_copy_btn = NSButton.alloc().init()
-
-        self.src_copy_btn.setTitle_("📋")
-        self.src_copy_btn.setBezelStyle_(NSBezelStyleRegularSquare)
-        self.src_copy_btn.setBordered_(False)
-        self.window.contentView().addSubview_(self.src_copy_btn)
-
-        # 3. 中间语言切换条
-        from AppKit import NSView
-        self.lang_bar = NSView.alloc().init()
-        self.lang_bar.setWantsLayer_(True)
-        self.lang_bar.layer().setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.96, 1.0).CGColor())
-        self.lang_bar.layer().setCornerRadius_(8.0)
-        self.window.contentView().addSubview_(self.lang_bar)
-
-        self.src_lang_pop = NSPopUpButton.alloc().init()
-        self.src_lang_pop.setBordered_(False)
-        self.lang_bar.addSubview_(self.src_lang_pop)
-
-        self.swap_btn = NSButton.alloc().init()
-        self.swap_btn.setTitle_("⇄")
-        self.swap_btn.setBezelStyle_(NSBezelStyleRegularSquare)
-        self.swap_btn.setBordered_(False)
-        self.lang_bar.addSubview_(self.swap_btn)
-
-        self.dest_lang_pop = NSPopUpButton.alloc().init()
-        self.dest_lang_pop.setBordered_(False)
-        self.lang_bar.addSubview_(self.dest_lang_pop)
-
-        # 4. 译文区域
-        self.dest_label = create_styled_label(font_size=15, color=NSColor.blackColor())
-        self.window.contentView().addSubview_(self.dest_label)
-        
-        self.dest_copy_btn = NSButton.alloc().init()
-        self.dest_copy_btn.setTitle_("📋")
-        self.dest_copy_btn.setBezelStyle_(NSBezelStyleRegularSquare)
-        self.dest_copy_btn.setBordered_(False)
-        self.window.contentView().addSubview_(self.dest_copy_btn)
-
+        self.current_source_text = ""
+        self.current_dest_text = ""
+        self.backend = "google"
         self.is_pinned = False
+        self.delegate = None
+
+        self.build_toolbar()
+        self.build_source_card()
+        self.build_language_bar()
+        self.build_dest_card()
         self.setup_menu()
         self.setup_key_monitor()
-        self.delegate = None
-        
+        self.refresh_pin_style()
+        self.refresh_action_state()
+        self.set_backend_label("google")
+
         return self
+
+    @objc.python_method
+    def build_toolbar(self):
+        self.pin_btn = create_icon_button(
+            "pin.fill", "📌", point_size=15, tint=TEXT_SECONDARY
+        )
+        self.pin_btn.setTarget_(self)
+        self.pin_btn.setAction_("togglePin:")
+        self.root_view.addSubview_(self.pin_btn)
+
+        self.quick_source_copy_btn = create_icon_button(
+            "scissors", "✂", point_size=15, tint=TEXT_SECONDARY
+        )
+        self.quick_source_copy_btn.setTarget_(self)
+        self.quick_source_copy_btn.setAction_("copySource:")
+        self.root_view.addSubview_(self.quick_source_copy_btn)
+
+        self.quick_dest_copy_btn = create_icon_button(
+            "doc.on.doc", "⧉", point_size=15, tint=TEXT_SECONDARY
+        )
+        self.quick_dest_copy_btn.setTarget_(self)
+        self.quick_dest_copy_btn.setAction_("copyDest:")
+        self.root_view.addSubview_(self.quick_dest_copy_btn)
+
+        self.backend_btn = create_icon_button(
+            "switch.2", "⇆", point_size=15, tint=TEXT_SECONDARY
+        )
+        self.backend_btn.setTarget_(self)
+        self.backend_btn.setAction_("onBackendToggle:")
+        self.root_view.addSubview_(self.backend_btn)
+
+        self.hide_btn = create_icon_button(
+            "xmark", "✕", point_size=15, tint=TEXT_SECONDARY
+        )
+        self.hide_btn.setTarget_(self)
+        self.hide_btn.setAction_("hideWindow:")
+        self.root_view.addSubview_(self.hide_btn)
+
+    @objc.python_method
+    def build_source_card(self):
+        self.src_card = NSView.alloc().init()
+        style_surface(self.src_card, CARD_BG, CARD_RADIUS)
+        self.root_view.addSubview_(self.src_card)
+
+        self.src_label = create_label(
+            17, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
+        )
+        self.src_card.addSubview_(self.src_label)
+
+        self.src_audio_btn = create_icon_button(
+            "speaker.wave.2", "🔊", point_size=14, tint=TEXT_MUTED, background=SURFACE_BG
+        )
+        self.src_audio_btn.setEnabled_(False)
+        self.src_audio_btn.setAlphaValue_(0.45)
+        self.src_card.addSubview_(self.src_audio_btn)
+
+        self.src_copy_btn = create_icon_button(
+            "doc.on.doc", "⧉", point_size=14, tint=TEXT_PRIMARY, background=SURFACE_BG
+        )
+        self.src_copy_btn.setTarget_(self)
+        self.src_copy_btn.setAction_("copySource:")
+        self.src_card.addSubview_(self.src_copy_btn)
+
+        self.src_lang_chip = create_pill_label()
+        self.src_card.addSubview_(self.src_lang_chip)
+
+    @objc.python_method
+    def build_language_bar(self):
+        self.lang_bar = NSView.alloc().init()
+        style_surface(self.lang_bar, CARD_BG_ALT, CARD_RADIUS)
+        self.root_view.addSubview_(self.lang_bar)
+
+        self.src_lang_pop = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            ((0, 0), (100, 30)), False
+        )
+        self.configure_popup(self.src_lang_pop)
+        self.src_lang_pop.setTarget_(self)
+        self.src_lang_pop.setAction_("onLangChange:")
+        self.lang_bar.addSubview_(self.src_lang_pop)
+
+        self.swap_btn = create_icon_button(
+            "arrow.left.arrow.right", "⇄", point_size=15, tint=TEXT_PRIMARY
+        )
+        self.swap_btn.setTarget_(self)
+        self.swap_btn.setAction_("swapLanguages:")
+        self.lang_bar.addSubview_(self.swap_btn)
+
+        self.dest_lang_pop = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            ((0, 0), (100, 30)), False
+        )
+        self.configure_popup(self.dest_lang_pop)
+        self.dest_lang_pop.setTarget_(self)
+        self.dest_lang_pop.setAction_("onLangChange:")
+        self.lang_bar.addSubview_(self.dest_lang_pop)
+
+    @objc.python_method
+    def build_dest_card(self):
+        self.dest_card = NSView.alloc().init()
+        style_surface(self.dest_card, CARD_BG, CARD_RADIUS)
+        self.root_view.addSubview_(self.dest_card)
+
+        self.backend_badge = NSView.alloc().init()
+        style_surface(self.backend_badge, BLUE_ACCENT, 10)
+        self.dest_card.addSubview_(self.backend_badge)
+
+        self.backend_badge_label = create_label(
+            12, color=NSColor.whiteColor(), bold=True, selectable=False, wraps=False
+        )
+        self.backend_badge_label.setAlignment_(NSTextAlignmentCenter)
+        self.backend_badge.addSubview_(self.backend_badge_label)
+
+        self.backend_name_label = create_label(
+            14, color=TEXT_SECONDARY, bold=True, selectable=False, wraps=False
+        )
+        self.dest_card.addSubview_(self.backend_name_label)
+
+        self.backend_toggle_btn = create_icon_button(
+            "chevron.down", "⌄", point_size=11, tint=TEXT_SECONDARY, background=SURFACE_BG
+        )
+        self.backend_toggle_btn.setTarget_(self)
+        self.backend_toggle_btn.setAction_("onBackendToggle:")
+        self.dest_card.addSubview_(self.backend_toggle_btn)
+
+        self.dest_label = create_label(
+            17, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
+        )
+        self.dest_card.addSubview_(self.dest_label)
+
+        self.dest_copy_btn = create_icon_button(
+            "doc.on.doc", "⧉", point_size=14, tint=TEXT_PRIMARY, background=SURFACE_BG
+        )
+        self.dest_copy_btn.setTarget_(self)
+        self.dest_copy_btn.setAction_("copyDest:")
+        self.dest_card.addSubview_(self.dest_copy_btn)
+
+        self.dest_refresh_btn = create_icon_button(
+            "arrow.clockwise", "↻", point_size=14, tint=TEXT_PRIMARY, background=SURFACE_BG
+        )
+        self.dest_refresh_btn.setTarget_(self)
+        self.dest_refresh_btn.setAction_("refreshTranslation:")
+        self.dest_card.addSubview_(self.dest_refresh_btn)
+
+    @objc.python_method
+    def configure_popup(self, popup):
+        popup.setBordered_(False)
+        popup.setFont_(NSFont.boldSystemFontOfSize_(16))
+        popup.setContentTintColor_(TEXT_PRIMARY)
+        popup.setWantsLayer_(True)
+        popup.layer().setBackgroundColor_(NSColor.clearColor().CGColor())
 
     @objc.python_method
     def setup_key_monitor(self):
         def handle_event(event):
-            if event.keyCode() == 53: # ESC
+            if event.keyCode() == 53:
                 if self.window.isVisible():
                     mouse_loc = NSEvent.mouseLocation()
                     if NSPointInRect(mouse_loc, self.window.frame()):
                         self.hide()
-                        return None # 吞掉事件，防止系统 beep
+                        return None
             return event
-        NSEvent.addLocalMonitorForEventsMatchingMask_handler_(NSEventMaskKeyDown, handle_event)
-        NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSEventMaskKeyDown, handle_event)
+
+        NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, handle_event
+        )
+        NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            NSEventMaskKeyDown, handle_event
+        )
+
+    @objc.python_method
+    def setup_menu(self):
+        self.menu = NSMenu.alloc().initWithTitle_("Options")
+        close_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "隐藏窗口", "hideWindow:", ""
+        )
+        close_item.setTarget_(self)
+        self.menu.addItem_(close_item)
+        self.root_view.setMenu_(self.menu)
+
+    @objc.python_method
+    def set_button_enabled(self, button, enabled):
+        button.setEnabled_(enabled)
+        button.setAlphaValue_(1.0 if enabled else 0.4)
+
+    @objc.python_method
+    def refresh_pin_style(self):
+        accent = BLUE_ACCENT if self.is_pinned else TEXT_SECONDARY
+        background = rgb(232, 239, 255) if self.is_pinned else SURFACE_BG
+        style_surface(self.pin_btn, background, TOOLBAR_BUTTON_SIZE / 2)
+        apply_symbol(self.pin_btn, "pin.fill", "📌", point_size=15, tint=accent)
+
+    @objc.python_method
+    def refresh_action_state(self):
+        has_source = bool(self.current_source_text)
+        has_dest = bool(self.current_dest_text)
+        self.set_button_enabled(self.quick_source_copy_btn, has_source)
+        self.set_button_enabled(self.src_copy_btn, has_source)
+        self.set_button_enabled(self.quick_dest_copy_btn, has_dest)
+        self.set_button_enabled(self.dest_copy_btn, has_dest)
+        self.set_button_enabled(self.dest_refresh_btn, has_source)
+
+    @objc.python_method
+    def refresh_language_ui(self):
+        src_title = self.src_lang_pop.titleOfSelectedItem() or "自动检测"
+        if src_title == "自动检测":
+            badge = "自动检测"
+            can_swap = False
+        else:
+            badge = f"源语言 {src_title}"
+            can_swap = True
+        self.src_lang_chip.setStringValue_(badge)
+        self.set_button_enabled(self.swap_btn, can_swap)
 
     @objc.python_method
     def set_languages(self, languages, source, target):
         self.src_lang_pop.removeAllItems()
         self.dest_lang_pop.removeAllItems()
-        langs = sorted(languages.keys())
-        self.src_lang_pop.addItemsWithTitles_(langs)
-        self.dest_lang_pop.addItemsWithTitles_(langs)
+
+        source_titles = list(languages.keys())
+        target_titles = [name for name, code in languages.items() if code != "auto"]
+
+        self.src_lang_pop.addItemsWithTitles_(source_titles)
+        self.dest_lang_pop.addItemsWithTitles_(target_titles)
+
         for name, code in languages.items():
-            if code == source: self.src_lang_pop.selectItemWithTitle_(name)
-            if code == target: self.dest_lang_pop.selectItemWithTitle_(name)
-        self.src_lang_pop.setTarget_(self)
-        self.src_lang_pop.setAction_("onLangChange:")
-        self.dest_lang_pop.setTarget_(self)
-        self.dest_lang_pop.setAction_("onLangChange:")
+            if code == source:
+                self.src_lang_pop.selectItemWithTitle_(name)
+            if code == target and code != "auto":
+                self.dest_lang_pop.selectItemWithTitle_(name)
+
+        if self.dest_lang_pop.indexOfSelectedItem() < 0 and target_titles:
+            self.dest_lang_pop.selectItemWithTitle_(target_titles[0])
+
+        self.refresh_language_ui()
 
     def onLangChange_(self, sender):
+        self.refresh_language_ui()
         if self.delegate:
             src_name = self.src_lang_pop.titleOfSelectedItem()
             dest_name = self.dest_lang_pop.titleOfSelectedItem()
@@ -182,71 +446,181 @@ class FloatingWindow(NSObject):
 
     def togglePin_(self, sender):
         self.is_pinned = not self.is_pinned
-        self.pin_btn.setAlphaValue_(1.0 if self.is_pinned else 0.4)
+        self.refresh_pin_style()
 
     def onBackendToggle_(self, sender):
         if self.delegate:
             self.delegate.toggle_translator()
 
-    @objc.python_method
-    def set_backend_label(self, backend):
-        self.backend_btn.setTitle_("AI" if backend == "llm" else "G")
+    def swapLanguages_(self, sender):
+        if self.delegate:
+            self.delegate.swap_languages()
 
-    def setup_menu(self):
-        self.menu = NSMenu.alloc().initWithTitle_("Options")
-        close_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("隐藏窗口", "hideWindow:", "")
-        close_item.setTarget_(self)
-        self.menu.addItem_(close_item)
-        self.window.contentView().setMenu_(self.menu)
+    def refreshTranslation_(self, sender):
+        if self.delegate:
+            self.delegate.retranslate_current()
+
+    def copySource_(self, sender):
+        self.copy_text(self.current_source_text)
+
+    def copyDest_(self, sender):
+        self.copy_text(self.current_dest_text)
 
     def hideWindow_(self, sender):
         self.hide()
 
     @objc.python_method
+    def copy_text(self, text):
+        if not text:
+            return
+        pasteboard = NSPasteboard.generalPasteboard()
+        pasteboard.clearContents()
+        pasteboard.declareTypes_owner_(["public.utf8-plain-text"], None)
+        pasteboard.setString_forType_(text, "public.utf8-plain-text")
+
+    @objc.python_method
+    def set_backend_label(self, backend):
+        self.backend = backend
+        if backend == "llm":
+            accent = PURPLE_ACCENT
+            badge_text = "AI"
+            backend_name = "大模型翻译"
+        else:
+            accent = BLUE_ACCENT
+            badge_text = "G"
+            backend_name = "Google 翻译"
+
+        style_surface(self.backend_badge, accent, 10)
+        self.backend_badge_label.setStringValue_(badge_text)
+        self.backend_name_label.setStringValue_(backend_name)
+        style_surface(
+            self.backend_btn,
+            rgb(
+                int((accent.redComponent() * 255 + 255) / 2),
+                int((accent.greenComponent() * 255 + 255) / 2),
+                int((accent.blueComponent() * 255 + 255) / 2),
+                0.95,
+            ),
+            TOOLBAR_BUTTON_SIZE / 2,
+        )
+        apply_symbol(
+            self.backend_btn,
+            "switch.2",
+            "⇆",
+            point_size=15,
+            tint=accent,
+        )
+
+    @objc.python_method
+    def layout_window(self):
+        content_width = WINDOW_WIDTH - (OUTER_PADDING * 2)
+        card_inner_width = content_width - 36
+
+        src_text_height = measure_text_height(
+            self.current_source_text or " ", card_inner_width, 17, minimum=62
+        )
+        dest_display_text = self.current_dest_text or "正在翻译..."
+        dest_text_height = measure_text_height(
+            dest_display_text, card_inner_width, 17, minimum=52
+        )
+
+        src_card_height = max(136, src_text_height + 56)
+        lang_bar_height = 46
+        dest_card_height = max(150, dest_text_height + 92)
+        total_height = max(
+            WINDOW_MIN_HEIGHT,
+            int(
+                OUTER_PADDING
+                + TOOLBAR_BUTTON_SIZE
+                + SECTION_GAP
+                + src_card_height
+                + SECTION_GAP
+                + lang_bar_height
+                + SECTION_GAP
+                + dest_card_height
+                + OUTER_PADDING
+            ),
+        )
+
+        self.root_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
+        style_surface(self.root_view, WINDOW_BG, 24)
+
+        toolbar_y = total_height - OUTER_PADDING - TOOLBAR_BUTTON_SIZE
+        self.pin_btn.setFrame_(
+            ((OUTER_PADDING, toolbar_y), (TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE))
+        )
+
+        right_x = WINDOW_WIDTH - OUTER_PADDING - TOOLBAR_BUTTON_SIZE
+        for button in (
+            self.hide_btn,
+            self.backend_btn,
+            self.quick_dest_copy_btn,
+            self.quick_source_copy_btn,
+        ):
+            button.setFrame_(((right_x, toolbar_y), (TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE)))
+            right_x -= TOOLBAR_BUTTON_SIZE + 6
+
+        src_y = toolbar_y - SECTION_GAP - src_card_height
+        self.src_card.setFrame_(((OUTER_PADDING, src_y), (content_width, src_card_height)))
+        self.src_label.setFrame_(((16, 44), (card_inner_width, src_text_height)))
+        self.src_audio_btn.setFrame_(((16, 12), (28, 28)))
+        self.src_copy_btn.setFrame_(((50, 12), (28, 28)))
+
+        chip_text = self.src_lang_chip.stringValue() or "自动检测"
+        chip_width = min(max(measure_text_width(chip_text, 13, bold=True) + 22, 88), 164)
+        self.src_lang_chip.setFrame_(((88, 14), (chip_width, 24)))
+
+        lang_y = src_y - SECTION_GAP - lang_bar_height
+        self.lang_bar.setFrame_(((OUTER_PADDING, lang_y), (content_width, lang_bar_height)))
+        popup_width = (content_width - 74) / 2
+        self.src_lang_pop.setFrame_(((16, 8), (popup_width, 30)))
+        self.swap_btn.setFrame_((((content_width - 30) / 2, 8), (30, 30)))
+        self.dest_lang_pop.setFrame_(((content_width - 16 - popup_width, 8), (popup_width, 30)))
+
+        dest_y = lang_y - SECTION_GAP - dest_card_height
+        self.dest_card.setFrame_(((OUTER_PADDING, dest_y), (content_width, dest_card_height)))
+
+        dest_text_y = 46
+        provider_y = dest_text_y + dest_text_height + 12
+        self.backend_badge.setFrame_(((16, provider_y), (28, 28)))
+        self.backend_badge_label.setFrame_(((0, 4), (28, 18)))
+        self.backend_name_label.setFrame_(((54, provider_y + 4), (content_width - 110, 20)))
+        self.backend_toggle_btn.setFrame_(((content_width - 16 - 24, provider_y + 2), (24, 24)))
+        self.dest_label.setFrame_(((16, dest_text_y), (card_inner_width, dest_text_height)))
+        self.dest_copy_btn.setFrame_(((16, 12), (28, 28)))
+        self.dest_refresh_btn.setFrame_(((50, 12), (28, 28)))
+
+    @objc.python_method
     def show(self, src_text, dest_text=None):
-        self.src_label.setStringValue_(src_text)
-        self.dest_label.setStringValue_(dest_text if dest_text else "正在翻译...")
+        self.current_source_text = src_text or ""
+        self.current_dest_text = dest_text or ""
 
-        padding = 15
-        spacing = 10
-        width = 380
-        inner_width = width - (padding * 2)
+        self.src_label.setStringValue_(self.current_source_text)
+        if dest_text:
+            self.dest_label.setStringValue_(dest_text)
+            self.dest_label.setTextColor_(TEXT_PRIMARY)
+        else:
+            self.dest_label.setStringValue_("正在翻译...")
+            self.dest_label.setTextColor_(TEXT_MUTED)
 
-        def get_height(text, w, font_size):
-            tmp = NSTextField.alloc().init()
-            tmp.setFont_(NSFont.systemFontOfSize_(font_size))
-            tmp.setStringValue_(text)
-            cell = tmp.cell()
-            rect = cell.cellSizeForBounds_(((0, 0), (w - 20, 2000)))
-            return max(60, rect.height + 30)
-
-        h1 = get_height(src_text, inner_width, 14)
-        h_bar = 40
-        h2 = get_height(dest_text if dest_text else "正在翻译...", inner_width, 15)
-        total_height = h1 + h_bar + h2 + (spacing * 2) + (padding * 2) + 15
-
-        y = padding
-        self.dest_label.setFrame_(((padding, y), (inner_width, h2)))
-        self.dest_copy_btn.setFrame_(((padding + 5, y + 5), (25, 25)))
-        y += h2 + spacing
-        self.lang_bar.setFrame_(((padding, y), (inner_width, h_bar)))
-        self.src_lang_pop.setFrame_(((10, 5), (130, 30)))
-        self.swap_btn.setFrame_(((inner_width/2 - 15, 5), (30, 30)))
-        self.dest_lang_pop.setFrame_(((inner_width - 140, 5), (130, 30)))
-        y += h_bar + spacing
-        self.src_label.setFrame_(((padding, y), (inner_width, h1)))
-        self.src_copy_btn.setFrame_(((padding + 5, y + 5), (25, 25)))
+        self.refresh_language_ui()
+        self.refresh_action_state()
+        self.layout_window()
 
         if not self.is_pinned:
             loc = Quartz.NSEvent.mouseLocation()
-            self.window.setFrame_display_(((loc.x + 10, loc.y - total_height - 10), (width, total_height)), True)
+            self.window.setFrame_display_(
+                ((loc.x + 12, loc.y - self.root_view.frame().size.height - 12), (WINDOW_WIDTH, self.root_view.frame().size.height)),
+                True,
+            )
         else:
-            f = self.window.frame()
-            top = f.origin.y + f.size.height
-            self.window.setFrame_display_(((f.origin.x, top - total_height), (width, total_height)), True)
-        
-        self.pin_btn.setFrame_(((10, total_height - 35), (30, 30)))
-        self.backend_btn.setFrame_(((45, total_height - 35), (30, 30)))
+            frame = self.window.frame()
+            top = frame.origin.y + frame.size.height
+            self.window.setFrame_display_(
+                ((frame.origin.x, top - self.root_view.frame().size.height), (WINDOW_WIDTH, self.root_view.frame().size.height)),
+                True,
+            )
+
         self.window.makeKeyAndOrderFront_(None)
 
     @objc.python_method

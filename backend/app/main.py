@@ -79,7 +79,8 @@ class AutoTranslator(NSObject):
             except ValueError:
                 logging.warning("大模型翻译初始化失败，回退到谷歌翻译")
                 self.translator_backend = "google"
-                self.window.set_backend_label("google")
+                if hasattr(self, "window") and self.window:
+                    self.window.set_backend_label("google")
         logging.info("使用谷歌翻译 (Google)")
         return GoogleTranslator(source=self.src_lang, target=self.dest_lang)
 
@@ -101,6 +102,25 @@ class AutoTranslator(NSObject):
         self.translator = self._create_translator()
         
         # 如果当前有选中的文本，立即重新翻译
+        if self.last_text:
+            self.on_mouse_up(force=True)
+
+    @objc.python_method
+    def swap_languages(self):
+        if self.src_lang == "auto":
+            logging.info("源语言为自动检测，跳过语言互换")
+            return
+
+        self.src_lang, self.dest_lang = self.dest_lang, self.src_lang
+        self.window.set_languages(LANGUAGES, self.src_lang, self.dest_lang)
+        self.translator = self._create_translator()
+        logging.info("语言互换完成: %s -> %s", self.src_lang, self.dest_lang)
+
+        if self.last_text:
+            self.on_mouse_up(force=True)
+
+    @objc.python_method
+    def retranslate_current(self):
         if self.last_text:
             self.on_mouse_up(force=True)
 
