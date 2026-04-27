@@ -1,6 +1,7 @@
 import Quartz
 import objc
 from Cocoa import NSObject
+from Foundation import NSNotificationCenter
 from AppKit import (
     NSBackingStoreBuffered,
     NSBezelStyleRegularSquare,
@@ -20,6 +21,7 @@ from AppKit import (
     NSPasteboard,
     NSPointInRect,
     NSPopUpButton,
+    NSScreen,
     NSTextAlignmentCenter,
     NSTextField,
     NSView,
@@ -179,6 +181,7 @@ class FloatingWindow(NSObject):
         self.window.setHasShadow_(True)
         self.window.setReleasedWhenClosed_(False)
         self.window.setMovableByWindowBackground_(True)
+        self.window.floating_window = self
 
         self.root_view = NSView.alloc().initWithFrame_(
             ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT))
@@ -191,6 +194,8 @@ class FloatingWindow(NSObject):
         self.backend = "google"
         self.is_pinned = False
         self.delegate = None
+        self.saved_origin = None
+        self._suppress_auto_pin = False
 
         self.build_toolbar()
         self.build_source_card()
@@ -201,6 +206,9 @@ class FloatingWindow(NSObject):
         self.refresh_pin_style()
         self.refresh_action_state()
         self.set_backend_label("google")
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "windowDidMove:", "NSWindowDidMoveNotification", self.window
+        )
 
         return self
 
@@ -448,6 +456,15 @@ class FloatingWindow(NSObject):
         self.is_pinned = not self.is_pinned
         self.refresh_pin_style()
 
+    def auto_pin(self):
+        if not self.is_pinned:
+            self.is_pinned = True
+            self.refresh_pin_style()
+
+    def windowDidMove_(self, notification):
+        if not self._suppress_auto_pin:
+            self.auto_pin()
+
     def onBackendToggle_(self, sender):
         if self.delegate:
             self.delegate.toggle_translator()
@@ -607,10 +624,16 @@ class FloatingWindow(NSObject):
         self.refresh_action_state()
         self.layout_window()
 
+        self._suppress_auto_pin = True
         if not self.is_pinned:
-            loc = Quartz.NSEvent.mouseLocation()
+            if self.saved_origin is not None:
+                x, y = self.saved_origin
+            else:
+                screen_frame = NSScreen.mainScreen().frame()
+                x = (screen_frame.size.width - WINDOW_WIDTH) / 2 + screen_frame.origin.x
+                y = (screen_frame.size.height - self.root_view.frame().size.height) / 2 + screen_frame.origin.y
             self.window.setFrame_display_(
-                ((loc.x + 12, loc.y - self.root_view.frame().size.height - 12), (WINDOW_WIDTH, self.root_view.frame().size.height)),
+                ((x, y), (WINDOW_WIDTH, self.root_view.frame().size.height)),
                 True,
             )
         else:
@@ -620,9 +643,13 @@ class FloatingWindow(NSObject):
                 ((frame.origin.x, top - self.root_view.frame().size.height), (WINDOW_WIDTH, self.root_view.frame().size.height)),
                 True,
             )
+        self._suppress_auto_pin = False
 
         self.window.makeKeyAndOrderFront_(None)
 
     @objc.python_method
     def hide(self):
+        if not self.is_pinned:
+            frame = self.window.frame()
+            self.saved_origin = (frame.origin.x, frame.origin.y)
         self.window.orderOut_(None)
