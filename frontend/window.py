@@ -23,6 +23,7 @@ from AppKit import (
     NSPointInRect,
     NSPopUpButton,
     NSScreen,
+    NSScrollView,
     NSTextAlignmentCenter,
     NSTextField,
     NSView,
@@ -42,6 +43,10 @@ SECTION_GAP = 10
 TOOLBAR_BUTTON_SIZE = 24
 BACKEND_BTN_WIDTH = 40
 CARD_RADIUS = 14
+MAX_CARD_TEXT_HEIGHT = 200
+SRC_MAX_CARD_HEIGHT = 260
+DEST_MAX_CARD_HEIGHT = 290
+MAX_WINDOW_HEIGHT = 700
 
 
 def rgb(r, g, b, a=1.0):
@@ -281,10 +286,17 @@ class FloatingWindow(NSObject):
         style_surface(self.src_card, CARD_BG, CARD_RADIUS, border=CARD_BORDER, shadow=True)
         self.root_view.addSubview_(self.src_card)
 
+        self.src_scroll = NSScrollView.alloc().init()
+        self.src_scroll.setHasVerticalScroller_(True)
+        self.src_scroll.setAutohidesScrollers_(True)
+        self.src_scroll.setBorderType_(0)
+        self.src_scroll.setDrawsBackground_(False)
+        self.src_card.addSubview_(self.src_scroll)
+
         self.src_label = create_label(
             14, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
         )
-        self.src_card.addSubview_(self.src_label)
+        self.src_scroll.setDocumentView_(self.src_label)
 
         self.src_audio_btn = create_icon_button(
             "speaker.wave.2", "🔊", point_size=11, tint=TEXT_MUTED, background=SURFACE_BG
@@ -360,10 +372,17 @@ class FloatingWindow(NSObject):
         self.backend_toggle_btn.setAction_("onBackendToggle:")
         self.dest_card.addSubview_(self.backend_toggle_btn)
 
+        self.dest_scroll = NSScrollView.alloc().init()
+        self.dest_scroll.setHasVerticalScroller_(True)
+        self.dest_scroll.setAutohidesScrollers_(True)
+        self.dest_scroll.setBorderType_(0)
+        self.dest_scroll.setDrawsBackground_(False)
+        self.dest_card.addSubview_(self.dest_scroll)
+
         self.dest_label = create_label(
             14, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
         )
-        self.dest_card.addSubview_(self.dest_label)
+        self.dest_scroll.setDocumentView_(self.dest_label)
 
         self.dest_copy_btn = create_icon_button(
             "doc.on.doc", "⧉", point_size=11, tint=TEXT_PRIMARY, background=SURFACE_BG
@@ -570,23 +589,42 @@ class FloatingWindow(NSObject):
             dest_display_text, card_inner_width, 14, minimum=40
         )
 
-        src_card_height = max(110, src_text_height + 44)
+        # 限制文本可视区域高度，超出部分用滚动
+        src_visible = min(src_text_height, MAX_CARD_TEXT_HEIGHT)
+        dest_visible = min(dest_text_height, MAX_CARD_TEXT_HEIGHT)
+
+        src_card_height = min(SRC_MAX_CARD_HEIGHT, max(110, src_visible + 44))
         lang_bar_height = 38
-        dest_card_height = max(120, dest_text_height + 74)
-        total_height = max(
-            WINDOW_MIN_HEIGHT,
-            int(
-                OUTER_PADDING
-                + TOOLBAR_BUTTON_SIZE
-                + SECTION_GAP
-                + src_card_height
-                + SECTION_GAP
-                + lang_bar_height
-                + SECTION_GAP
-                + dest_card_height
-                + OUTER_PADDING
+        dest_card_height = min(DEST_MAX_CARD_HEIGHT, max(120, dest_visible + 74))
+        total_height = min(
+            MAX_WINDOW_HEIGHT,
+            max(
+                WINDOW_MIN_HEIGHT,
+                int(
+                    OUTER_PADDING
+                    + TOOLBAR_BUTTON_SIZE
+                    + SECTION_GAP
+                    + src_card_height
+                    + SECTION_GAP
+                    + lang_bar_height
+                    + SECTION_GAP
+                    + dest_card_height
+                    + OUTER_PADDING
+                ),
             ),
         )
+
+        # 若窗口已达上限，进一步压缩卡片
+        overhead = (
+            OUTER_PADDING + TOOLBAR_BUTTON_SIZE + SECTION_GAP
+            + SECTION_GAP + lang_bar_height + SECTION_GAP
+            + OUTER_PADDING
+        )
+        available = total_height - overhead
+        if src_card_height + dest_card_height > available:
+            # 7:8 比例分配
+            src_card_height = int(available * 7 / 15)
+            dest_card_height = available - src_card_height
 
         self.root_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
         self.vibrancy_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
@@ -607,9 +645,12 @@ class FloatingWindow(NSObject):
             button.setFrame_(((right_x - btn_w + TOOLBAR_BUTTON_SIZE, toolbar_y), (btn_w, TOOLBAR_BUTTON_SIZE)))
             right_x -= btn_w + 4
 
+        # --- 源文本卡片 ---
         src_y = toolbar_y - SECTION_GAP - src_card_height
         self.src_card.setFrame_(((OUTER_PADDING, src_y), (content_width, src_card_height)))
-        self.src_label.setFrame_(((12, 34), (card_inner_width, src_text_height)))
+        src_visible_h = src_card_height - 44
+        self.src_scroll.setFrame_(((12, 34), (card_inner_width, src_visible_h)))
+        self.src_label.setFrame_(((0, 0), (card_inner_width, src_text_height)))
         self.src_audio_btn.setFrame_(((12, 8), (22, 22)))
         self.src_copy_btn.setFrame_(((38, 8), (22, 22)))
 
@@ -617,6 +658,7 @@ class FloatingWindow(NSObject):
         chip_width = min(max(measure_text_width(chip_text, 11, bold=True) + 18, 70), 130)
         self.src_lang_chip.setFrame_(((68, 10), (chip_width, 20)))
 
+        # --- 语言栏 ---
         lang_y = src_y - SECTION_GAP - lang_bar_height
         self.lang_bar.setFrame_(((OUTER_PADDING, lang_y), (content_width, lang_bar_height)))
         popup_width = (content_width - 58) / 2
@@ -624,16 +666,20 @@ class FloatingWindow(NSObject):
         self.swap_btn.setFrame_((((content_width - 24) / 2, 6), (24, 24)))
         self.dest_lang_pop.setFrame_(((content_width - 12 - popup_width, 6), (popup_width, 26)))
 
+        # --- 目标文本卡片 ---
         dest_y = lang_y - SECTION_GAP - dest_card_height
         self.dest_card.setFrame_(((OUTER_PADDING, dest_y), (content_width, dest_card_height)))
 
-        dest_text_y = 36
-        provider_y = dest_text_y + dest_text_height + 10
+        dest_visible_h = dest_card_height - 74
+        dest_text_y_scroll = 36
+        self.dest_scroll.setFrame_(((12, dest_text_y_scroll), (card_inner_width, dest_visible_h)))
+        self.dest_label.setFrame_(((0, 0), (card_inner_width, dest_text_height)))
+
+        provider_y = dest_text_y_scroll + dest_visible_h + 10
         self.backend_badge.setFrame_(((12, provider_y), (22, 22)))
         self.backend_badge_label.setFrame_(((0, 3), (22, 14)))
         self.backend_name_label.setFrame_(((42, provider_y + 3), (content_width - 86, 16)))
         self.backend_toggle_btn.setFrame_(((content_width - 12 - 20, provider_y + 1), (20, 20)))
-        self.dest_label.setFrame_(((12, dest_text_y), (card_inner_width, dest_text_height)))
         self.dest_copy_btn.setFrame_(((12, 8), (22, 22)))
         self.dest_refresh_btn.setFrame_(((38, 8), (22, 22)))
 
@@ -736,9 +782,12 @@ class FloatingWindow(NSObject):
         self.dest_label.setStringValue_(displayed)
         self.refresh_action_state()
 
-        # 仅在译文高度超出卡片时重新布局（避免每次 tick 都重算所有视图）
+        # 更新 dest_label 高度以支持滚动；仅在卡片需增高时重新布局
         card_inner_width = WINDOW_WIDTH - (OUTER_PADDING * 2) - 28
-        needed_card_height = max(120, measure_text_height(displayed, card_inner_width, 14, minimum=40) + 74)
+        full_text_height = measure_text_height(displayed, card_inner_width, 14, minimum=40)
+        self.dest_label.setFrame_(((0, 0), (card_inner_width, full_text_height)))
+
+        needed_card_height = min(DEST_MAX_CARD_HEIGHT, max(120, full_text_height + 74))
         old_card_height = self.dest_card.frame().size.height
         if int(needed_card_height) > int(old_card_height):
             self.layout_window()
