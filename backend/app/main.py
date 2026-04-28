@@ -167,11 +167,22 @@ class AutoTranslator(NSObject):
 
     def _do_translate(self, text, version):
         try:
-            translated = self.translator.translate(text)
-            if translated:
-                result = (text, translated)
+            if hasattr(self.translator, 'translate_stream'):
+                buffer = ""
+                last_update = 0
+                for token in self.translator.translate_stream(text):
+                    buffer += token
+                    now = time.time()
+                    if now - last_update > 0.08:
+                        last_update = now
+                        if version == self._translate_version:
+                            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                                "updateDestText:", buffer, False
+                            )
+                result = (text, buffer) if buffer else (text, "翻译结果为空")
             else:
-                result = (text, "翻译结果为空")
+                translated = self.translator.translate(text)
+                result = (text, translated) if translated else (text, "翻译结果为空")
         except Exception as e:
             result = (text, f"错误: {str(e)[:50]}")
 
@@ -179,6 +190,9 @@ class AutoTranslator(NSObject):
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
                 "showTranslationResult:", result, False
             )
+
+    def updateDestText_(self, text):
+        self.window.update_dest_text(text)
 
     def showTranslationResult_(self, result):
         text, translated = result

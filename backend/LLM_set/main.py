@@ -47,14 +47,17 @@ class LLMTranslator:
 
         self._client = OpenAI(api_key=api_key, base_url=base_url)
 
-    def translate(self, text):
+    def _build_instruction(self):
         src_name = LANG_NAMES.get(self.source, self.source)
         tgt_name = LANG_NAMES.get(self.target, self.target)
 
         if self.source == "auto":
-            instruction = f"将以下文本翻译为{tgt_name}。如果原文已是{tgt_name}则原样返回。只输出译文，不要任何解释或额外文字。"
+            return f"将以下文本翻译为{tgt_name}。如果原文已是{tgt_name}则原样返回。只输出译文，不要任何解释或额外文字。"
         else:
-            instruction = f"将以下{src_name}文本翻译为{tgt_name}。只输出译文，不要任何解释或额外文字。"
+            return f"将以下{src_name}文本翻译为{tgt_name}。只输出译文，不要任何解释或额外文字。"
+
+    def translate(self, text):
+        instruction = self._build_instruction()
 
         try:
             resp = self._client.chat.completions.create(
@@ -72,3 +75,28 @@ class LLMTranslator:
             raise RuntimeError(f"LLM API 请求失败: {e}")
 
         return resp.choices[0].message.content.strip()
+
+    def translate_stream(self, text):
+        """流式翻译，逐 token yield 译文片段。"""
+        instruction = self._build_instruction()
+
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": text},
+                ],
+                temperature=0.3,
+                max_tokens=4096,
+                extra_body={"enable_thinking": False},
+                stream=True,
+            )
+        except Exception as e:
+            logger.error("LLM API 请求失败: %s", e)
+            raise RuntimeError(f"LLM API 请求失败: {e}")
+
+        for chunk in resp:
+            token = chunk.choices[0].delta.content
+            if token:
+                yield token

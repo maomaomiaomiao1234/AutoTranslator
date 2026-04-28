@@ -686,6 +686,23 @@ class FloatingWindow(NSObject):
         self._suppress_auto_pin = False
 
     @objc.python_method
+    def update_dest_text(self, text):
+        """流式更新译文，仅刷新 dest label 并即时调整窗口高度。"""
+        self.current_dest_text = text
+        self.dest_label.setStringValue_(text)
+        self.dest_label.setTextColor_(TEXT_PRIMARY)
+        self.refresh_action_state()
+        self.layout_window()
+
+        new_height = self.root_view.frame().size.height
+        frame = self.window.frame()
+        top = frame.origin.y + frame.size.height
+        x, y = frame.origin.x, top - new_height
+        self._suppress_auto_pin = True
+        self.window.setFrame_display_(((x, y), (WINDOW_WIDTH, new_height)), True)
+        self._suppress_auto_pin = False
+
+    @objc.python_method
     def hide(self):
         if not self.is_pinned:
             frame = self.window.frame()
