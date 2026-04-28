@@ -1,7 +1,7 @@
 import Quartz
 import objc
 from Cocoa import NSObject
-from Foundation import NSNotificationCenter
+from Foundation import NSNotificationCenter, NSTimer
 from AppKit import (
     NSAnimationContext,
     NSBackingStoreBuffered,
@@ -217,6 +217,7 @@ class FloatingWindow(NSObject):
         self.delegate = None
         self.saved_origin = None
         self._suppress_auto_pin = False
+        self._stream_timer = None
 
         self.build_toolbar()
         self.build_source_card()
@@ -630,6 +631,7 @@ class FloatingWindow(NSObject):
 
     @objc.python_method
     def show(self, src_text, dest_text=None):
+        self._stop_stream()
         was_visible = self.window.isVisible()
 
         self.current_source_text = src_text or ""
@@ -686,24 +688,97 @@ class FloatingWindow(NSObject):
         self._suppress_auto_pin = False
 
     @objc.python_method
-    def update_dest_text(self, text):
-        """流式更新译文，仅刷新 dest label 并即时调整窗口高度。"""
-        self.current_dest_text = text
-        self.dest_label.setStringValue_(text)
+    def stream_feed(self, text):
+        """流式翻译：喂入累积的完整译文，打字机逐字展示。"""
+        if not self._stream_timer:
+            self._start_stream()
+        self._stream_buffer = text
+
+    @objc.python_method
+    def stream_finish(self, final_text):
+        """流式翻译结束：确保最终文本完整显示并做布局。"""
+        self._stream_final = final_text
+        self._stream_buffer = final_text
+        if self._stream_pos >= len(final_text):
+            self._finish_stream()
+
+    @objc.python_method
+    def _start_stream(self):
+        self._stop_stream()
+        self._stream_buffer = ""
+        self._stream_pos = 0
+        self._stream_final = None
+        self.dest_label.setStringValue_("")
         self.dest_label.setTextColor_(TEXT_PRIMARY)
+        self._stream_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.03, self, "_streamTick:", None, True
+        )
+
+    def _streamTick_(self, timer):
+        chars_per_tick = 2
+        self._stream_pos = min(self._stream_pos + chars_per_tick, len(self._stream_buffer))
+        displayed = self._stream_buffer[:self._stream_pos]
+
+        if displayed == self.current_dest_text:
+            if self._stream_final is not None and self._stream_pos >= len(self._stream_buffer):
+                self._finish_stream()
+            return
+
+        self.current_dest_text = displayed
+        self.dest_label.setStringValue_(displayed)
+        self.refresh_action_state()
+
+        # 仅在译文高度超出卡片时重新布局（避免每次 tick 都重算所有视图）
+        card_inner_width = WINDOW_WIDTH - (OUTER_PADDING * 2) - 28
+        needed_card_height = max(120, measure_text_height(displayed, card_inner_width, 14, minimum=40) + 74)
+        old_card_height = self.dest_card.frame().size.height
+        if int(needed_card_height) > int(old_card_height):
+            self.layout_window()
+            new_height = self.root_view.frame().size.height
+            frame = self.window.frame()
+            top = frame.origin.y + frame.size.height
+            x, y = frame.origin.x, top - new_height
+            self._suppress_auto_pin = True
+            self.window.setFrame_display_(((x, y), (WINDOW_WIDTH, new_height)), True)
+            self._suppress_auto_pin = False
+
+        if self._stream_final is not None and self._stream_pos >= len(self._stream_buffer):
+            self._finish_stream()
+
+    @objc.python_method
+    def _stop_stream(self):
+        if self._stream_timer:
+            self._stream_timer.invalidate()
+            self._stream_timer = None
+        self._stream_final = None
+
+    @objc.python_method
+    def _finish_stream(self):
+        self._stop_stream()
+        self.current_dest_text = self._stream_buffer
+        self.dest_label.setStringValue_(self._stream_buffer)
         self.refresh_action_state()
         self.layout_window()
 
         new_height = self.root_view.frame().size.height
-        frame = self.window.frame()
-        top = frame.origin.y + frame.size.height
-        x, y = frame.origin.x, top - new_height
-        self._suppress_auto_pin = True
-        self.window.setFrame_display_(((x, y), (WINDOW_WIDTH, new_height)), True)
-        self._suppress_auto_pin = False
+        if self.window.isVisible():
+            frame = self.window.frame()
+            top = frame.origin.y + frame.size.height
+            x, y = frame.origin.x, top - new_height
+            self._suppress_auto_pin = True
+
+            def resize(ctx):
+                ctx.setDuration_(0.15)
+                self.window.animator().setFrame_display_(
+                    ((x, y), (WINDOW_WIDTH, new_height)), True
+                )
+
+            NSAnimationContext.runAnimationGroup_completionHandler_(resize, None)
+            self._suppress_auto_pin = False
 
     @objc.python_method
     def hide(self):
+        self._stop_stream()
         if not self.is_pinned:
             frame = self.window.frame()
             self.saved_origin = (frame.origin.x, frame.origin.y)

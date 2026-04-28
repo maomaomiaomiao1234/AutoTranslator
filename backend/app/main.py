@@ -173,11 +173,11 @@ class AutoTranslator(NSObject):
                 for token in self.translator.translate_stream(text):
                     buffer += token
                     now = time.time()
-                    if now - last_update > 0.08:
+                    if now - last_update > 0.12:
                         last_update = now
                         if version == self._translate_version:
                             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                                "updateDestText:", buffer, False
+                                "streamFeed:", buffer, False
                             )
                 result = (text, buffer) if buffer else (text, "翻译结果为空")
             else:
@@ -191,12 +191,15 @@ class AutoTranslator(NSObject):
                 "showTranslationResult:", result, False
             )
 
-    def updateDestText_(self, text):
-        self.window.update_dest_text(text)
+    def streamFeed_(self, text):
+        self.window.stream_feed(text)
 
     def showTranslationResult_(self, result):
         text, translated = result
-        self.window.show(text, translated)
+        if hasattr(self.translator, 'translate_stream'):
+            self.window.stream_finish(translated)
+        else:
+            self.window.show(text, translated)
 
     def get_selected_text(self):
         front_app = NSWorkspace.sharedWorkspace().frontmostApplication()

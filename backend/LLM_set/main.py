@@ -52,9 +52,9 @@ class LLMTranslator:
         tgt_name = LANG_NAMES.get(self.target, self.target)
 
         if self.source == "auto":
-            return f"将以下文本翻译为{tgt_name}。如果原文已是{tgt_name}则原样返回。只输出译文，不要任何解释或额外文字。"
+            return f"将以下文本翻译为{tgt_name}。如果原文已是{tgt_name}则原样返回。只输出译文，不要任何解释或额外文字，疑问句也正常翻译。"
         else:
-            return f"将以下{src_name}文本翻译为{tgt_name}。只输出译文，不要任何解释或额外文字。"
+            return f"将以下{src_name}文本翻译为{tgt_name}。只输出译文，不要任何解释或额外文字，疑问句也正常翻译。"
 
     def translate(self, text):
         instruction = self._build_instruction()
