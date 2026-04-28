@@ -3,6 +3,7 @@ import objc
 from Cocoa import NSObject
 from Foundation import NSNotificationCenter
 from AppKit import (
+    NSAnimationContext,
     NSBackingStoreBuffered,
     NSBezelStyleRegularSquare,
     NSButton,
@@ -25,6 +26,10 @@ from AppKit import (
     NSTextAlignmentCenter,
     NSTextField,
     NSView,
+    NSVisualEffectBlendingModeBehindWindow,
+    NSVisualEffectMaterialMenu,
+    NSVisualEffectStateActive,
+    NSVisualEffectView,
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
@@ -33,7 +38,7 @@ from AppKit import (
 WINDOW_WIDTH = 420
 WINDOW_MIN_HEIGHT = 280
 OUTER_PADDING = 12
-SECTION_GAP = 8
+SECTION_GAP = 10
 TOOLBAR_BUTTON_SIZE = 24
 CARD_RADIUS = 14
 
@@ -44,11 +49,12 @@ def rgb(r, g, b, a=1.0):
     )
 
 
-WINDOW_BG = rgb(247, 247, 249)
-CARD_BG = rgb(240, 241, 244)
-CARD_BG_ALT = rgb(235, 236, 240)
-SURFACE_BG = rgb(255, 255, 255, 0.92)
-TEXT_PRIMARY = rgb(40, 42, 48)
+WINDOW_BG = rgb(0, 0, 0, 0)
+CARD_BG = rgb(255, 255, 255, 0.78)
+CARD_BG_ALT = rgb(255, 255, 255, 0.65)
+SURFACE_BG = rgb(255, 255, 255, 0.88)
+CARD_BORDER = rgb(0, 0, 0, 0.07)
+TEXT_PRIMARY = rgb(30, 32, 38)
 TEXT_SECONDARY = rgb(116, 121, 130)
 TEXT_MUTED = rgb(147, 151, 160)
 BLUE_ACCENT = rgb(51, 109, 245)
@@ -56,11 +62,18 @@ PURPLE_ACCENT = rgb(110, 83, 244)
 CHIP_BG = rgb(228, 236, 255)
 
 
-def style_surface(view, background, radius, border=None):
+def style_surface(view, background, radius, border=None, shadow=False):
     view.setWantsLayer_(True)
     layer = view.layer()
     layer.setCornerRadius_(radius)
-    layer.setMasksToBounds_(True)
+    if shadow:
+        layer.setMasksToBounds_(False)
+        layer.setShadowColor_(NSColor.blackColor().CGColor())
+        layer.setShadowOffset_((0, 3))
+        layer.setShadowRadius_(12.0)
+        layer.setShadowOpacity_(0.06)
+    else:
+        layer.setMasksToBounds_(True)
     layer.setBackgroundColor_(background.CGColor())
     if border is not None:
         layer.setBorderWidth_(1.0)
@@ -183,11 +196,19 @@ class FloatingWindow(NSObject):
         self.window.setMovableByWindowBackground_(True)
         self.window.floating_window = self
 
+        self.vibrancy_view = NSVisualEffectView.alloc().initWithFrame_(
+            ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT))
+        )
+        self.vibrancy_view.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+        self.vibrancy_view.setMaterial_(NSVisualEffectMaterialMenu)
+        self.vibrancy_view.setState_(NSVisualEffectStateActive)
+        self.vibrancy_view.setWantsLayer_(True)
+        self.window.setContentView_(self.vibrancy_view)
+
         self.root_view = NSView.alloc().initWithFrame_(
             ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT))
         )
-        style_surface(self.root_view, WINDOW_BG, 18)
-        self.window.setContentView_(self.root_view)
+        self.vibrancy_view.addSubview_(self.root_view)
 
         self.current_source_text = ""
         self.current_dest_text = ""
@@ -252,7 +273,7 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def build_source_card(self):
         self.src_card = NSView.alloc().init()
-        style_surface(self.src_card, CARD_BG, CARD_RADIUS)
+        style_surface(self.src_card, CARD_BG, CARD_RADIUS, border=CARD_BORDER, shadow=True)
         self.root_view.addSubview_(self.src_card)
 
         self.src_label = create_label(
@@ -280,7 +301,7 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def build_language_bar(self):
         self.lang_bar = NSView.alloc().init()
-        style_surface(self.lang_bar, CARD_BG_ALT, CARD_RADIUS)
+        style_surface(self.lang_bar, CARD_BG_ALT, CARD_RADIUS, border=CARD_BORDER, shadow=True)
         self.root_view.addSubview_(self.lang_bar)
 
         self.src_lang_pop = NSPopUpButton.alloc().initWithFrame_pullsDown_(
@@ -309,7 +330,7 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def build_dest_card(self):
         self.dest_card = NSView.alloc().init()
-        style_surface(self.dest_card, CARD_BG, CARD_RADIUS)
+        style_surface(self.dest_card, CARD_BG, CARD_RADIUS, border=CARD_BORDER, shadow=True)
         self.root_view.addSubview_(self.dest_card)
 
         self.backend_badge = NSView.alloc().init()
@@ -560,7 +581,7 @@ class FloatingWindow(NSObject):
         )
 
         self.root_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
-        style_surface(self.root_view, WINDOW_BG, 18)
+        self.vibrancy_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
 
         toolbar_y = total_height - OUTER_PADDING - TOOLBAR_BUTTON_SIZE
         self.pin_btn.setFrame_(
@@ -609,6 +630,8 @@ class FloatingWindow(NSObject):
 
     @objc.python_method
     def show(self, src_text, dest_text=None):
+        was_visible = self.window.isVisible()
+
         self.current_source_text = src_text or ""
         self.current_dest_text = dest_text or ""
 
@@ -624,32 +647,56 @@ class FloatingWindow(NSObject):
         self.refresh_action_state()
         self.layout_window()
 
+        new_height = self.root_view.frame().size.height
         self._suppress_auto_pin = True
-        if not self.is_pinned:
+
+        if was_visible:
+            frame = self.window.frame()
+            top = frame.origin.y + frame.size.height
+            x, y = frame.origin.x, top - new_height
+
+            def resize(ctx):
+                ctx.setDuration_(0.18)
+                self.window.animator().setFrame_display_(
+                    ((x, y), (WINDOW_WIDTH, new_height)), True
+                )
+
+            NSAnimationContext.runAnimationGroup_completionHandler_(resize, None)
+        else:
             if self.saved_origin is not None:
                 x, y = self.saved_origin
             else:
                 screen_frame = NSScreen.mainScreen().frame()
                 x = (screen_frame.size.width - WINDOW_WIDTH) / 2 + screen_frame.origin.x
-                y = (screen_frame.size.height - self.root_view.frame().size.height) / 2 + screen_frame.origin.y
-            self.window.setFrame_display_(
-                ((x, y), (WINDOW_WIDTH, self.root_view.frame().size.height)),
-                True,
-            )
-        else:
-            frame = self.window.frame()
-            top = frame.origin.y + frame.size.height
-            self.window.setFrame_display_(
-                ((frame.origin.x, top - self.root_view.frame().size.height), (WINDOW_WIDTH, self.root_view.frame().size.height)),
-                True,
-            )
-        self._suppress_auto_pin = False
+                y = (screen_frame.size.height - new_height) / 2 + screen_frame.origin.y
 
-        self.window.makeKeyAndOrderFront_(None)
+            self.window.setFrame_display_(
+                ((x, y), (WINDOW_WIDTH, new_height)), True
+            )
+
+            self.window.setAlphaValue_(0.0)
+            self.window.makeKeyAndOrderFront_(None)
+
+            def fade_in(ctx):
+                ctx.setDuration_(0.22)
+                self.window.animator().setAlphaValue_(1.0)
+
+            NSAnimationContext.runAnimationGroup_completionHandler_(fade_in, None)
+
+        self._suppress_auto_pin = False
 
     @objc.python_method
     def hide(self):
         if not self.is_pinned:
             frame = self.window.frame()
             self.saved_origin = (frame.origin.x, frame.origin.y)
-        self.window.orderOut_(None)
+
+        def fade_out(ctx):
+            ctx.setDuration_(0.12)
+            self.window.animator().setAlphaValue_(0.0)
+
+        def on_complete():
+            self.window.orderOut_(None)
+            self.window.setAlphaValue_(1.0)
+
+        NSAnimationContext.runAnimationGroup_completionHandler_(fade_out, on_complete)
