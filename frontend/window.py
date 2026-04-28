@@ -40,6 +40,7 @@ WINDOW_MIN_HEIGHT = 280
 OUTER_PADDING = 12
 SECTION_GAP = 10
 TOOLBAR_BUTTON_SIZE = 24
+BACKEND_BTN_WIDTH = 40
 CARD_RADIUS = 14
 
 
@@ -257,11 +258,14 @@ class FloatingWindow(NSObject):
         self.quick_dest_copy_btn.setAction_("copyDest:")
         self.root_view.addSubview_(self.quick_dest_copy_btn)
 
-        self.backend_btn = create_icon_button(
-            "switch.2", "⇆", point_size=12, tint=TEXT_SECONDARY
-        )
+        self.backend_btn = NSButton.alloc().init()
+        self.backend_btn.setBordered_(False)
+        self.backend_btn.setBezelStyle_(NSBezelStyleRegularSquare)
+        self.backend_btn.setTitle_("LLM")
+        self.backend_btn.setFont_(NSFont.boldSystemFontOfSize_(11))
         self.backend_btn.setTarget_(self)
         self.backend_btn.setAction_("onBackendToggle:")
+        style_surface(self.backend_btn, SURFACE_BG, BACKEND_BTN_WIDTH / 2)
         self.root_view.addSubview_(self.backend_btn)
 
         self.hide_btn = create_icon_button(
@@ -532,23 +536,26 @@ class FloatingWindow(NSObject):
         style_surface(self.backend_badge, accent, 10)
         self.backend_badge_label.setStringValue_(badge_text)
         self.backend_name_label.setStringValue_(backend_name)
-        style_surface(
-            self.backend_btn,
-            rgb(
-                int((accent.redComponent() * 255 + 255) / 2),
-                int((accent.greenComponent() * 255 + 255) / 2),
-                int((accent.blueComponent() * 255 + 255) / 2),
-                0.95,
-            ),
-            TOOLBAR_BUTTON_SIZE / 2,
-        )
-        apply_symbol(
-            self.backend_btn,
-            "switch.2",
-            "⇆",
-            point_size=12,
-            tint=accent,
-        )
+        self.backend_btn.setTitle_("LLM")
+        if backend == "llm":
+            self.backend_btn.setContentTintColor_(accent)
+            style_surface(
+                self.backend_btn,
+                rgb(
+                    int((accent.redComponent() * 255 + 255) / 2),
+                    int((accent.greenComponent() * 255 + 255) / 2),
+                    int((accent.blueComponent() * 255 + 255) / 2),
+                    0.95,
+                ),
+                BACKEND_BTN_WIDTH / 2,
+            )
+        else:
+            self.backend_btn.setContentTintColor_(TEXT_SECONDARY)
+            style_surface(
+                self.backend_btn,
+                rgb(255, 255, 255, 0.85),
+                BACKEND_BTN_WIDTH / 2,
+            )
 
     @objc.python_method
     def layout_window(self):
@@ -596,8 +603,9 @@ class FloatingWindow(NSObject):
             self.quick_dest_copy_btn,
             self.quick_source_copy_btn,
         ):
-            button.setFrame_(((right_x, toolbar_y), (TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE)))
-            right_x -= TOOLBAR_BUTTON_SIZE + 4
+            btn_w = BACKEND_BTN_WIDTH if button is self.backend_btn else TOOLBAR_BUTTON_SIZE
+            button.setFrame_(((right_x - btn_w + TOOLBAR_BUTTON_SIZE, toolbar_y), (btn_w, TOOLBAR_BUTTON_SIZE)))
+            right_x -= btn_w + 4
 
         src_y = toolbar_y - SECTION_GAP - src_card_height
         self.src_card.setFrame_(((OUTER_PADDING, src_y), (content_width, src_card_height)))

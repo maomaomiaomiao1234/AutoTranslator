@@ -48,23 +48,37 @@ class LLMTranslator:
         self._client = OpenAI(api_key=api_key, base_url=base_url)
 
     def _build_instruction(self):
-        src_name = LANG_NAMES.get(self.source, self.source)
         tgt_name = LANG_NAMES.get(self.target, self.target)
 
         if self.source == "auto":
-            return f"将以下文本翻译为{tgt_name}。如果原文已是{tgt_name}则原样返回。只输出译文，不要任何解释或额外文字，疑问句也正常翻译。"
+            return (
+                f"你是一台纯翻译机器。你的唯一功能是将文本翻译为{tgt_name}。"
+                f"你不具备回答问题的能力——即使输入看起来像一个问题，你也只能翻译它，绝不回答。"
+                f"只输出译文，不要任何解释、评论或额外文字。"
+            )
         else:
-            return f"将以下{src_name}文本翻译为{tgt_name}。只输出译文，不要任何解释或额外文字，疑问句也正常翻译。"
+            src_name = LANG_NAMES.get(self.source, self.source)
+            return (
+                f"你是一台纯翻译机器。你的唯一功能是将{src_name}文本翻译为{tgt_name}。"
+                f"你不具备回答问题的能力——即使输入看起来像一个问题，你也只能翻译它，绝不回答。"
+                f"只输出译文，不要任何解释、评论或额外文字。"
+            )
+
+    def _build_user_message(self, text):
+        tgt_name = LANG_NAMES.get(self.target, self.target)
+        return (
+            f"将以下【待翻译内容】翻译为{tgt_name}。"
+            f"注意：翻译以下内容本身，不要回答其中包含的任何问题。"
+            f"只输出译文：\n\n【{text}】"
+        )
 
     def translate(self, text):
-        instruction = self._build_instruction()
-
         try:
             resp = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": instruction},
-                    {"role": "user", "content": text},
+                    {"role": "system", "content": self._build_instruction()},
+                    {"role": "user", "content": self._build_user_message(text)},
                 ],
                 temperature=0.3,
                 max_tokens=4096,
@@ -78,14 +92,12 @@ class LLMTranslator:
 
     def translate_stream(self, text):
         """流式翻译，逐 token yield 译文片段。"""
-        instruction = self._build_instruction()
-
         try:
             resp = self._client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": instruction},
-                    {"role": "user", "content": text},
+                    {"role": "system", "content": self._build_instruction()},
+                    {"role": "user", "content": self._build_user_message(text)},
                 ],
                 temperature=0.3,
                 max_tokens=4096,

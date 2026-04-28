@@ -57,7 +57,7 @@ class AutoTranslator(NSObject):
         self.dest_lang = "zh-CN"
         self.last_text = ""
 
-        self.translator_backend = os.environ.get("TRANSLATOR_BACKEND", "google")
+        self.translator_backend = os.environ.get("TRANSLATOR_BACKEND", "llm")
         self.translator = self._create_translator()
 
         self.window = FloatingWindow.alloc().init()
@@ -88,6 +88,7 @@ class AutoTranslator(NSObject):
     def toggle_translator(self):
         self.translator_backend = "llm" if self.translator_backend == "google" else "google"
         self.translator = self._create_translator()
+        self.window.set_backend_label(self.translator_backend)
         logging.info("翻译后端切换为: %s", self.translator_backend)
 
         if self.last_text:
@@ -256,7 +257,7 @@ def main():
         logging.error("需要辅助功能权限")
         sys.exit(1)
 
-    backend = os.environ.get("TRANSLATOR_BACKEND", "google")
+    backend = os.environ.get("TRANSLATOR_BACKEND", "llm")
     if backend == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY")
         if not api_key:
