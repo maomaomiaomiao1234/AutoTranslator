@@ -1,0 +1,28 @@
+[project]
+name = "autotranslator"
+version = "0.1.0"
+description = "macOS 划词翻译工具，自动检测选中文本并弹出悬浮翻译窗口"
+requires-python = ">=3.12"
+readme = "README.md"
+
+dependencies = [
+    "pyobjc>=10.0",
+    "deep-translator>=1.11",
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+autotranslator = "backend.app.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
