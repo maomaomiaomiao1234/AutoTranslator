@@ -5,6 +5,7 @@ from Foundation import NSNotificationCenter, NSTimer
 from AppKit import (
     NSAnimationContext,
     NSBackingStoreBuffered,
+    NSBezierPath,
     NSBezelStyleRegularSquare,
     NSButton,
     NSColor,
@@ -12,6 +13,8 @@ from AppKit import (
     NSEventMaskKeyDown,
     NSFloatingWindowLevel,
     NSFont,
+    NSGradient,
+    NSGraphicsContext,
     NSImage,
     NSImageScaleProportionallyUpOrDown,
     NSImageSymbolConfiguration,
@@ -36,17 +39,22 @@ from AppKit import (
 )
 
 
-WINDOW_WIDTH = 420
-WINDOW_MIN_HEIGHT = 280
-OUTER_PADDING = 12
-SECTION_GAP = 10
-TOOLBAR_BUTTON_SIZE = 24
-BACKEND_BTN_WIDTH = 40
-CARD_RADIUS = 14
-MAX_CARD_TEXT_HEIGHT = 200
-SRC_MAX_CARD_HEIGHT = 260
-DEST_MAX_CARD_HEIGHT = 290
-MAX_WINDOW_HEIGHT = 700
+WINDOW_WIDTH = 448
+WINDOW_MIN_HEIGHT = 400
+OUTER_PADDING = 14
+SECTION_GAP = 11
+HEADER_HEIGHT = 38
+TOOLBAR_BUTTON_SIZE = 28
+BACKEND_BTN_WIDTH = 48
+CARD_RADIUS = 20
+PANEL_RADIUS = 28
+CARD_INSET_X = 16
+MAX_CARD_TEXT_HEIGHT = 220
+SRC_MAX_CARD_HEIGHT = 290
+DEST_MAX_CARD_HEIGHT = 340
+MAX_WINDOW_HEIGHT = 760
+LANG_BAR_HEIGHT = 42
+BODY_FONT_SIZE = 15
 
 
 def rgb(r, g, b, a=1.0):
@@ -56,16 +64,28 @@ def rgb(r, g, b, a=1.0):
 
 
 WINDOW_BG = rgb(0, 0, 0, 0)
-CARD_BG = rgb(255, 255, 255, 0.78)
-CARD_BG_ALT = rgb(255, 255, 255, 0.65)
-SURFACE_BG = rgb(255, 255, 255, 0.88)
-CARD_BORDER = rgb(0, 0, 0, 0.07)
-TEXT_PRIMARY = rgb(30, 32, 38)
-TEXT_SECONDARY = rgb(116, 121, 130)
-TEXT_MUTED = rgb(147, 151, 160)
-BLUE_ACCENT = rgb(51, 109, 245)
-PURPLE_ACCENT = rgb(110, 83, 244)
-CHIP_BG = rgb(228, 236, 255)
+PANEL_TOP = rgb(248, 242, 232, 0.96)
+PANEL_BOTTOM = rgb(231, 240, 248, 0.94)
+PANEL_BORDER = rgb(255, 255, 255, 0.62)
+SOURCE_CARD_BG = rgb(255, 255, 255, 0.72)
+LANG_BAR_BG = rgb(255, 255, 255, 0.58)
+DEST_CARD_BG = rgb(251, 253, 255, 0.76)
+SURFACE_BG = rgb(255, 255, 255, 0.74)
+SURFACE_BG_SOFT = rgb(255, 255, 255, 0.56)
+CARD_BORDER = rgb(255, 255, 255, 0.58)
+BUTTON_BORDER = rgb(255, 255, 255, 0.78)
+TEXT_PRIMARY = rgb(31, 35, 42)
+TEXT_SECONDARY = rgb(103, 111, 123)
+TEXT_MUTED = rgb(144, 150, 159)
+BLUE_ACCENT = rgb(53, 97, 214)
+TEAL_ACCENT = rgb(20, 151, 135)
+AMBER_ACCENT = rgb(194, 121, 28)
+CHIP_BG = rgb(235, 242, 255, 0.96)
+CHIP_BG_ALT = rgb(231, 247, 242, 0.96)
+CHIP_BG_WARM = rgb(255, 238, 209, 0.97)
+GLOW_WARM = rgb(246, 198, 111, 0.22)
+GLOW_COOL = rgb(80, 128, 234, 0.16)
+GLOW_MINT = rgb(89, 183, 159, 0.12)
 
 
 def style_surface(view, background, radius, border=None, shadow=False):
@@ -75,15 +95,23 @@ def style_surface(view, background, radius, border=None, shadow=False):
     if shadow:
         layer.setMasksToBounds_(False)
         layer.setShadowColor_(NSColor.blackColor().CGColor())
-        layer.setShadowOffset_((0, 3))
-        layer.setShadowRadius_(12.0)
-        layer.setShadowOpacity_(0.06)
+        layer.setShadowOffset_((0, 8))
+        layer.setShadowRadius_(20.0)
+        layer.setShadowOpacity_(0.08)
     else:
         layer.setMasksToBounds_(True)
+        layer.setShadowOpacity_(0.0)
     layer.setBackgroundColor_(background.CGColor())
     if border is not None:
         layer.setBorderWidth_(1.0)
         layer.setBorderColor_(border.CGColor())
+    else:
+        layer.setBorderWidth_(0.0)
+
+
+def style_pill(label, text_color, background, border=None):
+    label.setTextColor_(text_color)
+    style_surface(label, background, 11, border=border)
 
 
 def create_label(font_size, color=TEXT_PRIMARY, bold=False, selectable=False, wraps=True):
@@ -109,7 +137,7 @@ def create_label(font_size, color=TEXT_PRIMARY, bold=False, selectable=False, wr
 def create_pill_label(font_size=11, color=TEXT_SECONDARY, background=CHIP_BG):
     label = create_label(font_size, color=color, bold=True, selectable=False, wraps=False)
     label.setAlignment_(NSTextAlignmentCenter)
-    style_surface(label, background, 12)
+    style_pill(label, color, background)
     return label
 
 
@@ -136,11 +164,12 @@ def create_icon_button(
     point_size=16,
     tint=TEXT_SECONDARY,
     background=SURFACE_BG,
+    size=TOOLBAR_BUTTON_SIZE,
 ):
     button = NSButton.alloc().init()
     button.setBordered_(False)
     button.setBezelStyle_(NSBezelStyleRegularSquare)
-    style_surface(button, background, TOOLBAR_BUTTON_SIZE / 2)
+    style_surface(button, background, size / 2, border=BUTTON_BORDER)
     apply_symbol(button, symbol_name, fallback, point_size=point_size, tint=tint)
     return button
 
@@ -176,6 +205,64 @@ class BorderlessWindow(NSPanel):
             pass
         else:
             return
+
+
+class PanelBackgroundView(NSView):
+    def isOpaque(self):
+        return False
+
+    def mouseDown_(self, event):
+        if self.window() is not None:
+            self.window().performWindowDragWithEvent_(event)
+
+    def drawRect_(self, rect):
+        bounds = Quartz.CGRectInset(self.bounds(), 0.5, 0.5)
+        panel_path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            bounds, PANEL_RADIUS, PANEL_RADIUS
+        )
+        gradient = NSGradient.alloc().initWithStartingColor_endingColor_(
+            PANEL_TOP, PANEL_BOTTOM
+        )
+        gradient.drawInBezierPath_angle_(panel_path, -90.0)
+
+        NSGraphicsContext.saveGraphicsState()
+        panel_path.addClip()
+        for glow_rect, glow_color in (
+            (
+                (
+                    (bounds.origin.x - 18, bounds.origin.y + bounds.size.height - 126),
+                    (190, 190),
+                ),
+                GLOW_WARM,
+            ),
+            (
+                (
+                    (
+                        bounds.origin.x + bounds.size.width - 204,
+                        bounds.origin.y - 26,
+                    ),
+                    (230, 230),
+                ),
+                GLOW_COOL,
+            ),
+            (
+                (
+                    (
+                        bounds.origin.x + bounds.size.width - 152,
+                        bounds.origin.y + bounds.size.height - 178,
+                    ),
+                    (176, 176),
+                ),
+                GLOW_MINT,
+            ),
+        ):
+            glow_color.setFill()
+            NSBezierPath.bezierPathWithOvalInRect_(glow_rect).fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        PANEL_BORDER.setStroke()
+        panel_path.setLineWidth_(1.0)
+        panel_path.stroke()
 
 
 class FloatingWindow(NSObject):
@@ -215,6 +302,10 @@ class FloatingWindow(NSObject):
             ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT))
         )
         self.vibrancy_view.addSubview_(self.root_view)
+        self.background_view = PanelBackgroundView.alloc().initWithFrame_(
+            ((0, 0), (WINDOW_WIDTH, WINDOW_MIN_HEIGHT))
+        )
+        self.root_view.addSubview_(self.background_view)
 
         self.current_source_text = ""
         self.current_dest_text = ""
@@ -233,6 +324,8 @@ class FloatingWindow(NSObject):
         self.setup_key_monitor()
         self.refresh_pin_style()
         self.refresh_action_state()
+        self.refresh_source_meta()
+        self.set_translation_state("idle")
         self.set_backend_label("google")
         NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
             self, "windowDidMove:", "NSWindowDidMoveNotification", self.window
@@ -248,6 +341,18 @@ class FloatingWindow(NSObject):
         self.pin_btn.setTarget_(self)
         self.pin_btn.setAction_("togglePin:")
         self.root_view.addSubview_(self.pin_btn)
+
+        self.header_title_label = create_label(
+            16, color=TEXT_PRIMARY, bold=True, selectable=False, wraps=False
+        )
+        self.header_title_label.setStringValue_("划词翻译")
+        self.root_view.addSubview_(self.header_title_label)
+
+        self.header_subtitle_label = create_label(
+            11, color=TEXT_SECONDARY, bold=False, selectable=False, wraps=False
+        )
+        self.header_subtitle_label.setStringValue_("自动检测 → 中文简体 · Google")
+        self.root_view.addSubview_(self.header_subtitle_label)
 
         self.quick_source_copy_btn = create_icon_button(
             "scissors", "✂", point_size=12, tint=TEXT_SECONDARY
@@ -270,7 +375,12 @@ class FloatingWindow(NSObject):
         self.backend_btn.setFont_(NSFont.boldSystemFontOfSize_(11))
         self.backend_btn.setTarget_(self)
         self.backend_btn.setAction_("onBackendToggle:")
-        style_surface(self.backend_btn, SURFACE_BG, BACKEND_BTN_WIDTH / 2)
+        style_surface(
+            self.backend_btn,
+            SURFACE_BG,
+            BACKEND_BTN_WIDTH / 2,
+            border=BUTTON_BORDER,
+        )
         self.root_view.addSubview_(self.backend_btn)
 
         self.hide_btn = create_icon_button(
@@ -283,8 +393,25 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def build_source_card(self):
         self.src_card = NSView.alloc().init()
-        style_surface(self.src_card, CARD_BG, CARD_RADIUS, border=CARD_BORDER, shadow=True)
+        style_surface(
+            self.src_card,
+            SOURCE_CARD_BG,
+            CARD_RADIUS,
+            border=CARD_BORDER,
+            shadow=True,
+        )
         self.root_view.addSubview_(self.src_card)
+
+        self.src_title_label = create_label(
+            11, color=TEXT_SECONDARY, bold=True, selectable=False, wraps=False
+        )
+        self.src_title_label.setStringValue_("原文")
+        self.src_card.addSubview_(self.src_title_label)
+
+        self.src_meta_chip = create_pill_label(
+            font_size=10, color=TEXT_SECONDARY, background=SURFACE_BG_SOFT
+        )
+        self.src_card.addSubview_(self.src_meta_chip)
 
         self.src_scroll = NSScrollView.alloc().init()
         self.src_scroll.setHasVerticalScroller_(True)
@@ -294,31 +421,49 @@ class FloatingWindow(NSObject):
         self.src_card.addSubview_(self.src_scroll)
 
         self.src_label = create_label(
-            14, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
+            BODY_FONT_SIZE, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
         )
         self.src_scroll.setDocumentView_(self.src_label)
 
         self.src_audio_btn = create_icon_button(
-            "speaker.wave.2", "🔊", point_size=11, tint=TEXT_MUTED, background=SURFACE_BG
+            "speaker.wave.2",
+            "🔊",
+            point_size=11,
+            tint=TEXT_MUTED,
+            background=SURFACE_BG,
+            size=24,
         )
         self.src_audio_btn.setEnabled_(False)
         self.src_audio_btn.setAlphaValue_(0.45)
         self.src_card.addSubview_(self.src_audio_btn)
 
         self.src_copy_btn = create_icon_button(
-            "doc.on.doc", "⧉", point_size=11, tint=TEXT_PRIMARY, background=SURFACE_BG
+            "doc.on.doc",
+            "⧉",
+            point_size=11,
+            tint=TEXT_PRIMARY,
+            background=SURFACE_BG,
+            size=24,
         )
         self.src_copy_btn.setTarget_(self)
         self.src_copy_btn.setAction_("copySource:")
         self.src_card.addSubview_(self.src_copy_btn)
 
-        self.src_lang_chip = create_pill_label()
+        self.src_lang_chip = create_pill_label(
+            font_size=10, color=BLUE_ACCENT, background=CHIP_BG
+        )
         self.src_card.addSubview_(self.src_lang_chip)
 
     @objc.python_method
     def build_language_bar(self):
         self.lang_bar = NSView.alloc().init()
-        style_surface(self.lang_bar, CARD_BG_ALT, CARD_RADIUS, border=CARD_BORDER, shadow=True)
+        style_surface(
+            self.lang_bar,
+            LANG_BAR_BG,
+            CARD_RADIUS,
+            border=CARD_BORDER,
+            shadow=True,
+        )
         self.root_view.addSubview_(self.lang_bar)
 
         self.src_lang_pop = NSPopUpButton.alloc().initWithFrame_pullsDown_(
@@ -330,7 +475,12 @@ class FloatingWindow(NSObject):
         self.lang_bar.addSubview_(self.src_lang_pop)
 
         self.swap_btn = create_icon_button(
-            "arrow.left.arrow.right", "⇄", point_size=12, tint=TEXT_PRIMARY
+            "arrow.left.arrow.right",
+            "⇄",
+            point_size=12,
+            tint=TEXT_PRIMARY,
+            background=SURFACE_BG,
+            size=24,
         )
         self.swap_btn.setTarget_(self)
         self.swap_btn.setAction_("swapLanguages:")
@@ -347,11 +497,17 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def build_dest_card(self):
         self.dest_card = NSView.alloc().init()
-        style_surface(self.dest_card, CARD_BG, CARD_RADIUS, border=CARD_BORDER, shadow=True)
+        style_surface(
+            self.dest_card,
+            DEST_CARD_BG,
+            CARD_RADIUS,
+            border=CARD_BORDER,
+            shadow=True,
+        )
         self.root_view.addSubview_(self.dest_card)
 
         self.backend_badge = NSView.alloc().init()
-        style_surface(self.backend_badge, BLUE_ACCENT, 10)
+        style_surface(self.backend_badge, BLUE_ACCENT, 12)
         self.dest_card.addSubview_(self.backend_badge)
 
         self.backend_badge_label = create_label(
@@ -361,12 +517,22 @@ class FloatingWindow(NSObject):
         self.backend_badge.addSubview_(self.backend_badge_label)
 
         self.backend_name_label = create_label(
-            12, color=TEXT_SECONDARY, bold=True, selectable=False, wraps=False
+            12, color=TEXT_PRIMARY, bold=True, selectable=False, wraps=False
         )
         self.dest_card.addSubview_(self.backend_name_label)
 
+        self.dest_state_chip = create_pill_label(
+            font_size=10, color=TEXT_SECONDARY, background=SURFACE_BG_SOFT
+        )
+        self.dest_card.addSubview_(self.dest_state_chip)
+
         self.backend_toggle_btn = create_icon_button(
-            "chevron.down", "⌄", point_size=9, tint=TEXT_SECONDARY, background=SURFACE_BG
+            "chevron.down",
+            "⌄",
+            point_size=9,
+            tint=TEXT_SECONDARY,
+            background=SURFACE_BG,
+            size=24,
         )
         self.backend_toggle_btn.setTarget_(self)
         self.backend_toggle_btn.setAction_("onBackendToggle:")
@@ -380,19 +546,29 @@ class FloatingWindow(NSObject):
         self.dest_card.addSubview_(self.dest_scroll)
 
         self.dest_label = create_label(
-            14, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
+            BODY_FONT_SIZE, color=TEXT_PRIMARY, bold=False, selectable=True, wraps=True
         )
         self.dest_scroll.setDocumentView_(self.dest_label)
 
         self.dest_copy_btn = create_icon_button(
-            "doc.on.doc", "⧉", point_size=11, tint=TEXT_PRIMARY, background=SURFACE_BG
+            "doc.on.doc",
+            "⧉",
+            point_size=11,
+            tint=TEXT_PRIMARY,
+            background=SURFACE_BG,
+            size=24,
         )
         self.dest_copy_btn.setTarget_(self)
         self.dest_copy_btn.setAction_("copyDest:")
         self.dest_card.addSubview_(self.dest_copy_btn)
 
         self.dest_refresh_btn = create_icon_button(
-            "arrow.clockwise", "↻", point_size=11, tint=TEXT_PRIMARY, background=SURFACE_BG
+            "arrow.clockwise",
+            "↻",
+            point_size=11,
+            tint=TEXT_PRIMARY,
+            background=SURFACE_BG,
+            size=24,
         )
         self.dest_refresh_btn.setTarget_(self)
         self.dest_refresh_btn.setAction_("refreshTranslation:")
@@ -401,7 +577,7 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def configure_popup(self, popup):
         popup.setBordered_(False)
-        popup.setFont_(NSFont.boldSystemFontOfSize_(13))
+        popup.setFont_(NSFont.boldSystemFontOfSize_(12))
         popup.setContentTintColor_(TEXT_PRIMARY)
         popup.setWantsLayer_(True)
         popup.layer().setBackgroundColor_(NSColor.clearColor().CGColor())
@@ -437,13 +613,18 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def set_button_enabled(self, button, enabled):
         button.setEnabled_(enabled)
-        button.setAlphaValue_(1.0 if enabled else 0.4)
+        button.setAlphaValue_(1.0 if enabled else 0.36)
 
     @objc.python_method
     def refresh_pin_style(self):
         accent = BLUE_ACCENT if self.is_pinned else TEXT_SECONDARY
-        background = rgb(232, 239, 255) if self.is_pinned else SURFACE_BG
-        style_surface(self.pin_btn, background, TOOLBAR_BUTTON_SIZE / 2)
+        background = CHIP_BG if self.is_pinned else SURFACE_BG_SOFT
+        style_surface(
+            self.pin_btn,
+            background,
+            TOOLBAR_BUTTON_SIZE / 2,
+            border=BUTTON_BORDER,
+        )
         apply_symbol(self.pin_btn, "pin.fill", "📌", point_size=12, tint=accent)
 
     @objc.python_method
@@ -457,16 +638,56 @@ class FloatingWindow(NSObject):
         self.set_button_enabled(self.dest_refresh_btn, has_source)
 
     @objc.python_method
+    def refresh_source_meta(self):
+        source_text = self.current_source_text.strip()
+        if source_text:
+            meta_text = f"{len(source_text)} 字符"
+            style_pill(self.src_meta_chip, TEXT_SECONDARY, SURFACE_BG)
+        else:
+            meta_text = "等待选中"
+            style_pill(self.src_meta_chip, TEXT_MUTED, SURFACE_BG_SOFT)
+        self.src_meta_chip.setStringValue_(meta_text)
+
+    @objc.python_method
+    def refresh_header_status(self):
+        src_title = self.src_lang_pop.titleOfSelectedItem() or "自动检测"
+        dest_title = self.dest_lang_pop.titleOfSelectedItem() or "中文简体"
+        provider = "大模型" if self.backend == "llm" else "Google"
+        self.header_subtitle_label.setStringValue_(
+            f"{src_title} → {dest_title} · {provider}"
+        )
+
+    @objc.python_method
+    def set_translation_state(self, state):
+        if state == "done":
+            text = "已完成"
+            text_color = TEAL_ACCENT
+            background = CHIP_BG_ALT
+        elif state == "loading":
+            text = "翻译中"
+            text_color = AMBER_ACCENT
+            background = CHIP_BG_WARM
+        else:
+            text = "待翻译"
+            text_color = TEXT_MUTED
+            background = SURFACE_BG_SOFT
+        self.dest_state_chip.setStringValue_(text)
+        style_pill(self.dest_state_chip, text_color, background)
+
+    @objc.python_method
     def refresh_language_ui(self):
         src_title = self.src_lang_pop.titleOfSelectedItem() or "自动检测"
         if src_title == "自动检测":
             badge = "自动检测"
             can_swap = False
+            style_pill(self.src_lang_chip, TEXT_SECONDARY, SURFACE_BG)
         else:
-            badge = f"源语言 {src_title}"
+            badge = src_title
             can_swap = True
+            style_pill(self.src_lang_chip, BLUE_ACCENT, CHIP_BG)
         self.src_lang_chip.setStringValue_(badge)
         self.set_button_enabled(self.swap_btn, can_swap)
+        self.refresh_header_status()
 
     @objc.python_method
     def set_languages(self, languages, source, target):
@@ -544,7 +765,7 @@ class FloatingWindow(NSObject):
     def set_backend_label(self, backend):
         self.backend = backend
         if backend == "llm":
-            accent = PURPLE_ACCENT
+            accent = TEAL_ACCENT
             badge_text = "AI"
             backend_name = "大模型翻译"
         else:
@@ -552,9 +773,10 @@ class FloatingWindow(NSObject):
             badge_text = "G"
             backend_name = "Google 翻译"
 
-        style_surface(self.backend_badge, accent, 10)
+        style_surface(self.backend_badge, accent, 12)
         self.backend_badge_label.setStringValue_(badge_text)
         self.backend_name_label.setStringValue_(backend_name)
+        self.backend_name_label.setTextColor_(TEXT_PRIMARY)
         self.backend_btn.setTitle_("LLM")
         if backend == "llm":
             self.backend_btn.setContentTintColor_(accent)
@@ -567,42 +789,44 @@ class FloatingWindow(NSObject):
                     0.95,
                 ),
                 BACKEND_BTN_WIDTH / 2,
+                border=BUTTON_BORDER,
             )
         else:
             self.backend_btn.setContentTintColor_(TEXT_SECONDARY)
             style_surface(
                 self.backend_btn,
-                rgb(255, 255, 255, 0.85),
+                SURFACE_BG,
                 BACKEND_BTN_WIDTH / 2,
+                border=BUTTON_BORDER,
             )
+        self.refresh_header_status()
 
     @objc.python_method
     def layout_window(self):
         content_width = WINDOW_WIDTH - (OUTER_PADDING * 2)
-        card_inner_width = content_width - 28
+        card_inner_width = content_width - (CARD_INSET_X * 2)
 
         src_text_height = measure_text_height(
-            self.current_source_text or " ", card_inner_width, 14, minimum=48
+            self.current_source_text or " ", card_inner_width, BODY_FONT_SIZE, minimum=48
         )
         dest_display_text = self.current_dest_text or "正在翻译..."
         dest_text_height = measure_text_height(
-            dest_display_text, card_inner_width, 14, minimum=40
+            dest_display_text, card_inner_width, BODY_FONT_SIZE, minimum=40
         )
 
-        # 限制文本可视区域高度，超出部分用滚动
         src_visible = min(src_text_height, MAX_CARD_TEXT_HEIGHT)
         dest_visible = min(dest_text_height, MAX_CARD_TEXT_HEIGHT)
 
-        src_card_height = min(SRC_MAX_CARD_HEIGHT, max(110, src_visible + 44))
-        lang_bar_height = 38
-        dest_card_height = min(DEST_MAX_CARD_HEIGHT, max(120, dest_visible + 74))
+        src_card_height = min(SRC_MAX_CARD_HEIGHT, max(118, src_visible + 68))
+        lang_bar_height = LANG_BAR_HEIGHT
+        dest_card_height = min(DEST_MAX_CARD_HEIGHT, max(132, dest_visible + 82))
         total_height = min(
             MAX_WINDOW_HEIGHT,
             max(
                 WINDOW_MIN_HEIGHT,
                 int(
                     OUTER_PADDING
-                    + TOOLBAR_BUTTON_SIZE
+                    + HEADER_HEIGHT
                     + SECTION_GAP
                     + src_card_height
                     + SECTION_GAP
@@ -614,27 +838,39 @@ class FloatingWindow(NSObject):
             ),
         )
 
-        # 若窗口已达上限，进一步压缩卡片
         overhead = (
-            OUTER_PADDING + TOOLBAR_BUTTON_SIZE + SECTION_GAP
-            + SECTION_GAP + lang_bar_height + SECTION_GAP
+            OUTER_PADDING
+            + HEADER_HEIGHT
+            + SECTION_GAP
+            + SECTION_GAP
+            + lang_bar_height
+            + SECTION_GAP
             + OUTER_PADDING
         )
         available = total_height - overhead
         if src_card_height + dest_card_height > available:
-            # 7:8 比例分配
-            src_card_height = int(available * 7 / 15)
-            dest_card_height = available - src_card_height
+            src_card_height = max(108, int(available * 7 / 15))
+            dest_card_height = max(124, available - src_card_height)
 
         self.root_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
         self.vibrancy_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
+        self.background_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
+        self.background_view.setNeedsDisplay_(True)
 
-        toolbar_y = total_height - OUTER_PADDING - TOOLBAR_BUTTON_SIZE
+        header_y = total_height - OUTER_PADDING - HEADER_HEIGHT
+        toolbar_y = header_y + (HEADER_HEIGHT - TOOLBAR_BUTTON_SIZE) / 2
         self.pin_btn.setFrame_(
             ((OUTER_PADDING, toolbar_y), (TOOLBAR_BUTTON_SIZE, TOOLBAR_BUTTON_SIZE))
         )
 
-        right_x = WINDOW_WIDTH - OUTER_PADDING - TOOLBAR_BUTTON_SIZE
+        title_x = OUTER_PADDING + TOOLBAR_BUTTON_SIZE + 10
+        title_width = max(120, content_width - 220)
+        self.header_title_label.setFrame_(((title_x, header_y + 18), (title_width, 16)))
+        self.header_subtitle_label.setFrame_(
+            ((title_x, header_y + 2), (title_width + 24, 14))
+        )
+
+        right_x = WINDOW_WIDTH - OUTER_PADDING
         for button in (
             self.hide_btn,
             self.backend_btn,
@@ -642,46 +878,61 @@ class FloatingWindow(NSObject):
             self.quick_source_copy_btn,
         ):
             btn_w = BACKEND_BTN_WIDTH if button is self.backend_btn else TOOLBAR_BUTTON_SIZE
-            button.setFrame_(((right_x - btn_w + TOOLBAR_BUTTON_SIZE, toolbar_y), (btn_w, TOOLBAR_BUTTON_SIZE)))
-            right_x -= btn_w + 4
+            button.setFrame_(((right_x - btn_w, toolbar_y), (btn_w, TOOLBAR_BUTTON_SIZE)))
+            right_x -= btn_w + 6
 
-        # --- 源文本卡片 ---
-        src_y = toolbar_y - SECTION_GAP - src_card_height
+        src_y = header_y - SECTION_GAP - src_card_height
         self.src_card.setFrame_(((OUTER_PADDING, src_y), (content_width, src_card_height)))
-        src_visible_h = src_card_height - 44
-        self.src_scroll.setFrame_(((12, 34), (card_inner_width, src_visible_h)))
+        src_visible_h = src_card_height - 82
+        self.src_scroll.setFrame_(((CARD_INSET_X, 42), (card_inner_width, src_visible_h)))
         self.src_label.setFrame_(((0, 0), (card_inner_width, src_text_height)))
-        self.src_audio_btn.setFrame_(((12, 8), (22, 22)))
-        self.src_copy_btn.setFrame_(((38, 8), (22, 22)))
+        self.src_title_label.setFrame_(((CARD_INSET_X, src_card_height - 30), (40, 14)))
+        self.src_audio_btn.setFrame_(((CARD_INSET_X, 12), (24, 24)))
+        self.src_copy_btn.setFrame_(((CARD_INSET_X + 30, 12), (24, 24)))
+
+        meta_text = self.src_meta_chip.stringValue() or "等待选中"
+        meta_width = min(max(measure_text_width(meta_text, 10, bold=True) + 18, 72), 110)
+        self.src_meta_chip.setFrame_(
+            ((content_width - CARD_INSET_X - meta_width, src_card_height - 34), (meta_width, 20))
+        )
 
         chip_text = self.src_lang_chip.stringValue() or "自动检测"
-        chip_width = min(max(measure_text_width(chip_text, 11, bold=True) + 18, 70), 130)
-        self.src_lang_chip.setFrame_(((68, 10), (chip_width, 20)))
+        chip_width = min(max(measure_text_width(chip_text, 10, bold=True) + 18, 72), 126)
+        self.src_lang_chip.setFrame_(
+            ((content_width - CARD_INSET_X - chip_width, 14), (chip_width, 20))
+        )
 
-        # --- 语言栏 ---
         lang_y = src_y - SECTION_GAP - lang_bar_height
         self.lang_bar.setFrame_(((OUTER_PADDING, lang_y), (content_width, lang_bar_height)))
-        popup_width = (content_width - 58) / 2
-        self.src_lang_pop.setFrame_(((12, 6), (popup_width, 26)))
-        self.swap_btn.setFrame_((((content_width - 24) / 2, 6), (24, 24)))
-        self.dest_lang_pop.setFrame_(((content_width - 12 - popup_width, 6), (popup_width, 26)))
+        popup_width = (content_width - 72) / 2
+        self.src_lang_pop.setFrame_(((CARD_INSET_X, 8), (popup_width, 24)))
+        self.swap_btn.setFrame_((((content_width - 24) / 2, 9), (24, 24)))
+        self.dest_lang_pop.setFrame_(
+            ((content_width - CARD_INSET_X - popup_width, 8), (popup_width, 24))
+        )
 
-        # --- 目标文本卡片 ---
         dest_y = lang_y - SECTION_GAP - dest_card_height
         self.dest_card.setFrame_(((OUTER_PADDING, dest_y), (content_width, dest_card_height)))
 
-        dest_visible_h = dest_card_height - 74
-        dest_text_y_scroll = 36
-        self.dest_scroll.setFrame_(((12, dest_text_y_scroll), (card_inner_width, dest_visible_h)))
+        dest_visible_h = dest_card_height - 84
+        dest_text_y_scroll = 42
+        self.dest_scroll.setFrame_(
+            ((CARD_INSET_X, dest_text_y_scroll), (card_inner_width, dest_visible_h))
+        )
         self.dest_label.setFrame_(((0, 0), (card_inner_width, dest_text_height)))
 
-        provider_y = dest_text_y_scroll + dest_visible_h + 10
-        self.backend_badge.setFrame_(((12, provider_y), (22, 22)))
-        self.backend_badge_label.setFrame_(((0, 3), (22, 14)))
-        self.backend_name_label.setFrame_(((42, provider_y + 3), (content_width - 86, 16)))
-        self.backend_toggle_btn.setFrame_(((content_width - 12 - 20, provider_y + 1), (20, 20)))
-        self.dest_copy_btn.setFrame_(((12, 8), (22, 22)))
-        self.dest_refresh_btn.setFrame_(((38, 8), (22, 22)))
+        provider_y = dest_text_y_scroll + dest_visible_h + 8
+        toggle_x = content_width - CARD_INSET_X - 24
+        state_text = self.dest_state_chip.stringValue() or "待翻译"
+        state_width = min(max(measure_text_width(state_text, 10, bold=True) + 18, 60), 78)
+        state_x = toggle_x - 8 - state_width
+        self.backend_badge.setFrame_(((CARD_INSET_X, provider_y), (24, 24)))
+        self.backend_badge_label.setFrame_(((0, 4), (24, 14)))
+        self.backend_name_label.setFrame_(((CARD_INSET_X + 32, provider_y + 4), (state_x - 58, 16)))
+        self.dest_state_chip.setFrame_(((state_x, provider_y + 2), (state_width, 20)))
+        self.backend_toggle_btn.setFrame_(((toggle_x, provider_y), (24, 24)))
+        self.dest_copy_btn.setFrame_(((CARD_INSET_X, 12), (24, 24)))
+        self.dest_refresh_btn.setFrame_(((CARD_INSET_X + 30, 12), (24, 24)))
 
     @objc.python_method
     def show(self, src_text, dest_text=None):
@@ -695,10 +946,13 @@ class FloatingWindow(NSObject):
         if dest_text:
             self.dest_label.setStringValue_(dest_text)
             self.dest_label.setTextColor_(TEXT_PRIMARY)
+            self.set_translation_state("done")
         else:
             self.dest_label.setStringValue_("正在翻译...")
             self.dest_label.setTextColor_(TEXT_MUTED)
+            self.set_translation_state("loading")
 
+        self.refresh_source_meta()
         self.refresh_language_ui()
         self.refresh_action_state()
         self.layout_window()
@@ -764,6 +1018,7 @@ class FloatingWindow(NSObject):
         self._stream_final = None
         self.dest_label.setStringValue_("")
         self.dest_label.setTextColor_(TEXT_PRIMARY)
+        self.set_translation_state("loading")
         self._stream_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.03, self, "_streamTick:", None, True
         )
@@ -782,12 +1037,13 @@ class FloatingWindow(NSObject):
         self.dest_label.setStringValue_(displayed)
         self.refresh_action_state()
 
-        # 更新 dest_label 高度以支持滚动；仅在卡片需增高时重新布局
-        card_inner_width = WINDOW_WIDTH - (OUTER_PADDING * 2) - 28
-        full_text_height = measure_text_height(displayed, card_inner_width, 14, minimum=40)
+        card_inner_width = WINDOW_WIDTH - (OUTER_PADDING * 2) - (CARD_INSET_X * 2)
+        full_text_height = measure_text_height(
+            displayed, card_inner_width, BODY_FONT_SIZE, minimum=40
+        )
         self.dest_label.setFrame_(((0, 0), (card_inner_width, full_text_height)))
 
-        needed_card_height = min(DEST_MAX_CARD_HEIGHT, max(120, full_text_height + 74))
+        needed_card_height = min(DEST_MAX_CARD_HEIGHT, max(132, full_text_height + 82))
         old_card_height = self.dest_card.frame().size.height
         if int(needed_card_height) > int(old_card_height):
             self.layout_window()
@@ -814,6 +1070,7 @@ class FloatingWindow(NSObject):
         self._stop_stream()
         self.current_dest_text = self._stream_buffer
         self.dest_label.setStringValue_(self._stream_buffer)
+        self.set_translation_state("done")
         self.refresh_action_state()
         self.layout_window()
 
