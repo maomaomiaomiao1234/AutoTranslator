@@ -72,6 +72,9 @@ class AutoTranslator(NSObject):
         self.last_copy_time = 0
         self.copy_interval = 0.4
         self._translate_version = 0
+        self._mouse_down_point = None
+        self._mouse_dragged_since_down = False
+        self._drag_threshold_sq = 36
         return self
 
     @objc.python_method
@@ -131,11 +134,19 @@ class AutoTranslator(NSObject):
 
     def start_mouse_monitor(self):
         def callback(proxy, type_, event, refcon):
-            if type_ == Quartz.kCGEventLeftMouseUp:
-                self.on_mouse_up()
+            if type_ == Quartz.kCGEventLeftMouseDown:
+                self.on_mouse_down(event)
+            elif type_ == Quartz.kCGEventLeftMouseDragged:
+                self.on_mouse_dragged(event)
+            elif type_ == Quartz.kCGEventLeftMouseUp:
+                self.on_mouse_up(event)
             return event
 
-        mask = Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseUp)
+        mask = (
+            Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseDown)
+            | Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseDragged)
+            | Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseUp)
+        )
         self.event_tap = Quartz.CGEventTapCreate(
             Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
             Quartz.kCGEventTapOptionListenOnly, mask, callback, None
@@ -149,9 +160,35 @@ class AutoTranslator(NSObject):
         Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), run_loop_source, Quartz.kCFRunLoopCommonModes)
         Quartz.CGEventTapEnable(self.event_tap, True)
 
-    def on_mouse_up(self, force=False):
+    def on_mouse_down(self, event):
+        point = Quartz.CGEventGetLocation(event)
+        self._mouse_down_point = (point.x, point.y)
+        self._mouse_dragged_since_down = False
+
+    def on_mouse_dragged(self, event):
+        if self._mouse_down_point is None:
+            return
+
+        point = Quartz.CGEventGetLocation(event)
+        dx = point.x - self._mouse_down_point[0]
+        dy = point.y - self._mouse_down_point[1]
+        if (dx * dx) + (dy * dy) >= self._drag_threshold_sq:
+            self._mouse_dragged_since_down = True
+
+    def on_mouse_up(self, event=None, force=False):
+        allow_clipboard_fallback = force or self._mouse_dragged_since_down
+        if event is not None:
+            click_count = Quartz.CGEventGetIntegerValueField(
+                event, Quartz.kCGMouseEventClickState
+            )
+            allow_clipboard_fallback = allow_clipboard_fallback or click_count > 1
+
+        self._mouse_down_point = None
+        self._mouse_dragged_since_down = False
         time.sleep(0.05)
-        text = self.get_selected_text()
+        text = self.get_selected_text(
+            allow_clipboard_fallback=allow_clipboard_fallback
+        )
 
         if not text:
             return
@@ -206,7 +243,7 @@ class AutoTranslator(NSObject):
         else:
             self.window.show(text, translated)
 
-    def get_selected_text(self):
+    def get_selected_text(self, allow_clipboard_fallback=False):
         front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
         if not front_app: return None
         pid = front_app.processIdentifier()
@@ -219,6 +256,10 @@ class AutoTranslator(NSObject):
                     return selected.strip()
         except Exception:
             logging.debug("Accessibility API 获取选中文本失败，回退到剪贴板", exc_info=True)
+
+        # 只在用户刚做过明确的选词动作时才退回到 Cmd+C，避免普通点击应用时误触发提示音。
+        if not allow_clipboard_fallback:
+            return None
         return self.get_by_clipboard()
 
     def get_by_clipboard(self):
