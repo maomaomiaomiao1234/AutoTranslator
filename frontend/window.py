@@ -63,6 +63,16 @@ def rgb(r, g, b, a=1.0):
     )
 
 
+def blend_with_white(color, amount, alpha=1.0):
+    base = (
+        int(color.redComponent() * 255),
+        int(color.greenComponent() * 255),
+        int(color.blueComponent() * 255),
+    )
+    mixed = tuple(int(channel + (255 - channel) * amount) for channel in base)
+    return rgb(mixed[0], mixed[1], mixed[2], alpha)
+
+
 WINDOW_BG = rgb(0, 0, 0, 0)
 PANEL_TOP = rgb(248, 242, 232, 0.96)
 PANEL_BOTTOM = rgb(231, 240, 248, 0.94)
@@ -72,6 +82,7 @@ LANG_BAR_BG = rgb(255, 255, 255, 0.58)
 DEST_CARD_BG = rgb(251, 253, 255, 0.76)
 SURFACE_BG = rgb(255, 255, 255, 0.74)
 SURFACE_BG_SOFT = rgb(255, 255, 255, 0.56)
+TOOLBAR_GHOST_BG = rgb(255, 255, 255, 0.08)
 CARD_BORDER = rgb(255, 255, 255, 0.58)
 BUTTON_BORDER = rgb(255, 255, 255, 0.78)
 TEXT_PRIMARY = rgb(31, 35, 42)
@@ -80,6 +91,9 @@ TEXT_MUTED = rgb(144, 150, 159)
 BLUE_ACCENT = rgb(53, 97, 214)
 TEAL_ACCENT = rgb(20, 151, 135)
 AMBER_ACCENT = rgb(194, 121, 28)
+TOOLBAR_BUTTON_BORDER = rgb(255, 255, 255, 0.34)
+TOOLBAR_ACTIVE_BG = blend_with_white(BLUE_ACCENT, 0.82, 0.78)
+TOOLBAR_ACTIVE_BORDER = blend_with_white(BLUE_ACCENT, 0.56, 0.84)
 CHIP_BG = rgb(235, 242, 255, 0.96)
 CHIP_BG_ALT = rgb(231, 247, 242, 0.96)
 CHIP_BG_WARM = rgb(255, 238, 209, 0.97)
@@ -165,13 +179,26 @@ def create_icon_button(
     tint=TEXT_SECONDARY,
     background=SURFACE_BG,
     size=TOOLBAR_BUTTON_SIZE,
+    border=BUTTON_BORDER,
 ):
     button = NSButton.alloc().init()
     button.setBordered_(False)
     button.setBezelStyle_(NSBezelStyleRegularSquare)
-    style_surface(button, background, size / 2, border=BUTTON_BORDER)
+    style_surface(button, background, size / 2, border=border)
     apply_symbol(button, symbol_name, fallback, point_size=point_size, tint=tint)
     return button
+
+
+def create_toolbar_icon_button(symbol_name, fallback, point_size=12, tint=TEXT_SECONDARY):
+    return create_icon_button(
+        symbol_name,
+        fallback,
+        point_size=point_size,
+        tint=tint,
+        background=TOOLBAR_GHOST_BG,
+        size=TOOLBAR_BUTTON_SIZE,
+        border=TOOLBAR_BUTTON_BORDER,
+    )
 
 
 def measure_text_height(text, width, font_size, bold=False, minimum=0):
@@ -335,7 +362,7 @@ class FloatingWindow(NSObject):
 
     @objc.python_method
     def build_toolbar(self):
-        self.pin_btn = create_icon_button(
+        self.pin_btn = create_toolbar_icon_button(
             "pin.fill", "📌", point_size=12, tint=TEXT_SECONDARY
         )
         self.pin_btn.setTarget_(self)
@@ -354,14 +381,14 @@ class FloatingWindow(NSObject):
         self.header_subtitle_label.setStringValue_("自动检测 → 中文简体 · Google")
         self.root_view.addSubview_(self.header_subtitle_label)
 
-        self.quick_source_copy_btn = create_icon_button(
+        self.quick_source_copy_btn = create_toolbar_icon_button(
             "scissors", "✂", point_size=12, tint=TEXT_SECONDARY
         )
         self.quick_source_copy_btn.setTarget_(self)
         self.quick_source_copy_btn.setAction_("copySource:")
         self.root_view.addSubview_(self.quick_source_copy_btn)
 
-        self.quick_dest_copy_btn = create_icon_button(
+        self.quick_dest_copy_btn = create_toolbar_icon_button(
             "doc.on.doc", "⧉", point_size=12, tint=TEXT_SECONDARY
         )
         self.quick_dest_copy_btn.setTarget_(self)
@@ -377,13 +404,13 @@ class FloatingWindow(NSObject):
         self.backend_btn.setAction_("onBackendToggle:")
         style_surface(
             self.backend_btn,
-            SURFACE_BG,
+            TOOLBAR_GHOST_BG,
             BACKEND_BTN_WIDTH / 2,
-            border=BUTTON_BORDER,
+            border=TOOLBAR_BUTTON_BORDER,
         )
         self.root_view.addSubview_(self.backend_btn)
 
-        self.hide_btn = create_icon_button(
+        self.hide_btn = create_toolbar_icon_button(
             "xmark", "✕", point_size=12, tint=TEXT_SECONDARY
         )
         self.hide_btn.setTarget_(self)
@@ -618,12 +645,13 @@ class FloatingWindow(NSObject):
     @objc.python_method
     def refresh_pin_style(self):
         accent = BLUE_ACCENT if self.is_pinned else TEXT_SECONDARY
-        background = CHIP_BG if self.is_pinned else SURFACE_BG_SOFT
+        background = TOOLBAR_ACTIVE_BG if self.is_pinned else TOOLBAR_GHOST_BG
+        border = TOOLBAR_ACTIVE_BORDER if self.is_pinned else TOOLBAR_BUTTON_BORDER
         style_surface(
             self.pin_btn,
             background,
             TOOLBAR_BUTTON_SIZE / 2,
-            border=BUTTON_BORDER,
+            border=border,
         )
         apply_symbol(self.pin_btn, "pin.fill", "📌", point_size=12, tint=accent)
 
@@ -782,22 +810,17 @@ class FloatingWindow(NSObject):
             self.backend_btn.setContentTintColor_(accent)
             style_surface(
                 self.backend_btn,
-                rgb(
-                    int((accent.redComponent() * 255 + 255) / 2),
-                    int((accent.greenComponent() * 255 + 255) / 2),
-                    int((accent.blueComponent() * 255 + 255) / 2),
-                    0.95,
-                ),
+                blend_with_white(accent, 0.84, 0.72),
                 BACKEND_BTN_WIDTH / 2,
-                border=BUTTON_BORDER,
+                border=blend_with_white(accent, 0.56, 0.84),
             )
         else:
             self.backend_btn.setContentTintColor_(TEXT_SECONDARY)
             style_surface(
                 self.backend_btn,
-                SURFACE_BG,
+                TOOLBAR_GHOST_BG,
                 BACKEND_BTN_WIDTH / 2,
-                border=BUTTON_BORDER,
+                border=TOOLBAR_BUTTON_BORDER,
             )
         self.refresh_header_status()
 

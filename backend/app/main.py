@@ -6,6 +6,7 @@ import sys
 import time
 import signal
 import threading
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,10 +31,13 @@ from ApplicationServices import (
     kAXSelectedTextAttribute,
     kAXFocusedUIElementAttribute,
     AXIsProcessTrusted,
+    AXIsProcessTrustedWithOptions,
+    kAXTrustedCheckOptionPrompt,
 )
 
 from deep_translator import GoogleTranslator
 from backend.LLM_set import LLMTranslator
+from backend.app.runtime_config import APP_SUPPORT_DIR, CONFIG_PATH, apply_runtime_config
 from frontend.window import FloatingWindow
 
 # 常用语言映射 (名称 -> 代码)
@@ -252,16 +256,36 @@ class AutoTranslator(NSObject):
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
 
 
+def ensure_accessibility_permission():
+    if AXIsProcessTrusted():
+        return True
+
+    try:
+        options = {kAXTrustedCheckOptionPrompt: True}
+        if AXIsProcessTrustedWithOptions(options):
+            return True
+    except Exception:
+        logging.debug("无法主动触发辅助功能授权提示", exc_info=True)
+
+    logging.error("需要辅助功能权限，请在“系统设置 > 隐私与安全性 > 辅助功能”中允许 AutoTranslator。")
+    return False
+
+
 def main():
-    if not AXIsProcessTrusted():
-        logging.error("需要辅助功能权限")
+    apply_runtime_config()
+    Path(APP_SUPPORT_DIR).mkdir(parents=True, exist_ok=True)
+
+    if not ensure_accessibility_permission():
         sys.exit(1)
 
     backend = os.environ.get("TRANSLATOR_BACKEND", "llm")
     if backend == "llm":
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY")
         if not api_key:
-            logging.warning("未设置 API Key，回退到谷歌翻译。设置 DEEPSEEK_API_KEY 后可在窗口内切换。")
+            logging.warning(
+                "未设置 API Key，回退到谷歌翻译。可在 %s 中配置 DEEPSEEK_API_KEY 或 LLM_API_KEY。",
+                CONFIG_PATH,
+            )
             os.environ["TRANSLATOR_BACKEND"] = "google"
             backend = "google"
 
