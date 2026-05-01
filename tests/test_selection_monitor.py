@@ -2,69 +2,74 @@
 
 from types import SimpleNamespace
 
-from backend.app import main as app_main
+from backend.app.mouse_monitor import MouseMonitor
 
 
-def make_dummy(captured, dragged=False):
-    def get_selected_text(*, allow_clipboard_fallback=False):
-        captured["allow_clipboard_fallback"] = allow_clipboard_fallback
-        return None
+class _MockDelegate:
+    def __init__(self):
+        self.allow_clipboard_fallback = None
 
-    return SimpleNamespace(
-        _mouse_dragged_since_down=dragged,
-        _mouse_down_point=(24, 24),
-        get_selected_text=get_selected_text,
-    )
+    def on_selection_event(self, allow_clipboard_fallback: bool) -> None:
+        self.allow_clipboard_fallback = allow_clipboard_fallback
+
+
+def _make_monitor(dragged=False):
+    delegate = _MockDelegate()
+    monitor = MouseMonitor(delegate=delegate)
+    monitor._mouse_dragged_since_down = dragged
+    monitor._mouse_down_point = (24, 24)
+    return monitor, delegate
 
 
 def test_single_click_does_not_trigger_clipboard_fallback(monkeypatch):
-    captured = {}
-    dummy = make_dummy(captured, dragged=False)
+    monitor, delegate = _make_monitor(dragged=False)
     event = SimpleNamespace(click_count=1)
 
-    monkeypatch.setattr(app_main.time, "sleep", lambda _: None)
+    monkeypatch.setattr(monitor, "_on_mouse_down", lambda e: None)
+    import backend.app.mouse_monitor as mm_module
+    monkeypatch.setattr(mm_module.time, "sleep", lambda _: None)
     monkeypatch.setattr(
-        app_main.Quartz,
+        mm_module.Quartz,
         "CGEventGetIntegerValueField",
         lambda event, field: event.click_count,
     )
 
-    app_main.AutoTranslator.on_mouse_up(dummy, event=event)
+    monitor._on_mouse_up(event)
 
-    assert captured["allow_clipboard_fallback"] is False
-    assert dummy._mouse_dragged_since_down is False
-    assert dummy._mouse_down_point is None
+    assert delegate.allow_clipboard_fallback is False
+    assert monitor._mouse_dragged_since_down is False
+    assert monitor._mouse_down_point is None
 
 
 def test_drag_selection_keeps_clipboard_fallback(monkeypatch):
-    captured = {}
-    dummy = make_dummy(captured, dragged=True)
+    monitor, delegate = _make_monitor(dragged=True)
     event = SimpleNamespace(click_count=1)
 
-    monkeypatch.setattr(app_main.time, "sleep", lambda _: None)
+    import backend.app.mouse_monitor as mm_module
+    monkeypatch.setattr(mm_module.time, "sleep", lambda _: None)
     monkeypatch.setattr(
-        app_main.Quartz,
+        mm_module.Quartz,
         "CGEventGetIntegerValueField",
         lambda event, field: event.click_count,
     )
 
-    app_main.AutoTranslator.on_mouse_up(dummy, event=event)
+    monitor._on_mouse_up(event)
 
-    assert captured["allow_clipboard_fallback"] is True
+    assert delegate.allow_clipboard_fallback is True
 
 
 def test_double_click_keeps_clipboard_fallback(monkeypatch):
-    captured = {}
-    dummy = make_dummy(captured, dragged=False)
+    monitor, delegate = _make_monitor(dragged=False)
     event = SimpleNamespace(click_count=2)
 
-    monkeypatch.setattr(app_main.time, "sleep", lambda _: None)
+    import backend.app.mouse_monitor as mm_module
+    monkeypatch.setattr(mm_module.time, "sleep", lambda _: None)
     monkeypatch.setattr(
-        app_main.Quartz,
+        mm_module.Quartz,
         "CGEventGetIntegerValueField",
         lambda event, field: event.click_count,
     )
 
-    app_main.AutoTranslator.on_mouse_up(dummy, event=event)
+    monitor._on_mouse_up(event)
 
-    assert captured["allow_clipboard_fallback"] is True
+    assert delegate.allow_clipboard_fallback is True

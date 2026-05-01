@@ -430,13 +430,13 @@ class FloatingWindow(NSObject):
         self.root_view.addSubview_(self.src_card)
 
         self.src_title_label = create_label(
-            11, color=TEXT_SECONDARY, bold=True, selectable=False, wraps=False
+            9, color=TEXT_SECONDARY, bold=True, selectable=False, wraps=False
         )
         self.src_title_label.setStringValue_("原文")
         self.src_card.addSubview_(self.src_title_label)
 
         self.src_meta_chip = create_pill_label(
-            font_size=10, color=TEXT_SECONDARY, background=SURFACE_BG_SOFT
+            font_size=9, color=TEXT_SECONDARY, background=SURFACE_BG_SOFT
         )
         self.src_card.addSubview_(self.src_meta_chip)
 
@@ -455,10 +455,10 @@ class FloatingWindow(NSObject):
         self.src_audio_btn = create_icon_button(
             "speaker.wave.2",
             "🔊",
-            point_size=11,
+            point_size=10,
             tint=TEXT_MUTED,
             background=SURFACE_BG,
-            size=24,
+            size=20,
         )
         self.src_audio_btn.setEnabled_(False)
         self.src_audio_btn.setAlphaValue_(0.45)
@@ -467,17 +467,17 @@ class FloatingWindow(NSObject):
         self.src_copy_btn = create_icon_button(
             "doc.on.doc",
             "⧉",
-            point_size=11,
+            point_size=10,
             tint=TEXT_PRIMARY,
             background=SURFACE_BG,
-            size=24,
+            size=20,
         )
         self.src_copy_btn.setTarget_(self)
         self.src_copy_btn.setAction_("copySource:")
         self.src_card.addSubview_(self.src_copy_btn)
 
         self.src_lang_chip = create_pill_label(
-            font_size=10, color=BLUE_ACCENT, background=CHIP_BG
+            font_size=9, color=BLUE_ACCENT, background=CHIP_BG
         )
         self.src_card.addSubview_(self.src_lang_chip)
 
@@ -840,7 +840,7 @@ class FloatingWindow(NSObject):
         src_visible = min(src_text_height, MAX_CARD_TEXT_HEIGHT)
         dest_visible = min(dest_text_height, MAX_CARD_TEXT_HEIGHT)
 
-        src_card_height = min(SRC_MAX_CARD_HEIGHT, max(118, src_visible + 68))
+        src_card_height = min(SRC_MAX_CARD_HEIGHT, max(106, src_visible + 50))
         lang_bar_height = LANG_BAR_HEIGHT
         dest_card_height = min(DEST_MAX_CARD_HEIGHT, max(132, dest_visible + 82))
         total_height = min(
@@ -872,7 +872,7 @@ class FloatingWindow(NSObject):
         )
         available = total_height - overhead
         if src_card_height + dest_card_height > available:
-            src_card_height = max(108, int(available * 7 / 15))
+            src_card_height = max(100, int(available * 7 / 15))
             dest_card_height = max(124, available - src_card_height)
 
         self.root_view.setFrame_(((0, 0), (WINDOW_WIDTH, total_height)))
@@ -906,23 +906,23 @@ class FloatingWindow(NSObject):
 
         src_y = header_y - SECTION_GAP - src_card_height
         self.src_card.setFrame_(((OUTER_PADDING, src_y), (content_width, src_card_height)))
-        src_visible_h = src_card_height - 82
-        self.src_scroll.setFrame_(((CARD_INSET_X, 42), (card_inner_width, src_visible_h)))
+        src_visible_h = src_card_height - 58
+        self.src_scroll.setFrame_(((CARD_INSET_X, 32), (card_inner_width, src_visible_h)))
         self.src_label.setFrame_(((0, 0), (card_inner_width, src_text_height)))
-        self.src_title_label.setFrame_(((CARD_INSET_X, src_card_height - 30), (40, 14)))
-        self.src_audio_btn.setFrame_(((CARD_INSET_X, 12), (24, 24)))
-        self.src_copy_btn.setFrame_(((CARD_INSET_X + 30, 12), (24, 24)))
+        self.src_title_label.setFrame_(((CARD_INSET_X, src_card_height - 22), (40, 12)))
+        self.src_audio_btn.setFrame_(((CARD_INSET_X, 8), (20, 20)))
+        self.src_copy_btn.setFrame_(((CARD_INSET_X + 26, 8), (20, 20)))
 
         meta_text = self.src_meta_chip.stringValue() or "等待选中"
-        meta_width = min(max(measure_text_width(meta_text, 10, bold=True) + 18, 72), 110)
+        meta_width = min(max(measure_text_width(meta_text, 9, bold=True) + 16, 64), 100)
         self.src_meta_chip.setFrame_(
-            ((content_width - CARD_INSET_X - meta_width, src_card_height - 34), (meta_width, 20))
+            ((content_width - CARD_INSET_X - meta_width, src_card_height - 24), (meta_width, 18))
         )
 
         chip_text = self.src_lang_chip.stringValue() or "自动检测"
-        chip_width = min(max(measure_text_width(chip_text, 10, bold=True) + 18, 72), 126)
+        chip_width = min(max(measure_text_width(chip_text, 9, bold=True) + 16, 64), 120)
         self.src_lang_chip.setFrame_(
-            ((content_width - CARD_INSET_X - chip_width, 14), (chip_width, 20))
+            ((content_width - CARD_INSET_X - chip_width, 10), (chip_width, 18))
         )
 
         lang_y = src_y - SECTION_GAP - lang_bar_height

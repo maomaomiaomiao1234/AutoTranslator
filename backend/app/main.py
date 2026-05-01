@@ -14,7 +14,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-import Quartz
 import objc
 
 # 动态添加项目根目录到 sys.path
@@ -23,13 +22,8 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from Cocoa import NSObject, NSApplication, NSWorkspace
-from AppKit import NSPasteboard
+from Cocoa import NSObject, NSApplication
 from ApplicationServices import (
-    AXUIElementCreateApplication,
-    AXUIElementCopyAttributeValue,
-    kAXSelectedTextAttribute,
-    kAXFocusedUIElementAttribute,
     AXIsProcessTrusted,
     AXIsProcessTrustedWithOptions,
     kAXTrustedCheckOptionPrompt,
@@ -38,6 +32,8 @@ from ApplicationServices import (
 from deep_translator import GoogleTranslator
 from backend.LLM_set import LLMTranslator
 from backend.app.runtime_config import APP_SUPPORT_DIR, CONFIG_PATH, apply_runtime_config
+from backend.app.mouse_monitor import MouseMonitor
+from backend.app.text_selector import TextSelector
 from frontend.window import FloatingWindow
 
 # 常用语言映射 (名称 -> 代码)
@@ -69,13 +65,29 @@ class AutoTranslator(NSObject):
         self.window.set_languages(LANGUAGES, self.src_lang, self.dest_lang)
         self.window.set_backend_label(self.translator_backend)
 
-        self.last_copy_time = 0
-        self.copy_interval = 0.4
+        self.text_selector = TextSelector()
+        self.mouse_monitor = MouseMonitor(delegate=self)
+
         self._translate_version = 0
-        self._mouse_down_point = None
-        self._mouse_dragged_since_down = False
-        self._drag_threshold_sq = 36
         return self
+
+    # ======== MouseMonitorDelegate ========
+
+    @objc.python_method
+    def on_selection_event(self, allow_clipboard_fallback: bool) -> None:
+        text = self.text_selector.get_selected_text(
+            allow_clipboard_fallback=allow_clipboard_fallback,
+            previous_text=self.last_text or "",
+        )
+        if not text:
+            return
+        if text == self.last_text:
+            return
+        self.last_text = text
+        self.window.show(text, None)
+        self._dispatch_translate(text)
+
+    # ======== Backend management ========
 
     @objc.python_method
     def _create_translator(self):
@@ -97,21 +109,17 @@ class AutoTranslator(NSObject):
         self.translator = self._create_translator()
         self.window.set_backend_label(self.translator_backend)
         logging.info("翻译后端切换为: %s", self.translator_backend)
+        self.retranslate_last()
 
-        if self.last_text:
-            self.on_mouse_up(force=True)
+    # ======== Window delegate methods ========
 
     @objc.python_method
     def language_changed(self, src_name, dest_name):
         self.src_lang = LANGUAGES.get(src_name, "auto")
         self.dest_lang = LANGUAGES.get(dest_name, "zh-CN")
         logging.info("语言切换: %s(%s) -> %s(%s)", src_name, self.src_lang, dest_name, self.dest_lang)
-        
         self.translator = self._create_translator()
-        
-        # 如果当前有选中的文本，立即重新翻译
-        if self.last_text:
-            self.on_mouse_up(force=True)
+        self.retranslate_last()
 
     @objc.python_method
     def swap_languages(self):
@@ -123,82 +131,22 @@ class AutoTranslator(NSObject):
         self.window.set_languages(LANGUAGES, self.src_lang, self.dest_lang)
         self.translator = self._create_translator()
         logging.info("语言互换完成: %s -> %s", self.src_lang, self.dest_lang)
-
-        if self.last_text:
-            self.on_mouse_up(force=True)
+        self.retranslate_last()
 
     @objc.python_method
     def retranslate_current(self):
-        if self.last_text:
-            self.on_mouse_up(force=True)
+        self.retranslate_last()
 
-    def start_mouse_monitor(self):
-        def callback(proxy, type_, event, refcon):
-            if type_ == Quartz.kCGEventLeftMouseDown:
-                self.on_mouse_down(event)
-            elif type_ == Quartz.kCGEventLeftMouseDragged:
-                self.on_mouse_dragged(event)
-            elif type_ == Quartz.kCGEventLeftMouseUp:
-                self.on_mouse_up(event)
-            return event
-
-        mask = (
-            Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseDown)
-            | Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseDragged)
-            | Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseUp)
-        )
-        self.event_tap = Quartz.CGEventTapCreate(
-            Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
-            Quartz.kCGEventTapOptionListenOnly, mask, callback, None
-        )
-
-        if not self.event_tap:
-            logging.error("无法创建 EventTap")
+    @objc.python_method
+    def retranslate_last(self):
+        if not self.last_text:
             return
+        self.window.show(self.last_text, None)
+        self._dispatch_translate(self.last_text)
 
-        run_loop_source = Quartz.CFMachPortCreateRunLoopSource(None, self.event_tap, 0)
-        Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), run_loop_source, Quartz.kCFRunLoopCommonModes)
-        Quartz.CGEventTapEnable(self.event_tap, True)
+    # ======== Translation dispatch ========
 
-    def on_mouse_down(self, event):
-        point = Quartz.CGEventGetLocation(event)
-        self._mouse_down_point = (point.x, point.y)
-        self._mouse_dragged_since_down = False
-
-    def on_mouse_dragged(self, event):
-        if self._mouse_down_point is None:
-            return
-
-        point = Quartz.CGEventGetLocation(event)
-        dx = point.x - self._mouse_down_point[0]
-        dy = point.y - self._mouse_down_point[1]
-        if (dx * dx) + (dy * dy) >= self._drag_threshold_sq:
-            self._mouse_dragged_since_down = True
-
-    def on_mouse_up(self, event=None, force=False):
-        allow_clipboard_fallback = force or self._mouse_dragged_since_down
-        if event is not None:
-            click_count = Quartz.CGEventGetIntegerValueField(
-                event, Quartz.kCGMouseEventClickState
-            )
-            allow_clipboard_fallback = allow_clipboard_fallback or click_count > 1
-
-        self._mouse_down_point = None
-        self._mouse_dragged_since_down = False
-        time.sleep(0.05)
-        text = self.get_selected_text(
-            allow_clipboard_fallback=allow_clipboard_fallback
-        )
-
-        if not text:
-            return
-
-        if not force and text == self.last_text:
-            return
-
-        self.last_text = text
-        self.window.show(text, None)
-
+    def _dispatch_translate(self, text):
         self._translate_version += 1
         version = self._translate_version
         threading.Thread(
@@ -243,59 +191,6 @@ class AutoTranslator(NSObject):
         else:
             self.window.show(text, translated)
 
-    def get_selected_text(self, allow_clipboard_fallback=False):
-        front_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if not front_app: return None
-        pid = front_app.processIdentifier()
-        try:
-            app_ref = AXUIElementCreateApplication(pid)
-            focused, err = AXUIElementCopyAttributeValue(app_ref, kAXFocusedUIElementAttribute, None)
-            if err == 0 and focused:
-                selected, err = AXUIElementCopyAttributeValue(focused, kAXSelectedTextAttribute, None)
-                if err == 0 and selected and selected.strip():
-                    return selected.strip()
-        except Exception:
-            logging.debug("Accessibility API 获取选中文本失败，回退到剪贴板", exc_info=True)
-
-        # 只在用户刚做过明确的选词动作时才退回到 Cmd+C，避免普通点击应用时误触发提示音。
-        if not allow_clipboard_fallback:
-            return None
-        return self.get_by_clipboard()
-
-    def get_by_clipboard(self):
-        now = time.time()
-        if now - self.last_copy_time < self.copy_interval: return None
-        self.last_copy_time = now
-
-        pb = NSPasteboard.generalPasteboard()
-        old_text = pb.stringForType_("public.utf8-plain-text")
-        old_count = pb.changeCount()
-        self.simulate_cmd_c()
-
-        new_text = None
-        for _ in range(20):
-            time.sleep(0.01)
-            if pb.changeCount() != old_count:
-                new_text = pb.stringForType_("public.utf8-plain-text")
-                break
-
-        if old_text is not None:
-            pb.clearContents()
-            pb.declareTypes_owner_(["public.utf8-plain-text", "org.nspasteboard.TransientType"], None)
-            pb.setString_forType_(old_text, "public.utf8-plain-text")
-
-        if new_text:
-            new_text = new_text.strip()
-            return new_text if new_text and new_text != self.last_text else None
-        return None
-
-    def simulate_cmd_c(self):
-        event_down = Quartz.CGEventCreateKeyboardEvent(None, 8, True)
-        Quartz.CGEventSetFlags(event_down, Quartz.kCGEventFlagMaskCommand)
-        event_up = Quartz.CGEventCreateKeyboardEvent(None, 8, False)
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
-
 
 def ensure_accessibility_permission():
     if AXIsProcessTrusted():
@@ -335,7 +230,7 @@ def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     t = AutoTranslator.alloc().init()
-    t.start_mouse_monitor()
+    t.mouse_monitor.start()
 
     backend_name = "大模型" if backend == "llm" else "谷歌翻译"
     logging.info("翻译器已启动（%s），支持语言切换", backend_name)
