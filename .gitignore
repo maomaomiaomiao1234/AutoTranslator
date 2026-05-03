@@ -6,3 +6,9 @@ build/
 dist/
 .py2app-build/
 *.egg-info/
+
+# Swift / SPM
+.build/
+.swiftpm/
+*.xcodeproj/
+Package.resolved
