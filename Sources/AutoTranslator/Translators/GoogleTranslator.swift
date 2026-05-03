@@ -3,6 +3,7 @@ import Foundation
 final class GoogleTranslator: TranslatorProtocol {
     var source: String
     var target: String
+    let supportsStreaming = false
 
     private let session: URLSession = {
         let config = URLSessionConfiguration.default

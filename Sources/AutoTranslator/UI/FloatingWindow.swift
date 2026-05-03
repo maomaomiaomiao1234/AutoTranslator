@@ -1,14 +1,6 @@
 import AppKit
 import Quartz
 
-// MARK: - Helper
-
-struct RuntimeError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
-}
-
 // MARK: - Borderless Window
 
 final class BorderlessWindow: NSPanel {
@@ -477,12 +469,12 @@ final class FloatingWindow: NSObject {
         destLabel.stringValue = ""
         destLabel.textColor = TEXT_PRIMARY
         setTranslationState(.loading)
-        streamTimer = Timer.scheduledTimer(timeInterval: 0.03, target: self,
-                                           selector: #selector(streamTick),
-                                           userInfo: nil, repeats: true)
+        streamTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+            self?.streamTick()
+        }
     }
 
-    @objc private func streamTick() {
+    private func streamTick() {
         let charsPerTick = 2
         streamPos = min(streamPos + charsPerTick, streamBuffer.count)
         let displayed = String(streamBuffer.prefix(streamPos))

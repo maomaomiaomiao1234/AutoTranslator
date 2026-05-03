@@ -68,9 +68,7 @@ final class AppController: NSObject {
             } catch {
                 fputs("[AutoTranslator] 大模型翻译初始化失败，回退到谷歌翻译: \(error)\n", stderr)
                 translatorBackend = "google"
-                DispatchQueue.main.async { [weak self] in
-                    self?.window.setBackendLabel("google")
-                }
+                window.setBackendLabel("google")
             }
         }
         fputs("[AutoTranslator] 使用谷歌翻译 (Google)\n", stderr)
@@ -81,18 +79,14 @@ final class AppController: NSObject {
         translateTask?.cancel()
         translatorBackend = translatorBackend == "llm" ? "google" : "llm"
         translator = createTranslator()
-        DispatchQueue.main.async { [weak self] in
-            self?.window.setBackendLabel(self?.translatorBackend ?? "google")
-        }
+        window.setBackendLabel(translatorBackend)
         fputs("[AutoTranslator] 翻译后端切换为: \(translatorBackend)\n", stderr)
         retranslateLast()
     }
 
     private func retranslateLast() {
         guard !lastText.isEmpty else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.window.show(srcText: self?.lastText ?? "", destText: nil)
-        }
+        window.show(srcText: lastText, destText: nil)
         dispatchTranslate(lastText)
     }
 
@@ -107,7 +101,7 @@ final class AppController: NSObject {
             guard let self = self else { return }
 
             do {
-                if self.translator is LLMTranslator {
+                if self.translator.supportsStreaming {
                     var buffer = ""
                     let stream = self.translator.translateStream(text)
                     for try await token in stream {
@@ -142,6 +136,7 @@ final class AppController: NSObject {
                     }
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 if version == self.translateVersion {
                     let errMsg = String(error.localizedDescription.prefix(50))
                     await MainActor.run { [weak self] in
@@ -157,15 +152,16 @@ final class AppController: NSObject {
 
 extension AppController: MouseMonitorDelegate {
     func onSelectionEvent(allowClipboardFallback: Bool) {
-        let text = textSelector.getSelectedText(allowClipboardFallback: allowClipboardFallback,
-                                                 previousText: lastText)
-        guard let text = text, !text.isEmpty, text != lastText else { return }
-
-        lastText = text
         DispatchQueue.main.async { [weak self] in
-            self?.window.show(srcText: text, destText: nil)
+            guard let self = self else { return }
+            let text = self.textSelector.getSelectedText(allowClipboardFallback: allowClipboardFallback,
+                                                         previousText: self.lastText)
+            guard let text = text, !text.isEmpty, text != self.lastText else { return }
+
+            self.lastText = text
+            self.window.show(srcText: text, destText: nil)
+            self.dispatchTranslate(text)
         }
-        dispatchTranslate(text)
     }
 }
 
@@ -217,8 +213,6 @@ extension AppController: FloatingWindowDelegate {
     }
 
     func hideWindow() {
-        DispatchQueue.main.async { [weak self] in
-            self?.window.hide()
-        }
+        window.hide()
     }
 }

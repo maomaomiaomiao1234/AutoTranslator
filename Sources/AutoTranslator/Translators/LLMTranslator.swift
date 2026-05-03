@@ -14,6 +14,7 @@ let LANG_NAMES: [String: String] = [
 final class LLMTranslator: TranslatorProtocol {
     var source: String
     var target: String
+    let supportsStreaming = true
     let model: String
     let baseURL: String
     private let apiKey: String
