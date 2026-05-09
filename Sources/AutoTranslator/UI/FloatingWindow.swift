@@ -67,6 +67,141 @@ final class PanelBackgroundView: NSView {
     }
 }
 
+private final class TopAlignedClipView: NSClipView {
+    override var isFlipped: Bool { true }
+}
+
+private final class FlippedContentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+// MARK: - Window Resize View
+
+private struct ResizeEdges: OptionSet {
+    let rawValue: Int
+
+    static let left = ResizeEdges(rawValue: 1 << 0)
+    static let right = ResizeEdges(rawValue: 1 << 1)
+    static let top = ResizeEdges(rawValue: 1 << 2)
+    static let bottom = ResizeEdges(rawValue: 1 << 3)
+
+    var hasHorizontal: Bool { contains(.left) || contains(.right) }
+    var hasVertical: Bool { contains(.top) || contains(.bottom) }
+}
+
+private final class WindowResizeView: NSView {
+    var onResize: ((ResizeEdges, NSRect, NSSize) -> Void)?
+    var onResizeEnd: (() -> Void)?
+
+    private var activeEdges: ResizeEdges = []
+    private var startScreenPoint: NSPoint = .zero
+    private var startFrame: NSRect = .zero
+
+    override var isOpaque: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return resizeEdges(at: point).isEmpty ? nil : self
+    }
+
+    override func resetCursorRects() {
+        let w = bounds.width
+        let h = bounds.height
+        let edge = RESIZE_EDGE_THICKNESS
+        let corner = RESIZE_CORNER_HIT_SIZE
+
+        addCursorRect(NSRect(x: 0, y: 0, width: corner, height: corner),
+                      cursor: resizeCursor(for: [.left, .bottom]))
+        addCursorRect(NSRect(x: w - corner, y: 0, width: corner, height: corner),
+                      cursor: resizeCursor(for: [.right, .bottom]))
+        addCursorRect(NSRect(x: 0, y: h - corner, width: corner, height: corner),
+                      cursor: resizeCursor(for: [.left, .top]))
+        addCursorRect(NSRect(x: w - corner, y: h - corner, width: corner, height: corner),
+                      cursor: resizeCursor(for: [.right, .top]))
+
+        addCursorRect(NSRect(x: corner, y: 0, width: max(0, w - corner * 2), height: edge),
+                      cursor: resizeCursor(for: [.bottom]))
+        addCursorRect(NSRect(x: corner, y: h - edge, width: max(0, w - corner * 2), height: edge),
+                      cursor: resizeCursor(for: [.top]))
+        addCursorRect(NSRect(x: 0, y: corner, width: edge, height: max(0, h - corner * 2)),
+                      cursor: resizeCursor(for: [.left]))
+        addCursorRect(NSRect(x: w - edge, y: corner, width: edge, height: max(0, h - corner * 2)),
+                      cursor: resizeCursor(for: [.right]))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        startFrame = window?.frame ?? .zero
+        activeEdges = resizeEdges(at: convert(event.locationInWindow, from: nil))
+        startScreenPoint = screenPoint(for: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !activeEdges.isEmpty else { return }
+        let point = screenPoint(for: event)
+        let delta = NSSize(width: point.x - startScreenPoint.x,
+                           height: point.y - startScreenPoint.y)
+        onResize?(activeEdges, startFrame, delta)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        activeEdges = []
+        onResizeEnd?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.setStrokeColor(TEXT_MUTED.cgColor)
+        ctx.setLineWidth(1.0)
+        ctx.setLineCap(.round)
+
+        let step: CGFloat = 4.5
+        let margin: CGFloat = 7
+        for i in 0..<3 {
+            let offset = CGFloat(i) * step
+            let x = bounds.maxX - margin - offset
+            let y = bounds.minY + margin
+            ctx.move(to: CGPoint(x: x, y: y))
+            ctx.addLine(to: CGPoint(x: bounds.maxX - margin, y: y + offset))
+        }
+        ctx.strokePath()
+    }
+
+    private func resizeEdges(at point: NSPoint) -> ResizeEdges {
+        let w = bounds.width
+        let h = bounds.height
+        guard w > 0, h > 0, point.x >= 0, point.y >= 0, point.x <= w, point.y <= h else {
+            return []
+        }
+
+        let edge = RESIZE_EDGE_THICKNESS
+        let corner = RESIZE_CORNER_HIT_SIZE
+
+        if point.x <= corner, point.y <= corner { return [.left, .bottom] }
+        if point.x >= w - corner, point.y <= corner { return [.right, .bottom] }
+        if point.x <= corner, point.y >= h - corner { return [.left, .top] }
+        if point.x >= w - corner, point.y >= h - corner { return [.right, .top] }
+
+        var edges: ResizeEdges = []
+        if point.x <= edge { edges.insert(.left) }
+        if point.x >= w - edge { edges.insert(.right) }
+        if point.y <= edge { edges.insert(.bottom) }
+        if point.y >= h - edge { edges.insert(.top) }
+        return edges
+    }
+
+    private func resizeCursor(for edges: ResizeEdges) -> NSCursor {
+        if edges.hasHorizontal { return .resizeLeftRight }
+        if edges.hasVertical { return .resizeUpDown }
+        return .arrow
+    }
+
+    private func screenPoint(for event: NSEvent) -> NSPoint {
+        guard let window else { return event.locationInWindow }
+        return window.convertPoint(toScreen: event.locationInWindow)
+    }
+}
+
 // MARK: - Floating Window Delegate Protocol
 
 protocol FloatingWindowDelegate: AnyObject {
@@ -96,6 +231,11 @@ final class FloatingWindow: NSObject {
     private var isPinned = false
     private var savedOrigin: NSPoint?
     private var suppressAutoPin = false
+    private var isResizing = false
+    private var hasManualSize = false
+
+    // Resize hit area
+    private let resizeView: WindowResizeView
 
     // Stream state
     private var streamTimer: Timer?
@@ -123,6 +263,7 @@ final class FloatingWindow: NSObject {
     private let srcTitleLabel: NSTextField
     private let srcMetaChip: NSTextField
     private let srcScroll: NSScrollView
+    private let srcTextContainer: FlippedContentView
     private let srcLabel: NSTextField
     private let srcAudioBtn: NSButton
     private let srcCopyBtn: NSButton
@@ -144,6 +285,7 @@ final class FloatingWindow: NSObject {
     private let destStateChip: NSTextField
     private let backendToggleBtn: NSButton
     private let destScroll: NSScrollView
+    private let destTextContainer: FlippedContentView
     private let destLabel: NSTextField
     private let destCopyBtn: NSButton
     private let destRefreshBtn: NSButton
@@ -158,13 +300,19 @@ final class FloatingWindow: NSObject {
         vibrancyView.material = .menu
         vibrancyView.state = .active
         vibrancyView.wantsLayer = true
+        vibrancyView.autoresizingMask = [.width, .height]
         window.contentView = vibrancyView
 
         rootView = NSView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
+        rootView.autoresizingMask = [.width, .height]
         vibrancyView.addSubview(rootView)
 
         backgroundView = PanelBackgroundView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
+        backgroundView.autoresizingMask = [.width, .height]
         rootView.addSubview(backgroundView)
+
+        resizeView = WindowResizeView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
+        resizeView.autoresizingMask = [.width, .height]
 
         // Toolbar
         pinBtn = createToolbarIconButton(symbolName: "pin.fill", fallback: "\u{1F4CC}")
@@ -206,9 +354,12 @@ final class FloatingWindow: NSObject {
         srcScroll.autohidesScrollers = true
         srcScroll.borderType = .noBorder
         srcScroll.drawsBackground = false
+        srcScroll.contentView = TopAlignedClipView()
 
+        srcTextContainer = FlippedContentView()
         srcLabel = createLabel(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true, wraps: true)
-        srcScroll.documentView = srcLabel
+        srcTextContainer.addSubview(srcLabel)
+        srcScroll.documentView = srcTextContainer
 
         srcAudioBtn = createIconButton(symbolName: "speaker.wave.2", fallback: "\u{1F50A}",
                                        pointSize: 10, tint: TEXT_MUTED, size: 20)
@@ -264,9 +415,12 @@ final class FloatingWindow: NSObject {
         destScroll.autohidesScrollers = true
         destScroll.borderType = .noBorder
         destScroll.drawsBackground = false
+        destScroll.contentView = TopAlignedClipView()
 
+        destTextContainer = FlippedContentView()
         destLabel = createLabel(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true, wraps: true)
-        destScroll.documentView = destLabel
+        destTextContainer.addSubview(destLabel)
+        destScroll.documentView = destTextContainer
 
         destCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}",
                                        pointSize: 11, tint: TEXT_PRIMARY, size: 24)
@@ -278,6 +432,8 @@ final class FloatingWindow: NSObject {
             destCard.addSubview(v)
         }
         rootView.addSubview(destCard)
+
+        rootView.addSubview(resizeView)
 
         super.init()
 
@@ -327,6 +483,16 @@ final class FloatingWindow: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(windowDidMove),
                                                name: NSWindow.didMoveNotification,
                                                object: window)
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidResize),
+                                               name: NSWindow.didResizeNotification,
+                                               object: window)
+
+        resizeView.onResize = { [weak self] edges, startFrame, delta in
+            self?.handleResize(edges: edges, startFrame: startFrame, delta: delta)
+        }
+        resizeView.onResizeEnd = { [weak self] in
+            self?.isResizing = false
+        }
 
         refreshPinStyle()
         refreshActionState()
@@ -413,6 +579,8 @@ final class FloatingWindow: NSObject {
         refreshLanguageUI()
         refreshActionState()
         layoutWindow()
+        scrollToTop(srcScroll)
+        scrollToTop(destScroll)
 
         let newHeight = rootView.frame.height
         suppressAutoPin = true
@@ -424,7 +592,7 @@ final class FloatingWindow: NSObject {
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
                 window.animator().setFrame(
-                    NSRect(x: frame.origin.x, y: top - newHeight, width: WINDOW_WIDTH, height: newHeight),
+                    NSRect(x: frame.origin.x, y: top - newHeight, width: frame.width, height: newHeight),
                     display: true)
             }
         } else {
@@ -433,11 +601,11 @@ final class FloatingWindow: NSObject {
                 x = saved.x; y = saved.y
             } else {
                 let screen = NSScreen.main?.frame ?? .zero
-                x = (screen.width - WINDOW_WIDTH) / 2 + screen.origin.x
+                x = (screen.width - window.frame.width) / 2 + screen.origin.x
                 y = (screen.height - newHeight) / 2 + screen.origin.y
             }
 
-            window.setFrame(NSRect(x: x, y: y, width: WINDOW_WIDTH, height: newHeight), display: true)
+            window.setFrame(NSRect(x: x, y: y, width: window.frame.width, height: newHeight), display: true)
             window.alphaValue = 0
             window.makeKeyAndOrderFront(nil)
 
@@ -469,6 +637,7 @@ final class FloatingWindow: NSObject {
         destLabel.stringValue = ""
         destLabel.textColor = TEXT_PRIMARY
         setTranslationState(.loading)
+        scrollToTop(destScroll)
         streamTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             self?.streamTick()
         }
@@ -488,19 +657,19 @@ final class FloatingWindow: NSObject {
         destLabel.stringValue = displayed
         refreshActionState()
 
-        let cardInnerWidth = WINDOW_WIDTH - (OUTER_PADDING * 2) - (CARD_INSET_X * 2)
+        let cardInnerWidth = window.frame.width - (OUTER_PADDING * 2) - (CARD_INSET_X * 2)
         let fullTextHeight = measureTextHeight(displayed, width: cardInnerWidth,
                                                fontSize: BODY_FONT_SIZE, minimum: 40)
         destLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: fullTextHeight)
 
         let needed = min(DEST_MAX_CARD_HEIGHT, max(132, fullTextHeight + 82))
-        if Int(needed) > Int(destCard.frame.height) {
+        if !hasManualSize, Int(needed) > Int(destCard.frame.height) {
             layoutWindow()
             let newHeight = rootView.frame.height
             let frame = window.frame
             suppressAutoPin = true
             window.setFrame(NSRect(x: frame.origin.x, y: frame.maxY - newHeight,
-                                   width: WINDOW_WIDTH, height: newHeight), display: true)
+                                   width: frame.width, height: newHeight), display: true)
             suppressAutoPin = false
         }
 
@@ -528,7 +697,7 @@ final class FloatingWindow: NSObject {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
             window.animator().setFrame(
-                NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: WINDOW_WIDTH, height: newHeight),
+                NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: frame.width, height: newHeight),
                 display: true)
         }
         suppressAutoPin = false
@@ -590,10 +759,15 @@ final class FloatingWindow: NSObject {
         autoPin()
     }
 
+    @objc private func windowDidResize(_ notification: Notification) {
+        layoutWindow()
+    }
+
     // MARK: - Layout
 
     private func layoutWindow() {
-        let contentWidth = WINDOW_WIDTH - (OUTER_PADDING * 2)
+        let windowWidth = window.frame.width
+        let contentWidth = windowWidth - (OUTER_PADDING * 2)
         let cardInnerWidth = contentWidth - (CARD_INSET_X * 2)
 
         let srcTextHeight = measureTextHeight(currentSourceText.isEmpty ? " " : currentSourceText,
@@ -610,11 +784,14 @@ final class FloatingWindow: NSObject {
 
         let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
             + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
-        let totalHeight = min(MAX_WINDOW_HEIGHT,
-                              max(WINDOW_MIN_HEIGHT,
-                                  OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + srcCardHeight
-                                  + SECTION_GAP + LANG_BAR_HEIGHT + SECTION_GAP + destCardHeight
-                                  + OUTER_PADDING))
+        let contentHeights = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + srcCardHeight
+            + SECTION_GAP + LANG_BAR_HEIGHT + SECTION_GAP + destCardHeight + OUTER_PADDING
+        let totalHeight: CGFloat
+        if isResizing || hasManualSize {
+            totalHeight = min(MAX_WINDOW_HEIGHT, max(WINDOW_MIN_HEIGHT, window.frame.height))
+        } else {
+            totalHeight = min(MAX_WINDOW_HEIGHT, max(WINDOW_MIN_HEIGHT, contentHeights))
+        }
 
         let available = totalHeight - overhead
         if srcCardHeight + destCardHeight > available {
@@ -622,10 +799,13 @@ final class FloatingWindow: NSObject {
             destCardHeight = max(124, available - srcCardHeight)
         }
 
-        rootView.frame = NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: totalHeight)
-        vibrancyView.frame = NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: totalHeight)
-        backgroundView.frame = NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: totalHeight)
+        rootView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
+        vibrancyView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
+        backgroundView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         backgroundView.needsDisplay = true
+        resizeView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
+        resizeView.needsDisplay = true
+        window.invalidateCursorRects(for: resizeView)
 
         // Toolbar
         let headerY = totalHeight - OUTER_PADDING - HEADER_HEIGHT
@@ -639,7 +819,7 @@ final class FloatingWindow: NSObject {
         headerTitleLabel.frame = NSRect(x: titleX, y: headerY + 18, width: titleWidth, height: 16)
         headerSubtitleLabel.frame = NSRect(x: titleX, y: headerY + 2, width: titleWidth + 24, height: 14)
 
-        var rightX = WINDOW_WIDTH - OUTER_PADDING
+        var rightX = windowWidth - OUTER_PADDING
         for button in [hideBtn, backendBtn, quickDestCopyBtn, quickSourceCopyBtn] {
             let btnW = (button === backendBtn) ? BACKEND_BTN_WIDTH : TOOLBAR_BUTTON_SIZE
             button.frame = NSRect(x: rightX - btnW, y: toolbarY, width: btnW, height: TOOLBAR_BUTTON_SIZE)
@@ -649,8 +829,11 @@ final class FloatingWindow: NSObject {
         // Source card
         let srcY = headerY - SECTION_GAP - srcCardHeight
         srcCard.frame = NSRect(x: OUTER_PADDING, y: srcY, width: contentWidth, height: srcCardHeight)
+        let srcVisibleH = srcCardHeight - 58
         srcScroll.frame = NSRect(x: CARD_INSET_X, y: 32, width: cardInnerWidth,
-                                 height: srcCardHeight - 58)
+                                 height: srcVisibleH)
+        srcTextContainer.frame = NSRect(x: 0, y: 0, width: cardInnerWidth,
+                                        height: max(srcTextHeight, srcVisibleH))
         srcLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: srcTextHeight)
         srcTitleLabel.frame = NSRect(x: CARD_INSET_X, y: srcCardHeight - 22, width: 40, height: 12)
         srcAudioBtn.frame = NSRect(x: CARD_INSET_X, y: 8, width: 20, height: 20)
@@ -683,6 +866,8 @@ final class FloatingWindow: NSObject {
         let destTextScrollY: CGFloat = 42
         destScroll.frame = NSRect(x: CARD_INSET_X, y: destTextScrollY,
                                   width: cardInnerWidth, height: destVisibleH)
+        destTextContainer.frame = NSRect(x: 0, y: 0, width: cardInnerWidth,
+                                         height: max(destTextHeight, destVisibleH))
         destLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: destTextHeight)
 
         let providerY = destTextScrollY + destVisibleH + 8
@@ -699,6 +884,9 @@ final class FloatingWindow: NSObject {
         backendToggleBtn.frame = NSRect(x: toggleX, y: providerY, width: 24, height: 24)
         destCopyBtn.frame = NSRect(x: CARD_INSET_X, y: 12, width: 24, height: 24)
         destRefreshBtn.frame = NSRect(x: CARD_INSET_X + 30, y: 12, width: 24, height: 24)
+        rootView.needsLayout = true
+        rootView.layoutSubtreeIfNeeded()
+        rootView.needsDisplay = true
     }
 
     // MARK: - Private Helpers
@@ -817,6 +1005,56 @@ final class FloatingWindow: NSObject {
         pb.clearContents()
         pb.declareTypes([.string], owner: nil)
         pb.setString(text, forType: .string)
+    }
+
+    private func scrollToTop(_ scrollView: NSScrollView) {
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func handleResize(edges: ResizeEdges, startFrame: NSRect, delta: NSSize) {
+        isResizing = true
+        hasManualSize = true
+
+        let width: CGFloat
+        let originX: CGFloat
+        if edges.contains(.left) {
+            width = clampedWindowWidth(startFrame.width - delta.width)
+            originX = startFrame.maxX - width
+        } else if edges.contains(.right) {
+            width = clampedWindowWidth(startFrame.width + delta.width)
+            originX = startFrame.origin.x
+        } else {
+            width = startFrame.width
+            originX = startFrame.origin.x
+        }
+
+        let height: CGFloat
+        let originY: CGFloat
+        if edges.contains(.bottom) {
+            height = clampedWindowHeight(startFrame.height - delta.height)
+            originY = startFrame.maxY - height
+        } else if edges.contains(.top) {
+            height = clampedWindowHeight(startFrame.height + delta.height)
+            originY = startFrame.origin.y
+        } else {
+            height = startFrame.height
+            originY = startFrame.origin.y
+        }
+
+        let newFrame = NSRect(x: originX, y: originY, width: width, height: height)
+        suppressAutoPin = true
+        window.setFrame(newFrame, display: true)
+        suppressAutoPin = false
+        layoutWindow()
+    }
+
+    private func clampedWindowWidth(_ width: CGFloat) -> CGFloat {
+        return max(MIN_WINDOW_WIDTH, min(MAX_WINDOW_WIDTH, width))
+    }
+
+    private func clampedWindowHeight(_ height: CGFloat) -> CGFloat {
+        return max(WINDOW_MIN_HEIGHT, min(MAX_WINDOW_HEIGHT, height))
     }
 }
 
