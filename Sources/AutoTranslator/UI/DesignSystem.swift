@@ -24,7 +24,13 @@ let MAX_WINDOW_HEIGHT: CGFloat = 760
 let LANG_BAR_HEIGHT: CGFloat = 42
 let BODY_FONT_SIZE: CGFloat = 15
 
-// MARK: - Color Palette
+// MARK: - Theme Detection
+
+var isDarkMode: Bool {
+    NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+}
+
+// MARK: - Color Helpers
 
 func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1.0) -> NSColor {
     NSColor(calibratedRed: r / 255, green: g / 255, blue: b / 255, alpha: a)
@@ -40,33 +46,99 @@ func blendWithWhite(_ color: NSColor, amount: CGFloat, alpha: CGFloat = 1.0) -> 
     return rgb(r, g, b, alpha)
 }
 
-let WINDOW_BG = rgb(0, 0, 0, 0)
-let PANEL_TOP = rgb(248, 242, 232, 0.96)
-let PANEL_BOTTOM = rgb(231, 240, 248, 0.94)
-let PANEL_BORDER = rgb(255, 255, 255, 0.62)
-let SOURCE_CARD_BG = rgb(255, 255, 255, 0.72)
-let LANG_BAR_BG = rgb(255, 255, 255, 0.58)
-let DEST_CARD_BG = rgb(251, 253, 255, 0.76)
-let SURFACE_BG = rgb(255, 255, 255, 0.74)
-let SURFACE_BG_SOFT = rgb(255, 255, 255, 0.56)
-let TOOLBAR_GHOST_BG = rgb(255, 255, 255, 0.08)
-let CARD_BORDER = rgb(255, 255, 255, 0.58)
-let BUTTON_BORDER = rgb(255, 255, 255, 0.78)
-let TEXT_PRIMARY = rgb(31, 35, 42)
-let TEXT_SECONDARY = rgb(103, 111, 123)
-let TEXT_MUTED = rgb(144, 150, 159)
-let BLUE_ACCENT = rgb(53, 97, 214)
-let TEAL_ACCENT = rgb(20, 151, 135)
-let AMBER_ACCENT = rgb(194, 121, 28)
-let TOOLBAR_BUTTON_BORDER = rgb(255, 255, 255, 0.34)
-let TOOLBAR_ACTIVE_BG = blendWithWhite(BLUE_ACCENT, amount: 0.82, alpha: 0.78)
-let TOOLBAR_ACTIVE_BORDER = blendWithWhite(BLUE_ACCENT, amount: 0.56, alpha: 0.84)
-let CHIP_BG = rgb(235, 242, 255, 0.96)
-let CHIP_BG_ALT = rgb(231, 247, 242, 0.96)
-let CHIP_BG_WARM = rgb(255, 238, 209, 0.97)
-let GLOW_WARM = rgb(246, 198, 111, 0.22)
-let GLOW_COOL = rgb(80, 128, 234, 0.16)
-let GLOW_MINT = rgb(89, 183, 159, 0.12)
+func blendWithBlack(_ color: NSColor, amount: CGFloat, alpha: CGFloat = 1.0) -> NSColor {
+    let r = color.redComponent * (1 - amount)
+    let g = color.greenComponent * (1 - amount)
+    let b = color.blueComponent * (1 - amount)
+    return NSColor(calibratedRed: r, green: g, blue: b, alpha: alpha)
+}
+
+// MARK: - Color Palette (Theme-aware)
+
+var WINDOW_BG: NSColor { rgb(0, 0, 0, 0) }
+
+var PANEL_TOP: NSColor {
+    isDarkMode ? rgb(40, 40, 44, 0.96) : rgb(248, 242, 232, 0.96)
+}
+var PANEL_BOTTOM: NSColor {
+    isDarkMode ? rgb(32, 32, 36, 0.94) : rgb(231, 240, 248, 0.94)
+}
+var PANEL_BORDER: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(255, 255, 255, 0.62)
+}
+var SOURCE_CARD_BG: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.06) : rgb(255, 255, 255, 0.72)
+}
+var LANG_BAR_BG: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.05) : rgb(255, 255, 255, 0.58)
+}
+var DEST_CARD_BG: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.05) : rgb(251, 253, 255, 0.76)
+}
+var SURFACE_BG: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.74)
+}
+var SURFACE_BG_SOFT: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.04) : rgb(255, 255, 255, 0.56)
+}
+var TOOLBAR_GHOST_BG: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.06) : rgb(255, 255, 255, 0.08)
+}
+var CARD_BORDER: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.58)
+}
+var BUTTON_BORDER: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(255, 255, 255, 0.78)
+}
+var TEXT_PRIMARY: NSColor {
+    isDarkMode ? rgb(235, 237, 243) : rgb(31, 35, 42)
+}
+var TEXT_SECONDARY: NSColor {
+    isDarkMode ? rgb(166, 172, 184) : rgb(103, 111, 123)
+}
+var TEXT_MUTED: NSColor {
+    isDarkMode ? rgb(116, 120, 130) : rgb(144, 150, 159)
+}
+var BLUE_ACCENT: NSColor {
+    isDarkMode ? rgb(108, 147, 242) : rgb(53, 97, 214)
+}
+var TEAL_ACCENT: NSColor {
+    isDarkMode ? rgb(56, 185, 168) : rgb(20, 151, 135)
+}
+var AMBER_ACCENT: NSColor {
+    isDarkMode ? rgb(234, 165, 52) : rgb(194, 121, 28)
+}
+var TOOLBAR_BUTTON_BORDER: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(255, 255, 255, 0.34)
+}
+var TOOLBAR_ACTIVE_BG: NSColor {
+    isDarkMode
+        ? blendWithBlack(BLUE_ACCENT, amount: 0.55, alpha: 0.55)
+        : blendWithWhite(BLUE_ACCENT, amount: 0.82, alpha: 0.78)
+}
+var TOOLBAR_ACTIVE_BORDER: NSColor {
+    isDarkMode
+        ? blendWithBlack(BLUE_ACCENT, amount: 0.35, alpha: 0.75)
+        : blendWithWhite(BLUE_ACCENT, amount: 0.56, alpha: 0.84)
+}
+var CHIP_BG: NSColor {
+    isDarkMode ? rgb(30, 38, 58, 0.96) : rgb(235, 242, 255, 0.96)
+}
+var CHIP_BG_ALT: NSColor {
+    isDarkMode ? rgb(28, 48, 42, 0.96) : rgb(231, 247, 242, 0.96)
+}
+var CHIP_BG_WARM: NSColor {
+    isDarkMode ? rgb(50, 42, 28, 0.96) : rgb(255, 238, 209, 0.97)
+}
+var GLOW_WARM: NSColor {
+    isDarkMode ? rgb(246, 198, 111, 0.05) : rgb(246, 198, 111, 0.22)
+}
+var GLOW_COOL: NSColor {
+    isDarkMode ? rgb(80, 128, 234, 0.04) : rgb(80, 128, 234, 0.16)
+}
+var GLOW_MINT: NSColor {
+    isDarkMode ? rgb(89, 183, 159, 0.03) : rgb(89, 183, 159, 0.12)
+}
 
 // MARK: - View Styling Helpers
 
@@ -80,7 +152,7 @@ func styleSurface(_ view: NSView, background: NSColor, radius: CGFloat,
         layer.shadowColor = NSColor.black.cgColor
         layer.shadowOffset = CGSize(width: 0, height: 8)
         layer.shadowRadius = 20
-        layer.shadowOpacity = 0.08
+        layer.shadowOpacity = isDarkMode ? 0.18 : 0.08
     } else {
         layer.masksToBounds = true
         layer.shadowOpacity = 0

@@ -75,6 +75,14 @@ private final class FlippedContentView: NSView {
     override var isFlipped: Bool { true }
 }
 
+private final class ThemeAwareView: NSView {
+    var onAppearanceChanged: (() -> Void)?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChanged?()
+    }
+}
+
 // MARK: - Window Resize View
 
 private struct ResizeEdges: OptionSet {
@@ -222,7 +230,7 @@ final class FloatingWindow: NSObject {
 
     let window: BorderlessWindow
     private let vibrancyView: NSVisualEffectView
-    private let rootView: NSView
+    private let rootView: ThemeAwareView
     private let backgroundView: PanelBackgroundView
 
     private(set) var currentSourceText = ""
@@ -233,6 +241,7 @@ final class FloatingWindow: NSObject {
     private var suppressAutoPin = false
     private var isResizing = false
     private var hasManualSize = false
+    private var currentState: TranslationState = .idle
 
     // Resize hit area
     private let resizeView: WindowResizeView
@@ -303,7 +312,7 @@ final class FloatingWindow: NSObject {
         vibrancyView.autoresizingMask = [.width, .height]
         window.contentView = vibrancyView
 
-        rootView = NSView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
+        rootView = ThemeAwareView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
         rootView.autoresizingMask = [.width, .height]
         vibrancyView.addSubview(rootView)
 
@@ -437,6 +446,10 @@ final class FloatingWindow: NSObject {
 
         super.init()
 
+        rootView.onAppearanceChanged = { [weak self] in
+            self?.refreshAppearance()
+        }
+
         configurePopup(srcLangPop)
         configurePopup(destLangPop)
 
@@ -515,10 +528,17 @@ final class FloatingWindow: NSObject {
             backendBadgeLabel.stringValue = "AI"
             backendNameLabel.stringValue = "大模型翻译"
             backendBtn.contentTintColor = TEAL_ACCENT
-            styleSurface(backendBtn,
-                         background: blendWithWhite(TEAL_ACCENT, amount: 0.84, alpha: 0.72),
-                         radius: BACKEND_BTN_WIDTH / 2,
-                         border: blendWithWhite(TEAL_ACCENT, amount: 0.56, alpha: 0.84))
+            if isDarkMode {
+                styleSurface(backendBtn,
+                             background: blendWithBlack(TEAL_ACCENT, amount: 0.50, alpha: 0.65),
+                             radius: BACKEND_BTN_WIDTH / 2,
+                             border: blendWithBlack(TEAL_ACCENT, amount: 0.30, alpha: 0.75))
+            } else {
+                styleSurface(backendBtn,
+                             background: blendWithWhite(TEAL_ACCENT, amount: 0.84, alpha: 0.72),
+                             radius: BACKEND_BTN_WIDTH / 2,
+                             border: blendWithWhite(TEAL_ACCENT, amount: 0.56, alpha: 0.84))
+            }
         } else {
             styleSurface(backendBadge, background: BLUE_ACCENT, radius: 12)
             backendBadgeLabel.stringValue = "G"
@@ -889,6 +909,51 @@ final class FloatingWindow: NSObject {
         rootView.needsDisplay = true
     }
 
+    // MARK: - Appearance
+
+    private func refreshAppearance() {
+        styleSurface(srcCard, background: SOURCE_CARD_BG, radius: CARD_RADIUS,
+                     border: CARD_BORDER, shadow: true)
+        styleSurface(langBar, background: LANG_BAR_BG, radius: CARD_RADIUS,
+                     border: CARD_BORDER, shadow: true)
+        styleSurface(destCard, background: DEST_CARD_BG, radius: CARD_RADIUS,
+                     border: CARD_BORDER, shadow: true)
+
+        restyleToolbarButton(quickSourceCopyBtn)
+        restyleToolbarButton(quickDestCopyBtn)
+        restyleToolbarButton(hideBtn)
+
+        restyleIconButton(srcAudioBtn, tint: TEXT_MUTED, size: 20)
+        restyleIconButton(srcCopyBtn, tint: TEXT_PRIMARY, size: 20)
+        restyleIconButton(swapBtn, tint: TEXT_PRIMARY, size: 24)
+        restyleIconButton(backendToggleBtn, tint: TEXT_SECONDARY, size: 24)
+        restyleIconButton(destCopyBtn, tint: TEXT_PRIMARY, size: 24)
+        restyleIconButton(destRefreshBtn, tint: TEXT_PRIMARY, size: 24)
+
+        srcLangPop.contentTintColor = TEXT_PRIMARY
+        destLangPop.contentTintColor = TEXT_PRIMARY
+
+        refreshPinStyle()
+        setBackendLabel(backend)
+        setTranslationState(currentState)
+        refreshSourceMeta()
+        refreshLanguageUI()
+
+        backgroundView.needsDisplay = true
+        resizeView.needsDisplay = true
+    }
+
+    private func restyleToolbarButton(_ button: NSButton, tint: NSColor = TEXT_SECONDARY) {
+        styleSurface(button, background: TOOLBAR_GHOST_BG, radius: TOOLBAR_BUTTON_SIZE / 2,
+                     border: TOOLBAR_BUTTON_BORDER)
+        button.contentTintColor = tint
+    }
+
+    private func restyleIconButton(_ button: NSButton, tint: NSColor, size: CGFloat) {
+        styleSurface(button, background: SURFACE_BG, radius: size / 2, border: BUTTON_BORDER)
+        button.contentTintColor = tint
+    }
+
     // MARK: - Private Helpers
 
     private func configurePopup(_ popup: NSPopUpButton) {
@@ -966,6 +1031,7 @@ final class FloatingWindow: NSObject {
     }
 
     private func setTranslationState(_ state: TranslationState) {
+        currentState = state
         switch state {
         case .done:
             destStateChip.stringValue = "已完成"
