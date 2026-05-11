@@ -7,13 +7,16 @@ protocol MouseMonitorDelegate: AnyObject {
 
 final class MouseMonitor {
     private let dragThresholdSq: Double = 36
+    private let selectionDispatchDelay: DispatchTimeInterval = .milliseconds(50)
     private var eventTap: CFMachPort?
     private var mouseDownPoint: CGPoint?
     private var mouseDraggedSinceDown = false
+    private var pendingSelectionWorkItem: DispatchWorkItem?
 
     weak var delegate: MouseMonitorDelegate?
 
     deinit {
+        pendingSelectionWorkItem?.cancel()
         stop()
     }
 
@@ -60,6 +63,8 @@ final class MouseMonitor {
     private func handleEvent(type: CGEventType, event: CGEvent) {
         switch type {
         case .leftMouseDown:
+            pendingSelectionWorkItem?.cancel()
+            pendingSelectionWorkItem = nil
             mouseDownPoint = event.location
             mouseDraggedSinceDown = false
         case .leftMouseDragged:
@@ -75,10 +80,20 @@ final class MouseMonitor {
             let allow = mouseDraggedSinceDown || clickCount > 1
             mouseDownPoint = nil
             mouseDraggedSinceDown = false
-            Thread.sleep(forTimeInterval: 0.05)
-            delegate?.onSelectionEvent(allowClipboardFallback: allow)
+            scheduleSelectionEvent(allowClipboardFallback: allow)
         default:
             break
         }
+    }
+
+    private func scheduleSelectionEvent(allowClipboardFallback: Bool) {
+        pendingSelectionWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.delegate?.onSelectionEvent(allowClipboardFallback: allowClipboardFallback)
+        }
+
+        pendingSelectionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + selectionDispatchDelay, execute: workItem)
     }
 }

@@ -31,6 +31,7 @@ final class AppController: NSObject {
 
     private var translateVersion = 0
     private var translateTask: Task<Void, Never>?
+    private var selectionTask: Task<Void, Never>?
 
     // MARK: - Init
 
@@ -55,6 +56,7 @@ final class AppController: NSObject {
 
     func stop() {
         mouseMonitor.stop()
+        selectionTask?.cancel()
         translateTask?.cancel()
     }
 
@@ -152,10 +154,14 @@ final class AppController: NSObject {
 
 extension AppController: MouseMonitorDelegate {
     func onSelectionEvent(allowClipboardFallback: Bool) {
-        DispatchQueue.main.async { [weak self] in
+        selectionTask?.cancel()
+        selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            let text = self.textSelector.getSelectedText(allowClipboardFallback: allowClipboardFallback,
-                                                         previousText: self.lastText)
+            let text = await self.textSelector.getSelectedText(
+                allowClipboardFallback: allowClipboardFallback,
+                previousText: self.lastText
+            )
+            guard !Task.isCancelled else { return }
             guard let text = text, !text.isEmpty, text != self.lastText else { return }
 
             self.lastText = text

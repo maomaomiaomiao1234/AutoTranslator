@@ -239,8 +239,8 @@ final class FloatingWindow: NSObject {
     private var isPinned = false
     private var savedOrigin: NSPoint?
     private var suppressAutoPin = false
-    private var isResizing = false
-    private var hasManualSize = false
+    private var activeResizeEdges: ResizeEdges = []
+    private var hasManualHeight = false
     private var currentState: TranslationState = .idle
 
     // Resize hit area
@@ -504,7 +504,7 @@ final class FloatingWindow: NSObject {
             self?.handleResize(edges: edges, startFrame: startFrame, delta: delta)
         }
         resizeView.onResizeEnd = { [weak self] in
-            self?.isResizing = false
+            self?.activeResizeEdges = []
         }
 
         refreshPinStyle()
@@ -683,7 +683,7 @@ final class FloatingWindow: NSObject {
         destLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: fullTextHeight)
 
         let needed = min(DEST_MAX_CARD_HEIGHT, max(132, fullTextHeight + 82))
-        if !hasManualSize, Int(needed) > Int(destCard.frame.height) {
+        if !usesManualHeightForLayout, Int(needed) > Int(destCard.frame.height) {
             layoutWindow()
             let newHeight = rootView.frame.height
             let frame = window.frame
@@ -807,8 +807,8 @@ final class FloatingWindow: NSObject {
         let contentHeights = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + srcCardHeight
             + SECTION_GAP + LANG_BAR_HEIGHT + SECTION_GAP + destCardHeight + OUTER_PADDING
         let totalHeight: CGFloat
-        if isResizing || hasManualSize {
-            totalHeight = min(MAX_WINDOW_HEIGHT, max(WINDOW_MIN_HEIGHT, window.frame.height))
+        if usesManualHeightForLayout {
+            totalHeight = clampedWindowHeight(window.frame.height)
         } else {
             totalHeight = min(MAX_WINDOW_HEIGHT, max(WINDOW_MIN_HEIGHT, contentHeights))
         }
@@ -1078,9 +1078,30 @@ final class FloatingWindow: NSObject {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    private var usesManualHeightForLayout: Bool {
+        hasManualHeight || activeResizeEdges.hasVertical
+    }
+
+    private func syncWindowHeightToContent(preserveTop: Bool = true) {
+        guard !usesManualHeightForLayout else { return }
+        let frame = window.frame
+        let targetHeight = rootView.frame.height
+        guard abs(frame.height - targetHeight) > 0.5 else { return }
+
+        let newOriginY = preserveTop ? frame.maxY - targetHeight : frame.origin.y
+        suppressAutoPin = true
+        window.setFrame(
+            NSRect(x: frame.origin.x, y: newOriginY, width: frame.width, height: targetHeight),
+            display: true
+        )
+        suppressAutoPin = false
+    }
+
     private func handleResize(edges: ResizeEdges, startFrame: NSRect, delta: NSSize) {
-        isResizing = true
-        hasManualSize = true
+        activeResizeEdges = edges
+        if edges.hasVertical {
+            hasManualHeight = true
+        }
 
         let width: CGFloat
         let originX: CGFloat
@@ -1113,6 +1134,7 @@ final class FloatingWindow: NSObject {
         window.setFrame(newFrame, display: true)
         suppressAutoPin = false
         layoutWindow()
+        syncWindowHeightToContent()
     }
 
     private func clampedWindowWidth(_ width: CGFloat) -> CGFloat {

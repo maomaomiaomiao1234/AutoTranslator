@@ -4,14 +4,21 @@ import CoreGraphics
 
 final class TextSelector {
     private let copyInterval: TimeInterval
+    private let copyPollIntervalNs: UInt64
+    private let maxCopyPollCount: Int
     private var lastCopyTime: TimeInterval = 0
 
-    init(copyInterval: TimeInterval = 0.4) {
+    init(copyInterval: TimeInterval = 0.4,
+         copyPollInterval: TimeInterval = 0.01,
+         maxCopyPollCount: Int = 20) {
         self.copyInterval = copyInterval
+        self.copyPollIntervalNs = UInt64(copyPollInterval * 1_000_000_000)
+        self.maxCopyPollCount = maxCopyPollCount
     }
 
+    @MainActor
     func getSelectedText(allowClipboardFallback: Bool = false,
-                         previousText: String = "") -> String? {
+                         previousText: String = "") async -> String? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         let pid = frontApp.processIdentifier
 
@@ -21,7 +28,7 @@ final class TextSelector {
         }
 
         guard allowClipboardFallback else { return nil }
-        return getByClipboard(previousText: previousText)
+        return await getByClipboard(previousText: previousText)
     }
 
     private func getSelectedTextViaAccessibility(pid: pid_t) -> String? {
@@ -39,7 +46,8 @@ final class TextSelector {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func getByClipboard(previousText: String) -> String? {
+    @MainActor
+    private func getByClipboard(previousText: String) async -> String? {
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastCopyTime < copyInterval { return nil }
         lastCopyTime = now
@@ -47,27 +55,32 @@ final class TextSelector {
         let pb = NSPasteboard.general
         let oldText = pb.string(forType: .string)
         let oldCount = pb.changeCount
+        defer { restoreClipboardText(oldText) }
+
         simulateCmdC()
 
         var newText: String? = nil
-        for _ in 0..<20 {
-            Thread.sleep(forTimeInterval: 0.01)
+        for _ in 0..<maxCopyPollCount {
+            if Task.isCancelled { return nil }
+            try? await Task.sleep(nanoseconds: copyPollIntervalNs)
             if pb.changeCount != oldCount {
                 newText = pb.string(forType: .string)
                 break
             }
         }
 
-        // 恢复旧剪贴板
-        if let old = oldText {
-            pb.clearContents()
-            pb.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.TransientType")], owner: nil)
-            pb.setString(old, forType: .string)
-        }
-
         guard let text = newText?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty, text != previousText else { return nil }
         return text
+    }
+
+    @MainActor
+    private func restoreClipboardText(_ oldText: String?) {
+        guard let oldText else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.TransientType")], owner: nil)
+        pb.setString(oldText, forType: .string)
     }
 
     private func simulateCmdC() {
