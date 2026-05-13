@@ -190,6 +190,28 @@ func createLabel(fontSize: CGFloat, color: NSColor = TEXT_PRIMARY, bold: Bool = 
     return label
 }
 
+func createTextView(fontSize: CGFloat, color: NSColor = TEXT_PRIMARY,
+                    selectable: Bool = true) -> NSTextView {
+    let textView = NSTextView()
+    textView.isEditable = false
+    textView.isSelectable = selectable
+    textView.drawsBackground = false
+    textView.font = NSFont.systemFont(ofSize: fontSize)
+    textView.textColor = color
+    textView.isRichText = false
+    textView.importsGraphics = false
+    textView.allowsUndo = false
+    textView.isHorizontallyResizable = false
+    textView.isVerticallyResizable = true
+    textView.autoresizingMask = [.width]
+    textView.textContainerInset = .zero
+    textView.textContainer?.widthTracksTextView = true
+    textView.textContainer?.heightTracksTextView = false
+    textView.textContainer?.lineFragmentPadding = 0
+    textView.textContainer?.lineBreakMode = .byWordWrapping
+    return textView
+}
+
 func createPillLabel(fontSize: CGFloat = 11, color: NSColor = TEXT_SECONDARY,
                      background: NSColor = CHIP_BG) -> NSTextField {
     let label = createLabel(fontSize: fontSize, color: color, bold: true,

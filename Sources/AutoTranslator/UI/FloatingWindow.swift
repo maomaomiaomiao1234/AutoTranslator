@@ -295,7 +295,7 @@ final class FloatingWindow: NSObject {
     private let backendToggleBtn: NSButton
     private let destScroll: NSScrollView
     private let destTextContainer: FlippedContentView
-    private let destLabel: NSTextField
+    private let destLabel: NSTextView
     private let destCopyBtn: NSButton
     private let destRefreshBtn: NSButton
 
@@ -427,7 +427,7 @@ final class FloatingWindow: NSObject {
         destScroll.contentView = TopAlignedClipView()
 
         destTextContainer = FlippedContentView()
-        destLabel = createLabel(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true, wraps: true)
+        destLabel = createTextView(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true)
         destTextContainer.addSubview(destLabel)
         destScroll.documentView = destTextContainer
 
@@ -586,11 +586,11 @@ final class FloatingWindow: NSObject {
 
         srcLabel.stringValue = currentSourceText
         if let dest = destText {
-            destLabel.stringValue = dest
+            setDestText(dest)
             destLabel.textColor = TEXT_PRIMARY
             setTranslationState(.done)
         } else {
-            destLabel.stringValue = "正在翻译..."
+            setDestText("正在翻译...")
             destLabel.textColor = TEXT_MUTED
             setTranslationState(.loading)
         }
@@ -598,7 +598,14 @@ final class FloatingWindow: NSObject {
         refreshSourceMeta()
         refreshLanguageUI()
         refreshActionState()
-        layoutWindow()
+        let currentHeight = clampedWindowHeight(window.frame.height)
+        if wasVisible {
+            layoutWindow(forcedHeight: currentHeight)
+        } else if usesManualHeightForLayout {
+            layoutWindow(forcedHeight: currentHeight)
+        } else {
+            layoutWindow(forcedHeight: WINDOW_MIN_HEIGHT)
+        }
         scrollToTop(srcScroll)
         scrollToTop(destScroll)
 
@@ -607,14 +614,7 @@ final class FloatingWindow: NSObject {
         defer { suppressAutoPin = false }
 
         if wasVisible {
-            let frame = window.frame
-            let top = frame.maxY
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.18
-                window.animator().setFrame(
-                    NSRect(x: frame.origin.x, y: top - newHeight, width: frame.width, height: newHeight),
-                    display: true)
-            }
+            window.displayIfNeeded()
         } else {
             let (x, y): (CGFloat, CGFloat)
             if let saved = savedOrigin {
@@ -654,9 +654,11 @@ final class FloatingWindow: NSObject {
         streamBuffer = ""
         streamPos = 0
         streamFinal = nil
-        destLabel.stringValue = ""
+        currentDestText = ""
+        setDestText("正在翻译...")
         destLabel.textColor = TEXT_PRIMARY
         setTranslationState(.loading)
+        refreshActionState()
         scrollToTop(destScroll)
         streamTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
             self?.streamTick()
@@ -674,24 +676,15 @@ final class FloatingWindow: NSObject {
         }
 
         currentDestText = displayed
-        destLabel.stringValue = displayed
+        setDestText(displayed)
         refreshActionState()
 
         let cardInnerWidth = window.frame.width - (OUTER_PADDING * 2) - (CARD_INSET_X * 2)
         let fullTextHeight = measureTextHeight(displayed, width: cardInnerWidth,
                                                fontSize: BODY_FONT_SIZE, minimum: 40)
-        destLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: fullTextHeight)
-
-        let needed = min(DEST_MAX_CARD_HEIGHT, max(132, fullTextHeight + 82))
-        if !usesManualHeightForLayout, Int(needed) > Int(destCard.frame.height) {
-            layoutWindow()
-            let newHeight = rootView.frame.height
-            let frame = window.frame
-            suppressAutoPin = true
-            window.setFrame(NSRect(x: frame.origin.x, y: frame.maxY - newHeight,
-                                   width: frame.width, height: newHeight), display: true)
-            suppressAutoPin = false
-        }
+        let visibleHeight = max(0, destScroll.contentView.bounds.height)
+        updateDestTextLayout(width: cardInnerWidth, visibleHeight: visibleHeight, textHeight: fullTextHeight)
+        growWindowForStreamingIfNeeded()
 
         if streamFinal != nil, streamPos >= streamBuffer.count { finishStream() }
     }
@@ -705,21 +698,23 @@ final class FloatingWindow: NSObject {
     private func finishStream() {
         stopStream()
         currentDestText = streamBuffer
-        destLabel.stringValue = streamBuffer
+        setDestText(streamBuffer)
         setTranslationState(.done)
         refreshActionState()
-        layoutWindow()
+        let frame = window.frame
+        let desiredHeight = usesManualHeightForLayout
+            ? clampedWindowHeight(frame.height)
+            : max(clampedWindowHeight(frame.height), desiredAutomaticWindowHeight(for: frame.width))
+        layoutWindow(forcedHeight: desiredHeight)
 
         guard window.isVisible else { return }
         let newHeight = rootView.frame.height
-        let frame = window.frame
+        guard abs(frame.height - newHeight) > 0.5 else { return }
         suppressAutoPin = true
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
-            window.animator().setFrame(
-                NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: frame.width, height: newHeight),
-                display: true)
-        }
+        window.setFrame(
+            NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: frame.width, height: newHeight),
+            display: true
+        )
         suppressAutoPin = false
     }
 
@@ -780,12 +775,13 @@ final class FloatingWindow: NSObject {
     }
 
     @objc private func windowDidResize(_ notification: Notification) {
+        guard !suppressAutoPin else { return }
         layoutWindow()
     }
 
     // MARK: - Layout
 
-    private func layoutWindow() {
+    private func layoutWindow(forcedHeight: CGFloat? = nil) {
         let windowWidth = window.frame.width
         let contentWidth = windowWidth - (OUTER_PADDING * 2)
         let cardInnerWidth = contentWidth - (CARD_INSET_X * 2)
@@ -795,29 +791,17 @@ final class FloatingWindow: NSObject {
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
         let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
                                                fontSize: BODY_FONT_SIZE, minimum: 40)
-
-        let srcVisible = min(srcTextHeight, MAX_CARD_TEXT_HEIGHT)
-        let destVisible = min(destTextHeight, MAX_CARD_TEXT_HEIGHT)
-
-        var srcCardHeight = min(SRC_MAX_CARD_HEIGHT, max(106, srcVisible + 50))
-        var destCardHeight = min(DEST_MAX_CARD_HEIGHT, max(132, destVisible + 82))
-
-        let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
-            + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
-        let contentHeights = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + srcCardHeight
-            + SECTION_GAP + LANG_BAR_HEIGHT + SECTION_GAP + destCardHeight + OUTER_PADDING
         let totalHeight: CGFloat
-        if usesManualHeightForLayout {
+        if let forcedHeight {
+            totalHeight = clampedWindowHeight(forcedHeight)
+        } else if usesManualHeightForLayout {
             totalHeight = clampedWindowHeight(window.frame.height)
         } else {
-            totalHeight = min(MAX_WINDOW_HEIGHT, max(WINDOW_MIN_HEIGHT, contentHeights))
+            totalHeight = desiredAutomaticWindowHeight(for: windowWidth)
         }
-
-        let available = totalHeight - overhead
-        if srcCardHeight + destCardHeight > available {
-            srcCardHeight = max(100, floor(available * 7 / 15))
-            destCardHeight = max(124, available - srcCardHeight)
-        }
+        let cardHeights = stableCardHeights(for: totalHeight)
+        let srcCardHeight = cardHeights.src
+        let destCardHeight = cardHeights.dest
 
         rootView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         vibrancyView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
@@ -886,9 +870,7 @@ final class FloatingWindow: NSObject {
         let destTextScrollY: CGFloat = 42
         destScroll.frame = NSRect(x: CARD_INSET_X, y: destTextScrollY,
                                   width: cardInnerWidth, height: destVisibleH)
-        destTextContainer.frame = NSRect(x: 0, y: 0, width: cardInnerWidth,
-                                         height: max(destTextHeight, destVisibleH))
-        destLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: destTextHeight)
+        updateDestTextLayout(width: cardInnerWidth, visibleHeight: destVisibleH, textHeight: destTextHeight)
 
         let providerY = destTextScrollY + destVisibleH + 8
         let toggleX = contentWidth - CARD_INSET_X - 24
@@ -1078,23 +1060,82 @@ final class FloatingWindow: NSObject {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    private var usesManualHeightForLayout: Bool {
-        hasManualHeight || activeResizeEdges.hasVertical
+    private func setDestText(_ text: String) {
+        destLabel.string = text
     }
 
-    private func syncWindowHeightToContent(preserveTop: Bool = true) {
-        guard !usesManualHeightForLayout else { return }
-        let frame = window.frame
-        let targetHeight = rootView.frame.height
-        guard abs(frame.height - targetHeight) > 0.5 else { return }
+    private func updateDestTextLayout(width: CGFloat, visibleHeight: CGFloat, textHeight: CGFloat) {
+        let contentHeight = max(40, ceil(textHeight))
+        destTextContainer.frame = NSRect(x: 0, y: 0, width: width,
+                                         height: max(contentHeight, visibleHeight))
+        destLabel.frame = NSRect(x: 0, y: 0, width: width, height: contentHeight)
+    }
 
-        let newOriginY = preserveTop ? frame.maxY - targetHeight : frame.origin.y
+    private func stableCardHeights(for totalHeight: CGFloat) -> (src: CGFloat, dest: CGFloat) {
+        let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
+            + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
+        let available = max(0, clampedWindowHeight(totalHeight) - overhead)
+        let baseSrcCardHeight: CGFloat = 116
+        let baseDestCardHeight = max(CGFloat(132), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
+
+        var src = min(baseSrcCardHeight, available)
+        var dest = max(baseDestCardHeight, available - src)
+
+        if dest > DEST_MAX_CARD_HEIGHT {
+            let overflow = dest - DEST_MAX_CARD_HEIGHT
+            dest = DEST_MAX_CARD_HEIGHT
+            src = min(SRC_MAX_CARD_HEIGHT, src + overflow)
+        }
+
+        if src + dest < available {
+            let remaining = available - src - dest
+            src = min(SRC_MAX_CARD_HEIGHT, src + remaining)
+        }
+
+        if src + dest > available {
+            dest = max(CGFloat(132), available - src)
+        }
+
+        return (src: src, dest: dest)
+    }
+
+    private func desiredAutomaticWindowHeight(for width: CGFloat) -> CGFloat {
+        let contentWidth = width - (OUTER_PADDING * 2)
+        let cardInnerWidth = contentWidth - (CARD_INSET_X * 2)
+        let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
+        let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
+                                               fontSize: BODY_FONT_SIZE, minimum: 40)
+
+        let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
+            + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
+        let baseSrcCardHeight: CGFloat = 116
+        let baseDestCardHeight = max(CGFloat(132), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
+        let neededDestCardHeight = min(DEST_MAX_CARD_HEIGHT,
+                                       max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + 82))
+        return min(MAX_WINDOW_HEIGHT,
+                   max(WINDOW_MIN_HEIGHT, overhead + baseSrcCardHeight + neededDestCardHeight))
+    }
+
+    private func growWindowForStreamingIfNeeded() {
+        guard !usesManualHeightForLayout, window.isVisible else { return }
+
+        let frame = window.frame
+        let targetHeight = desiredAutomaticWindowHeight(for: frame.width)
+        let growthThreshold: CGFloat = 18
+        guard targetHeight > frame.height + growthThreshold else { return }
+
+        layoutWindow(forcedHeight: targetHeight)
+        let top = frame.maxY
         suppressAutoPin = true
         window.setFrame(
-            NSRect(x: frame.origin.x, y: newOriginY, width: frame.width, height: targetHeight),
+            NSRect(x: frame.origin.x, y: top - targetHeight, width: frame.width, height: targetHeight),
             display: true
         )
         suppressAutoPin = false
+    }
+
+    private var usesManualHeightForLayout: Bool {
+        hasManualHeight || activeResizeEdges.hasVertical
     }
 
     private func handleResize(edges: ResizeEdges, startFrame: NSRect, delta: NSSize) {
@@ -1134,7 +1175,6 @@ final class FloatingWindow: NSObject {
         window.setFrame(newFrame, display: true)
         suppressAutoPin = false
         layoutWindow()
-        syncWindowHeightToContent()
     }
 
     private func clampedWindowWidth(_ width: CGFloat) -> CGFloat {
