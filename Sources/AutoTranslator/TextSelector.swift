@@ -3,6 +3,16 @@ import ApplicationServices
 import CoreGraphics
 
 final class TextSelector {
+    private struct PasteboardItemSnapshot {
+        let dataByType: [NSPasteboard.PasteboardType: Data]
+    }
+
+    private struct PasteboardSnapshot {
+        let items: [PasteboardItemSnapshot]
+        let fallbackString: String?
+        let hadContents: Bool
+    }
+
     private let copyInterval: TimeInterval
     private let copyPollIntervalNs: UInt64
     private let maxCopyPollCount: Int
@@ -53,9 +63,9 @@ final class TextSelector {
         lastCopyTime = now
 
         let pb = NSPasteboard.general
-        let oldText = pb.string(forType: .string)
+        let snapshot = capturePasteboardSnapshot(pb)
         let oldCount = pb.changeCount
-        defer { restoreClipboardText(oldText) }
+        defer { restorePasteboardSnapshot(snapshot, to: pb) }
 
         simulateCmdC()
 
@@ -75,12 +85,46 @@ final class TextSelector {
     }
 
     @MainActor
-    private func restoreClipboardText(_ oldText: String?) {
-        guard let oldText else { return }
-        let pb = NSPasteboard.general
+    private func capturePasteboardSnapshot(_ pasteboard: NSPasteboard) -> PasteboardSnapshot {
+        let items = pasteboard.pasteboardItems ?? []
+        let snapshots = items.map { item in
+            var dataByType: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    dataByType[type] = data
+                }
+            }
+            return PasteboardItemSnapshot(dataByType: dataByType)
+        }
+        return PasteboardSnapshot(
+            items: snapshots,
+            fallbackString: pasteboard.string(forType: .string),
+            hadContents: !items.isEmpty
+        )
+    }
+
+    @MainActor
+    private func restorePasteboardSnapshot(_ snapshot: PasteboardSnapshot, to pb: NSPasteboard) {
         pb.clearContents()
+        guard snapshot.hadContents else { return }
+
+        let restoredItems = snapshot.items.compactMap { snapshot -> NSPasteboardItem? in
+            guard !snapshot.dataByType.isEmpty else { return nil }
+            let item = NSPasteboardItem()
+            for (type, data) in snapshot.dataByType {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+
+        if !restoredItems.isEmpty {
+            pb.writeObjects(restoredItems)
+            return
+        }
+
+        guard let fallbackString = snapshot.fallbackString else { return }
         pb.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.TransientType")], owner: nil)
-        pb.setString(oldText, forType: .string)
+        pb.setString(fallbackString, forType: .string)
     }
 
     private func simulateCmdC() {

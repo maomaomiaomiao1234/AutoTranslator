@@ -1,8 +1,8 @@
 import Foundation
 
 final class GoogleTranslator: TranslatorProtocol {
-    var source: String
-    var target: String
+    let source: String
+    let target: String
     let supportsStreaming = false
 
     private let session: URLSession = {

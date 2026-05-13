@@ -95,17 +95,18 @@ final class AppController: NSObject {
     // MARK: - Translation dispatch
 
     private func dispatchTranslate(_ text: String) {
+        guard let requestTranslator = translator else { return }
         translateVersion += 1
         let version = translateVersion
         translateTask?.cancel()
 
-        translateTask = Task { [weak self] in
+        translateTask = Task { [weak self, requestTranslator] in
             guard let self = self else { return }
 
             do {
-                if self.translator.supportsStreaming {
+                if requestTranslator.supportsStreaming {
                     var buffer = ""
-                    let stream = self.translator.translateStream(text)
+                    let stream = requestTranslator.translateStream(text)
                     for try await token in stream {
                         if version != self.translateVersion { return }
                         buffer += token
@@ -127,7 +128,7 @@ final class AppController: NSObject {
                         }
                     }
                 } else {
-                    let translated = try await self.translator.translate(text)
+                    let translated = try await requestTranslator.translate(text)
                     let result = translated.isEmpty ? "翻译结果为空" : translated
                     if version == self.translateVersion {
                         await MainActor.run { [weak self] in
@@ -179,8 +180,8 @@ extension AppController: FloatingWindowDelegate {
         destLang = LANG_DICT[destName] ?? "zh-CN"
         fputs("[AutoTranslator] 语言切换: \(srcName)(\(srcLang)) -> \(destName)(\(destLang))\n", stderr)
         translateTask?.cancel()
-        translator.source = srcLang
-        translator.target = destLang
+        translator = createTranslator()
+        window.setBackendLabel(translatorBackend)
         retranslateLast()
     }
 
@@ -192,8 +193,8 @@ extension AppController: FloatingWindowDelegate {
         swap(&srcLang, &destLang)
         window.setLanguages(LANG_DICT, source: srcLang, target: destLang)
         translateTask?.cancel()
-        translator.source = srcLang
-        translator.target = destLang
+        translator = createTranslator()
+        window.setBackendLabel(translatorBackend)
         fputs("[AutoTranslator] 语言互换完成: \(srcLang) -> \(destLang)\n", stderr)
         retranslateLast()
     }

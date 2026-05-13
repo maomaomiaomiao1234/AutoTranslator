@@ -12,8 +12,8 @@ let LANG_NAMES: [String: String] = [
 ]
 
 final class LLMTranslator: TranslatorProtocol {
-    var source: String
-    var target: String
+    let source: String
+    let target: String
     let supportsStreaming = true
     let model: String
     let baseURL: String
@@ -100,7 +100,7 @@ final class LLMTranslator: TranslatorProtocol {
 
     func translateStream(_ text: String) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let url = URL(string: "\(baseURL)/chat/completions")!
                     var request = URLRequest(url: url)
@@ -123,6 +123,7 @@ final class LLMTranslator: TranslatorProtocol {
 
                     let (bytes, _) = try await session.bytes(for: request)
                     for try await line in bytes.lines {
+                        try Task.checkCancellation()
                         guard line.hasPrefix("data: "), !line.hasPrefix("data: [DONE]") else { continue }
                         let jsonStr = String(line.dropFirst(6))
                         guard let jsonData = jsonStr.data(using: .utf8),
@@ -133,9 +134,14 @@ final class LLMTranslator: TranslatorProtocol {
                         continuation.yield(token)
                     }
                     continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
             }
         }
     }
