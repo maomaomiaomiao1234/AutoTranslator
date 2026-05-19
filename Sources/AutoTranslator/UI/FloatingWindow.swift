@@ -237,6 +237,7 @@ final class FloatingWindow: NSObject {
     private var backend: String = "google"
     private var isPinned = false
     private var savedOrigin: NSPoint?
+    private var savedHeight: CGFloat?
     private var suppressAutoPin = false
     private var activeResizeEdges: ResizeEdges = []
     private var hasManualHeight = false
@@ -599,13 +600,20 @@ final class FloatingWindow: NSObject {
         refreshLanguageUI()
         refreshActionState()
         let currentHeight = clampedWindowHeight(window.frame.height)
-        if wasVisible {
-            layoutWindow(forcedHeight: currentHeight)
-        } else if usesManualHeightForLayout {
-            layoutWindow(forcedHeight: currentHeight)
+        let targetHeight: CGFloat
+        if usesManualHeightForLayout {
+            targetHeight = currentHeight
+        } else if wasVisible {
+            // Grow to fit content (e.g. Google's one-shot result); never shrink.
+            targetHeight = max(currentHeight, desiredAutomaticWindowHeight(for: window.frame.width))
+        } else if let restored = savedHeight {
+            // Reopen at last height, but grow if new content needs more room.
+            let restoredClamped = clampedWindowHeight(restored)
+            targetHeight = max(restoredClamped, desiredAutomaticWindowHeight(for: window.frame.width))
         } else {
-            layoutWindow(forcedHeight: WINDOW_MIN_HEIGHT)
+            targetHeight = WINDOW_MIN_HEIGHT
         }
+        layoutWindow(forcedHeight: targetHeight)
         scrollToTop(srcScroll)
         scrollToTop(destScroll)
 
@@ -614,7 +622,16 @@ final class FloatingWindow: NSObject {
         defer { suppressAutoPin = false }
 
         if wasVisible {
-            window.displayIfNeeded()
+            let frame = window.frame
+            if abs(frame.height - newHeight) > 0.5 {
+                window.setFrame(
+                    NSRect(x: frame.origin.x, y: frame.maxY - newHeight,
+                           width: frame.width, height: newHeight),
+                    display: true
+                )
+            } else {
+                window.displayIfNeeded()
+            }
         } else {
             let (x, y): (CGFloat, CGFloat)
             if let saved = savedOrigin {
@@ -742,6 +759,7 @@ final class FloatingWindow: NSObject {
     func hide() {
         stopStream()
         if !isPinned { savedOrigin = window.frame.origin }
+        savedHeight = window.frame.height
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
