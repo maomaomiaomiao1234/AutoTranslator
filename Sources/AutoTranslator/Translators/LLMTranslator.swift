@@ -88,7 +88,11 @@ final class LLMTranslator: TranslatorProtocol {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
+        }
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard let choices = json?["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
@@ -121,7 +125,16 @@ final class LLMTranslator: TranslatorProtocol {
                     ]
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                    let (bytes, _) = try await session.bytes(for: request)
+                    let (bytes, response) = try await session.bytes(for: request)
+                    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                        var bodyData = Data()
+                        for try await byte in bytes {
+                            bodyData.append(byte)
+                            if bodyData.count >= 1024 { break }
+                        }
+                        let body = String(data: bodyData, encoding: .utf8) ?? ""
+                        throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
+                    }
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
                         guard line.hasPrefix("data: "), !line.hasPrefix("data: [DONE]") else { continue }

@@ -252,6 +252,10 @@ final class FloatingWindow: NSObject {
     private var streamPos = 0
     private var streamFinal: String?
 
+    // Event monitors
+    private var localKeyMonitor: Any?
+    private var globalKeyMonitor: Any?
+
     private var languages: [String: String] = [:]
     private var srcLang = "auto"
     private var destLang = "zh-CN"
@@ -517,6 +521,8 @@ final class FloatingWindow: NSObject {
     deinit {
         stopStream()
         NotificationCenter.default.removeObserver(self)
+        if let m = localKeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = globalKeyMonitor { NSEvent.removeMonitor(m) }
     }
 
     // MARK: - Public API
@@ -947,7 +953,7 @@ final class FloatingWindow: NSObject {
     }
 
     private func setupKeyMonitor() {
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self, event.keyCode == 53 else { return event }
             if self.window.isVisible, NSPointInRect(NSEvent.mouseLocation, self.window.frame) {
                 self.hide()
@@ -955,7 +961,7 @@ final class FloatingWindow: NSObject {
             }
             return event
         }
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self, event.keyCode == 53 else { return }
             if self.window.isVisible, NSPointInRect(NSEvent.mouseLocation, self.window.frame) {
                 self.hide()

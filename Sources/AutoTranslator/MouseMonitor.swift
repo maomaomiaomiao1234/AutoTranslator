@@ -9,6 +9,7 @@ final class MouseMonitor {
     private let dragThresholdSq: Double = 36
     private let selectionDispatchDelay: DispatchTimeInterval = .milliseconds(50)
     private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
     private var mouseDownPoint: CGPoint?
     private var mouseDraggedSinceDown = false
     private var pendingSelectionWorkItem: DispatchWorkItem?
@@ -48,16 +49,21 @@ final class MouseMonitor {
         }
 
         eventTap = tap
-        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
     func stop() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
         }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            runLoopSource = nil
+        }
+        eventTap = nil
     }
 
     private func handleEvent(type: CGEventType, event: CGEvent) {

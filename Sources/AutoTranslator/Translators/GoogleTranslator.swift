@@ -26,7 +26,11 @@ final class GoogleTranslator: TranslatorProtocol {
             URLQueryItem(name: "q", value: text),
         ]
 
-        let (data, _) = try await session.data(from: components.url!)
+        let (data, response) = try await session.data(from: components.url!)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw RuntimeError("Google Translate HTTP \(http.statusCode): \(body.prefix(200))")
+        }
         let json = try JSONSerialization.jsonObject(with: data) as? [Any]
         guard let sentences = json?[0] as? [[Any]], !sentences.isEmpty else {
             throw RuntimeError("Google Translate 返回为空")
