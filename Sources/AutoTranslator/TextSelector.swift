@@ -118,6 +118,7 @@ final class TextSelector {
         }
 
         if !restoredItems.isEmpty {
+            pb.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.TransientType")], owner: nil)
             pb.writeObjects(restoredItems)
             return
         }

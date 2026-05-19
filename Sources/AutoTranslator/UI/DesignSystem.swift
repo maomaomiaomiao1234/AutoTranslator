@@ -26,8 +26,16 @@ let BODY_FONT_SIZE: CGFloat = 15
 
 // MARK: - Theme Detection
 
-var isDarkMode: Bool {
+private var _cachedIsDarkMode: Bool = {
     NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+}()
+
+var isDarkMode: Bool {
+    _cachedIsDarkMode
+}
+
+func refreshThemeCache() {
+    _cachedIsDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 }
 
 // MARK: - Color Helpers
@@ -260,14 +268,19 @@ func createToolbarIconButton(symbolName: String, fallback: String,
 
 func measureTextHeight(_ text: String, width: CGFloat, fontSize: CGFloat,
                        bold: Bool = false, minimum: CGFloat = 0) -> CGFloat {
-    let probe = createLabel(fontSize: fontSize, bold: bold, wraps: true)
-    probe.stringValue = text
-    let size = probe.cell!.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 10000))
-    return max(minimum, ceil(size.height) + 2)
+    let font = bold ? NSFont.boldSystemFont(ofSize: fontSize) : NSFont.systemFont(ofSize: fontSize)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    let attributedString = NSAttributedString(string: text, attributes: attributes)
+    let rect = attributedString.boundingRect(
+        with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+        options: [.usesLineFragmentOrigin, .usesFontLeading]
+    )
+    return max(minimum, ceil(rect.height) + 2)
 }
 
 func measureTextWidth(_ text: String, fontSize: CGFloat, bold: Bool = false) -> CGFloat {
-    let probe = createLabel(fontSize: fontSize, bold: bold, wraps: false)
-    probe.stringValue = text
-    return ceil(probe.cell!.cellSize.width)
+    let font = bold ? NSFont.boldSystemFont(ofSize: fontSize) : NSFont.systemFont(ofSize: fontSize)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    let attributedString = NSAttributedString(string: text, attributes: attributes)
+    return ceil(attributedString.size().width)
 }

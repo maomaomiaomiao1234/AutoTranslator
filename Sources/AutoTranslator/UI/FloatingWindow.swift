@@ -217,7 +217,6 @@ protocol FloatingWindowDelegate: AnyObject {
     func swapLanguages()
     func toggleTranslator()
     func retranslateCurrent()
-    func copySource()
     func hideWindow()
 }
 
@@ -446,6 +445,7 @@ final class FloatingWindow: NSObject {
         super.init()
 
         rootView.onAppearanceChanged = { [weak self] in
+            refreshThemeCache()
             self?.refreshAppearance()
         }
 

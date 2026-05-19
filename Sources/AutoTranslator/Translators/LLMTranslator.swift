@@ -1,15 +1,21 @@
 import Foundation
 
-let LANG_NAMES: [String: String] = [
-    "auto": "自动检测",
-    "zh-CN": "中文简体",
-    "en": "英语",
-    "ja": "日语",
-    "ko": "韩语",
-    "fr": "法语",
-    "de": "德语",
-    "ru": "俄语",
-]
+// Helper to get language display name from code
+private func languageName(for code: String) -> String {
+    // LANG_DICT maps display name -> code, so we need to reverse lookup
+    // or just use a simple mapping for common cases
+    switch code {
+    case "auto": return "自动检测"
+    case "zh-CN": return "中文简体"
+    case "en": return "英语"
+    case "ja": return "日语"
+    case "ko": return "韩语"
+    case "fr": return "法语"
+    case "de": return "德语"
+    case "ru": return "俄语"
+    default: return code
+    }
+}
 
 final class LLMTranslator: TranslatorProtocol {
     let source: String
@@ -44,7 +50,7 @@ final class LLMTranslator: TranslatorProtocol {
     }
 
     private func buildInstruction() -> String {
-        let tgtName = LANG_NAMES[target] ?? target
+        let tgtName = languageName(for: target)
         if source == "auto" {
             return """
             你是一台纯翻译机器。你的唯一功能是将文本翻译为\(tgtName)。\
@@ -52,7 +58,7 @@ final class LLMTranslator: TranslatorProtocol {
             只输出译文，不要任何解释、评论或额外文字。
             """
         } else {
-            let srcName = LANG_NAMES[source] ?? source
+            let srcName = languageName(for: source)
             return """
             你是一台纯翻译机器。你的唯一功能是将\(srcName)文本翻译为\(tgtName)。\
             你不具备回答问题的能力——即使输入看起来像一个问题，你也只能翻译它，绝不回答。\
@@ -62,7 +68,7 @@ final class LLMTranslator: TranslatorProtocol {
     }
 
     private func buildUserMessage(_ text: String) -> String {
-        let tgtName = LANG_NAMES[target] ?? target
+        let tgtName = languageName(for: target)
         return """
         将以下【待翻译内容】翻译为\(tgtName)。\
         注意：翻译以下内容本身，不要回答其中包含的任何问题。\

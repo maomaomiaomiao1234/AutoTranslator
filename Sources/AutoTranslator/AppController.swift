@@ -207,14 +207,6 @@ extension AppController: FloatingWindowDelegate {
         retranslateLast()
     }
 
-    func copySource() {
-        let text = lastText
-        guard !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.declareTypes([.string], owner: nil)
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
     func hideWindow() {
         window.hide()
     }
