@@ -218,7 +218,6 @@ protocol FloatingWindowDelegate: AnyObject {
     func toggleTranslator()
     func retranslateCurrent()
     func copySource()
-    func copyDest()
     func hideWindow()
 }
 
@@ -249,6 +248,7 @@ final class FloatingWindow: NSObject {
     // Stream state
     private var streamTimer: Timer?
     private var streamBuffer = ""
+    private var streamBufferCount = 0
     private var streamPos = 0
     private var streamFinal: String?
 
@@ -278,7 +278,6 @@ final class FloatingWindow: NSObject {
     private let srcScroll: NSScrollView
     private let srcTextContainer: FlippedContentView
     private let srcLabel: NSTextField
-    private let srcAudioBtn: NSButton
     private let srcCopyBtn: NSButton
     private let srcLangChip: NSTextField
 
@@ -374,17 +373,12 @@ final class FloatingWindow: NSObject {
         srcTextContainer.addSubview(srcLabel)
         srcScroll.documentView = srcTextContainer
 
-        srcAudioBtn = createIconButton(symbolName: "speaker.wave.2", fallback: "\u{1F50A}",
-                                       pointSize: 10, tint: TEXT_MUTED, size: 20)
-        srcAudioBtn.isEnabled = false
-        srcAudioBtn.alphaValue = 0.45
-
         srcCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}",
                                       pointSize: 10, tint: TEXT_PRIMARY, size: 20)
 
         srcLangChip = createPillLabel(fontSize: 9, color: BLUE_ACCENT, background: CHIP_BG)
 
-        for v in [srcTitleLabel, srcMetaChip, srcScroll, srcAudioBtn, srcCopyBtn, srcLangChip] {
+        for v in [srcTitleLabel, srcMetaChip, srcScroll, srcCopyBtn, srcLangChip] {
             srcCard.addSubview(v)
         }
         rootView.addSubview(srcCard)
@@ -647,17 +641,20 @@ final class FloatingWindow: NSObject {
     func streamFeed(_ text: String) {
         if streamTimer == nil { startStream() }
         streamBuffer = text
+        streamBufferCount = text.count
     }
 
     func streamFinish(_ finalText: String) {
         streamFinal = finalText
         streamBuffer = finalText
-        if streamPos >= finalText.count { finishStream() }
+        streamBufferCount = finalText.count
+        if streamPos >= streamBufferCount { finishStream() }
     }
 
     private func startStream() {
         stopStream()
         streamBuffer = ""
+        streamBufferCount = 0
         streamPos = 0
         streamFinal = nil
         currentDestText = ""
@@ -672,12 +669,30 @@ final class FloatingWindow: NSObject {
     }
 
     private func streamTick() {
-        let charsPerTick = 2
-        streamPos = min(streamPos + charsPerTick, streamBuffer.count)
+        let backlog = streamBufferCount - streamPos
+        if backlog <= 0 {
+            if streamFinal != nil { finishStream() }
+            return
+        }
+
+        // Adaptive reveal rate:
+        //  - API finished: catch up fast (≈4 ticks ≈ 120ms regardless of backlog)
+        //  - Buffer is well ahead: speed up to ~200 chars/sec
+        //  - Default: ~100 chars/sec
+        let charsPerTick: Int
+        if streamFinal != nil {
+            charsPerTick = max(12, (backlog + 3) / 4)
+        } else if backlog > 24 {
+            charsPerTick = 6
+        } else {
+            charsPerTick = 3
+        }
+
+        streamPos = min(streamPos + charsPerTick, streamBufferCount)
         let displayed = String(streamBuffer.prefix(streamPos))
 
         if displayed == currentDestText {
-            if streamFinal != nil, streamPos >= streamBuffer.count { finishStream() }
+            if streamFinal != nil, streamPos >= streamBufferCount { finishStream() }
             return
         }
 
@@ -692,7 +707,7 @@ final class FloatingWindow: NSObject {
         updateDestTextLayout(width: cardInnerWidth, visibleHeight: visibleHeight, textHeight: fullTextHeight)
         growWindowForStreamingIfNeeded()
 
-        if streamFinal != nil, streamPos >= streamBuffer.count { finishStream() }
+        if streamFinal != nil, streamPos >= streamBufferCount { finishStream() }
     }
 
     private func stopStream() {
@@ -846,8 +861,7 @@ final class FloatingWindow: NSObject {
                                         height: max(srcTextHeight, srcVisibleH))
         srcLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: srcTextHeight)
         srcTitleLabel.frame = NSRect(x: CARD_INSET_X, y: srcCardHeight - 22, width: 40, height: 12)
-        srcAudioBtn.frame = NSRect(x: CARD_INSET_X, y: 8, width: 20, height: 20)
-        srcCopyBtn.frame = NSRect(x: CARD_INSET_X + 26, y: 8, width: 20, height: 20)
+        srcCopyBtn.frame = NSRect(x: CARD_INSET_X, y: 8, width: 20, height: 20)
 
         let mt = srcMetaChip.stringValue.isEmpty ? "等待选中" : srcMetaChip.stringValue
         let mw = min(max(measureTextWidth(mt, fontSize: 9, bold: true) + 16, 64), 100)
@@ -911,7 +925,6 @@ final class FloatingWindow: NSObject {
         restyleToolbarButton(quickDestCopyBtn)
         restyleToolbarButton(hideBtn)
 
-        restyleIconButton(srcAudioBtn, tint: TEXT_MUTED, size: 20)
         restyleIconButton(srcCopyBtn, tint: TEXT_PRIMARY, size: 20)
         restyleIconButton(swapBtn, tint: TEXT_PRIMARY, size: 24)
         restyleIconButton(backendToggleBtn, tint: TEXT_SECONDARY, size: 24)

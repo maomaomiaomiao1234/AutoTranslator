@@ -5,7 +5,7 @@ final class GoogleTranslator: TranslatorProtocol {
     let target: String
     let supportsStreaming = false
 
-    private let session: URLSession = {
+    private static let sharedSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 10
         return URLSession(configuration: config)
@@ -26,7 +26,7 @@ final class GoogleTranslator: TranslatorProtocol {
             URLQueryItem(name: "q", value: text),
         ]
 
-        let (data, response) = try await session.data(from: components.url!)
+        let (data, response) = try await Self.sharedSession.data(from: components.url!)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw RuntimeError("Google Translate HTTP \(http.statusCode): \(body.prefix(200))")
@@ -40,19 +40,5 @@ final class GoogleTranslator: TranslatorProtocol {
             throw RuntimeError("Google Translate 返回为空")
         }
         return result
-    }
-
-    func translateStream(_ text: String) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            Task {
-                do {
-                    let result = try await self.translate(text)
-                    continuation.yield(result)
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-        }
     }
 }

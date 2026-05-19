@@ -215,10 +215,6 @@ extension AppController: FloatingWindowDelegate {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    func copyDest() {
-        // Handled by FloatingWindow directly
-    }
-
     func hideWindow() {
         window.hide()
     }

@@ -18,7 +18,12 @@ final class LLMTranslator: TranslatorProtocol {
     let model: String
     let baseURL: String
     private let apiKey: String
-    private let session: URLSession
+
+    private static let sharedSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        return URLSession(configuration: config)
+    }()
 
     init(source: String = "auto", target: String = "zh-CN",
          apiKey: String? = nil, model: String = "deepseek-v3.2",
@@ -36,10 +41,6 @@ final class LLMTranslator: TranslatorProtocol {
         self.model = model
         self.baseURL = baseURL
         self.apiKey = key
-
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        self.session = URLSession(configuration: config)
     }
 
     private func buildInstruction() -> String {
@@ -88,7 +89,7 @@ final class LLMTranslator: TranslatorProtocol {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await Self.sharedSession.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
@@ -125,7 +126,7 @@ final class LLMTranslator: TranslatorProtocol {
                     ]
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-                    let (bytes, response) = try await session.bytes(for: request)
+                    let (bytes, response) = try await Self.sharedSession.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         var bodyData = Data()
                         for try await byte in bytes {
