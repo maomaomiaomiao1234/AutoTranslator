@@ -8,11 +8,18 @@ final class BorderlessWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    /// 在窗口或其任意子视图收到任何鼠标按下事件时调用；
+    /// FloatingWindow 借此在窗口被其它窗口遮挡时把它重新提到最前。
+    var onAnyMouseDown: (() -> Void)?
+
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT),
                    styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
+        // 浮动层级：翻译弹出时始终可见；
+        // 用户点击其它窗口后由 FloatingWindow 的全局监听把 level 降回 .normal。
         level = .floating
+        hidesOnDeactivate = false
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -26,6 +33,16 @@ final class BorderlessWindow: NSPanel {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { /* Esc — handled via key monitor */ }
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            onAnyMouseDown?()
+        default:
+            break
+        }
+        super.sendEvent(event)
     }
 }
 
@@ -255,6 +272,8 @@ final class FloatingWindow: NSObject {
     // Event monitors
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
+    private var globalClickMonitor: Any?
+    private var pendingSinkWorkItem: DispatchWorkItem?
 
     private var languages: [String: String] = [:]
     private var srcLang = "auto"
@@ -449,6 +468,11 @@ final class FloatingWindow: NSObject {
             self?.refreshAppearance()
         }
 
+        // 当窗口被其它窗口遮挡后，用户点击翻译窗任意位置时把它重新提到最前。
+        window.onAnyMouseDown = { [weak self] in
+            self?.raiseToTop()
+        }
+
         configurePopup(srcLangPop)
         configurePopup(destLangPop)
 
@@ -498,6 +522,11 @@ final class FloatingWindow: NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(windowDidResize),
                                                name: NSWindow.didResizeNotification,
                                                object: window)
+        // Mission Control / Stage Manager 选中本窗口后会触发 didBecomeKey；
+        // 借此取消任何挂起的降级任务，消除"闪一下后被放到下层"的竞态。
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidBecomeKey),
+                                               name: NSWindow.didBecomeKeyNotification,
+                                               object: window)
 
         resizeView.onResize = { [weak self] edges, startFrame, delta in
             self?.handleResize(edges: edges, startFrame: startFrame, delta: delta)
@@ -516,8 +545,54 @@ final class FloatingWindow: NSObject {
     deinit {
         stopStream()
         NotificationCenter.default.removeObserver(self)
-        if let m = localKeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = localKeyMonitor  { NSEvent.removeMonitor(m) }
         if let m = globalKeyMonitor { NSEvent.removeMonitor(m) }
+        if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
+        pendingSinkWorkItem?.cancel()
+    }
+
+    // MARK: - Window level management
+
+    /// 提到浮动层并置前；同时取消任何挂起的降级任务。
+    private func raiseToTop() {
+        pendingSinkWorkItem?.cancel()
+        pendingSinkWorkItem = nil
+        window.level = .floating
+        window.orderFrontRegardless()
+    }
+
+    /// 降到普通层级，让其它 App 窗口能自然盖过它。
+    private func sinkBelowOtherWindows() {
+        guard window.isVisible else { return }
+        window.level = .normal
+        window.orderBack(nil)
+    }
+
+    /// 全局点击监听：点击翻译窗以外时延迟 350ms 下沉。
+    /// 窗口自身的 sendEvent（raiseToTop）或 didBecomeKey（Mission Control 回调）
+    /// 会在这段时间内取消该任务，消除闪动竞态。
+    private func installGlobalClickMonitorIfNeeded() {
+        guard globalClickMonitor == nil else { return }
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            guard let self = self,
+                  self.window.isVisible,
+                  self.window.level == .floating else { return }
+            let work = DispatchWorkItem { [weak self] in self?.sinkBelowOtherWindows() }
+            self.pendingSinkWorkItem?.cancel()
+            self.pendingSinkWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(350), execute: work)
+        }
+    }
+
+    /// Mission Control / Stage Manager 选中本窗口后系统会把它设为 Key；
+    /// 此时取消任何挂起的降级，确保窗口留在浮动层。
+    @objc private func windowDidBecomeKey() {
+        pendingSinkWorkItem?.cancel()
+        pendingSinkWorkItem = nil
+        window.level = .floating
+        window.orderFrontRegardless()
     }
 
     // MARK: - Public API
@@ -632,6 +707,9 @@ final class FloatingWindow: NSObject {
             } else {
                 window.displayIfNeeded()
             }
+            // 之前可能被压到了普通层级；重新置顶到当前活动 App 之上
+            window.level = .floating
+            window.orderFrontRegardless()
         } else {
             let (x, y): (CGFloat, CGFloat)
             if let saved = savedOrigin {
@@ -645,12 +723,16 @@ final class FloatingWindow: NSObject {
             window.setFrame(NSRect(x: x, y: y, width: window.frame.width, height: newHeight), display: true)
             window.alphaValue = 0
             window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
 
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.22
                 window.animator().alphaValue = 1
             }
         }
+
+        // 安装全局点击监听：点击翻译窗以外时延迟下沉
+        installGlobalClickMonitorIfNeeded()
     }
 
     // MARK: - Stream
@@ -938,6 +1020,14 @@ final class FloatingWindow: NSObject {
                      border: CARD_BORDER, shadow: true)
         styleSurface(destCard, background: DEST_CARD_BG, radius: CARD_RADIUS,
                      border: CARD_BORDER, shadow: true)
+
+        // 文本颜色随主题刷新
+        headerTitleLabel.textColor = TEXT_PRIMARY
+        headerSubtitleLabel.textColor = TEXT_SECONDARY
+        srcTitleLabel.textColor = TEXT_SECONDARY
+        srcLabel.textColor = TEXT_PRIMARY
+        // destLabel 是 NSTextView：直接改 textColor 即可；翻译中的"灰色 placeholder"由 setTranslationState 重设
+        destLabel.textColor = (currentState == .loading) ? TEXT_MUTED : TEXT_PRIMARY
 
         restyleToolbarButton(quickSourceCopyBtn)
         restyleToolbarButton(quickDestCopyBtn)

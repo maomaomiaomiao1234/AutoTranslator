@@ -2,19 +2,7 @@ import Foundation
 
 // Helper to get language display name from code
 private func languageName(for code: String) -> String {
-    // LANG_DICT maps display name -> code, so we need to reverse lookup
-    // or just use a simple mapping for common cases
-    switch code {
-    case "auto": return "自动检测"
-    case "zh-CN": return "中文简体"
-    case "en": return "英语"
-    case "ja": return "日语"
-    case "ko": return "韩语"
-    case "fr": return "法语"
-    case "de": return "德语"
-    case "ru": return "俄语"
-    default: return code
-    }
+    Languages.name(for: code)
 }
 
 final class LLMTranslator: TranslatorProtocol {

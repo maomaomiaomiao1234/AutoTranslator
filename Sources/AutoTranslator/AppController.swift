@@ -1,25 +1,12 @@
 import Cocoa
 import CoreGraphics
 
-let LANGUAGES: [(String, String)] = [
-    ("自动检测", "auto"),
-    ("中文简体", "zh-CN"),
-    ("英语", "en"),
-    ("日语", "ja"),
-    ("韩语", "ko"),
-    ("法语", "fr"),
-    ("德语", "de"),
-    ("俄语", "ru"),
-]
-
-let LANG_DICT: [String: String] = Dictionary(uniqueKeysWithValues: LANGUAGES)
-
 final class AppController: NSObject {
 
     // MARK: - State
 
-    private var srcLang = "auto"
-    private var destLang = "zh-CN"
+    private var srcLang = Languages.defaultSourceCode
+    private var destLang = Languages.defaultTargetCode
     private var lastText = ""
 
     private var translatorBackend: String
@@ -33,24 +20,43 @@ final class AppController: NSObject {
     private var translateTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
 
+    private(set) var isMonitoringPaused = false
+    private(set) var currentTheme: Theme = .default
+
+    var currentBackend: String { translatorBackend }
+
     // MARK: - Init
 
     override init() {
         translatorBackend = ProcessInfo.processInfo.environment["TRANSLATOR_BACKEND"] ?? "llm"
+        // 恢复保存的语言偏好（如不合法则使用默认值）
+        let savedSrc = ConfigStore.shared.get(.srcLang)
+        let savedDest = ConfigStore.shared.get(.destLang)
+        if let savedSrc, Languages.nameByCode[savedSrc] != nil {
+            srcLang = savedSrc
+        }
+        if let savedDest, Languages.nameByCode[savedDest] != nil, savedDest != "auto" {
+            destLang = savedDest
+        }
         window = FloatingWindow()
 
         super.init()
 
         translator = createTranslator()
         window.delegate = self
-        window.setLanguages(LANG_DICT, source: srcLang, target: destLang)
+        window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
         window.setBackendLabel(translatorBackend)
         mouseMonitor.delegate = self
+
+        // 恢复保存的主题（必须在 NSApp 创建之后才有效，此处只是记录；
+        // 实际应用由 start() 调用，那时 NSApplication.shared 已就绪）
+        currentTheme = Theme.from(rawValue: ConfigStore.shared.get(.theme))
     }
 
     // MARK: - Start / Stop
 
     func start() {
+        currentTheme.apply()
         mouseMonitor.start()
     }
 
@@ -58,6 +64,78 @@ final class AppController: NSObject {
         mouseMonitor.stop()
         selectionTask?.cancel()
         translateTask?.cancel()
+    }
+
+    // MARK: - Public control surface (供菜单栏/偏好设置调用)
+
+    func pauseMonitoring() {
+        guard !isMonitoringPaused else { return }
+        isMonitoringPaused = true
+        mouseMonitor.stop()
+        selectionTask?.cancel()
+        NotificationManager.shared.post(title: "AutoTranslator", body: "已暂停划词监听")
+    }
+
+    func resumeMonitoring() {
+        guard isMonitoringPaused else { return }
+        isMonitoringPaused = false
+        mouseMonitor.start()
+        NotificationManager.shared.post(title: "AutoTranslator", body: "已恢复划词监听")
+    }
+
+    func toggleMonitoring() {
+        if isMonitoringPaused { resumeMonitoring() } else { pauseMonitoring() }
+    }
+
+    /// 切换到指定后端；若与当前一致则无操作。
+    func setBackend(_ backend: String) {
+        guard backend == "llm" || backend == "google" else { return }
+        guard backend != translatorBackend else { return }
+        translateTask?.cancel()
+        translatorBackend = backend
+        translator = createTranslator()
+        window.setBackendLabel(translatorBackend)
+        let label = translatorBackend == "llm" ? "大模型" : "谷歌翻译"
+        NotificationManager.shared.post(title: "翻译后端已切换", body: "当前使用：\(label)")
+        retranslateLast()
+    }
+
+    /// 偏好设置保存后调用：重新读取配置并重建翻译器。
+    func reloadFromConfig() {
+        ConfigStore.shared.reload()
+        ConfigStore.shared.applyToEnvironment()
+        let newBackend = ConfigStore.shared.get(.backend) ?? translatorBackend
+        translateTask?.cancel()
+        translatorBackend = newBackend
+        translator = createTranslator()
+        window.setBackendLabel(translatorBackend)
+        retranslateLast()
+    }
+
+    /// 来自偏好设置：设定源/目标语言代码并刷新 UI、翻译器。
+    func setLanguages(source: String, target: String) {
+        let validSource = Languages.nameByCode[source] != nil ? source : Languages.defaultSourceCode
+        let validTarget = (target != "auto" && Languages.nameByCode[target] != nil) ? target : Languages.defaultTargetCode
+        guard validSource != srcLang || validTarget != destLang else { return }
+        srcLang = validSource
+        destLang = validTarget
+        window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
+        translateTask?.cancel()
+        translator = createTranslator()
+        window.setBackendLabel(translatorBackend)
+        ConfigStore.shared.update([.srcLang: srcLang, .destLang: destLang])
+        retranslateLast()
+    }
+
+    var currentSourceLang: String { srcLang }
+    var currentDestLang: String { destLang }
+
+    /// 设置主题外观（浅色/深色/跟随系统）。立即应用并持久化。
+    func setTheme(_ theme: Theme) {
+        guard theme != currentTheme else { return }
+        currentTheme = theme
+        theme.apply()
+        ConfigStore.shared.update([.theme: theme.rawValue])
     }
 
     // MARK: - Translator management
@@ -69,6 +147,10 @@ final class AppController: NSObject {
                 return try LLMTranslator(source: srcLang, target: destLang)
             } catch {
                 fputs("[AutoTranslator] 大模型翻译初始化失败，回退到谷歌翻译: \(error)\n", stderr)
+                NotificationManager.shared.post(
+                    title: "大模型不可用，已回退到谷歌翻译",
+                    body: "请在偏好设置中配置 API Key。"
+                )
                 translatorBackend = "google"
                 window.setBackendLabel("google")
             }
@@ -176,12 +258,13 @@ extension AppController: MouseMonitorDelegate {
 
 extension AppController: FloatingWindowDelegate {
     func languageChanged(srcName: String, destName: String) {
-        srcLang = LANG_DICT[srcName] ?? "auto"
-        destLang = LANG_DICT[destName] ?? "zh-CN"
+        srcLang = Languages.code(for: srcName) ?? Languages.defaultSourceCode
+        destLang = Languages.code(for: destName) ?? Languages.defaultTargetCode
         fputs("[AutoTranslator] 语言切换: \(srcName)(\(srcLang)) -> \(destName)(\(destLang))\n", stderr)
         translateTask?.cancel()
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
+        ConfigStore.shared.update([.srcLang: srcLang, .destLang: destLang])
         retranslateLast()
     }
 
@@ -191,10 +274,11 @@ extension AppController: FloatingWindowDelegate {
             return
         }
         swap(&srcLang, &destLang)
-        window.setLanguages(LANG_DICT, source: srcLang, target: destLang)
+        window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
         translateTask?.cancel()
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
+        ConfigStore.shared.update([.srcLang: srcLang, .destLang: destLang])
         fputs("[AutoTranslator] 语言互换完成: \(srcLang) -> \(destLang)\n", stderr)
         retranslateLast()
     }
