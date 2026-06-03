@@ -1,11 +1,4 @@
 .DS_Store
-__pycache__/
-*.pyc
-
-build/
-dist/
-.py2app-build/
-*.egg-info/
 
 # Swift / SPM
 .build/
