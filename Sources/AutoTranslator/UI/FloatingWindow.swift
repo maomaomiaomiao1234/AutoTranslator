@@ -67,11 +67,11 @@ final class PanelBackgroundView: NSView {
         path.addClip()
 
         let accentPath = NSBezierPath(roundedRect: NSRect(x: b.minX + 18,
-                                                          y: b.maxY - 5,
+                                                          y: b.maxY - 6,
                                                           width: b.width - 36,
-                                                          height: 2),
-                                      xRadius: 1,
-                                      yRadius: 1)
+                                                          height: 3),
+                                      xRadius: 1.5,
+                                      yRadius: 1.5)
         CORAL_ACCENT.withAlphaComponent(isDarkMode ? 0.68 : 0.78).setFill()
         accentPath.fill()
 
@@ -80,6 +80,7 @@ final class PanelBackgroundView: NSView {
         hairline.move(to: NSPoint(x: b.minX + 18, y: b.maxY - 42))
         hairline.line(to: NSPoint(x: b.maxX - 18, y: b.maxY - 42))
         hairline.lineWidth = 1
+        hairline.lineCapStyle = .round
         hairline.stroke()
 
         NSGraphicsContext.restoreGraphicsState()
@@ -250,7 +251,6 @@ final class FloatingWindow: NSObject {
     weak var delegate: FloatingWindowDelegate?
 
     let window: BorderlessWindow
-    private let vibrancyView: NSVisualEffectView
     private let rootView: ThemeAwareView
     private let backgroundView: PanelBackgroundView
 
@@ -332,19 +332,17 @@ final class FloatingWindow: NSObject {
     override init() {
         window = BorderlessWindow()
 
-        vibrancyView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
-        vibrancyView.blendingMode = .behindWindow
-        vibrancyView.material = .menu
-        vibrancyView.state = .active
-        vibrancyView.wantsLayer = true
-        vibrancyView.autoresizingMask = [.width, .height]
-        window.contentView = vibrancyView
-
         rootView = ThemeAwareView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
+        rootView.wantsLayer = true
+        rootView.layer?.cornerRadius = PANEL_RADIUS
+        rootView.layer?.masksToBounds = true
         rootView.autoresizingMask = [.width, .height]
-        vibrancyView.addSubview(rootView)
+        window.contentView = rootView
 
         backgroundView = PanelBackgroundView(frame: NSRect(x: 0, y: 0, width: WINDOW_WIDTH, height: WINDOW_MIN_HEIGHT))
+        backgroundView.wantsLayer = true
+        backgroundView.layer?.cornerRadius = PANEL_RADIUS
+        backgroundView.layer?.masksToBounds = true
         backgroundView.autoresizingMask = [.width, .height]
         rootView.addSubview(backgroundView)
 
@@ -397,6 +395,9 @@ final class FloatingWindow: NSObject {
         srcScroll.borderType = .noBorder
         srcScroll.drawsBackground = false
         srcScroll.contentView = TopAlignedClipView()
+        srcScroll.wantsLayer = true
+        srcScroll.layer?.cornerRadius = CONTROL_RADIUS
+        srcScroll.layer?.masksToBounds = true
 
         srcTextContainer = FlippedContentView()
         srcLabel = createLabel(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true, wraps: true)
@@ -456,6 +457,9 @@ final class FloatingWindow: NSObject {
         destScroll.borderType = .noBorder
         destScroll.drawsBackground = false
         destScroll.contentView = TopAlignedClipView()
+        destScroll.wantsLayer = true
+        destScroll.layer?.cornerRadius = CONTROL_RADIUS
+        destScroll.layer?.masksToBounds = true
 
         destTextContainer = FlippedContentView()
         destLabel = createTextView(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true)
@@ -941,7 +945,6 @@ final class FloatingWindow: NSObject {
         let destCardHeight = cardHeights.dest
 
         rootView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
-        vibrancyView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         backgroundView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         backgroundView.needsDisplay = true
         resizeView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
@@ -1057,6 +1060,8 @@ final class FloatingWindow: NSObject {
 
         srcLangPop.contentTintColor = TEXT_PRIMARY
         destLangPop.contentTintColor = TEXT_PRIMARY
+        restylePopup(srcLangPop)
+        restylePopup(destLangPop)
 
         refreshPinStyle()
         setBackendLabel(backend)
@@ -1079,14 +1084,21 @@ final class FloatingWindow: NSObject {
         button.contentTintColor = tint
     }
 
+    private func restylePopup(_ popup: NSPopUpButton) {
+        styleSurface(popup, background: SURFACE_BG_SOFT, radius: CONTROL_RADIUS, border: BUTTON_BORDER)
+        popup.contentTintColor = TEXT_PRIMARY
+    }
+
     // MARK: - Private Helpers
 
     private func configurePopup(_ popup: NSPopUpButton) {
         popup.isBordered = false
+        popup.bezelStyle = .rounded
         popup.font = NSFont.boldSystemFont(ofSize: 12)
         popup.contentTintColor = TEXT_PRIMARY
         popup.wantsLayer = true
-        popup.layer?.backgroundColor = NSColor.clear.cgColor
+        popup.layer?.masksToBounds = true
+        restylePopup(popup)
     }
 
     private func setupKeyMonitor() {
