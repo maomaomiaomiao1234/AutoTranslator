@@ -66,19 +66,20 @@ final class PanelBackgroundView: NSView {
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
 
-        let accentPath = NSBezierPath(roundedRect: NSRect(x: b.minX + 18,
-                                                          y: b.maxY - 6,
-                                                          width: b.width - 36,
+        let accentWidth = min(116, max(72, b.width * 0.28))
+        let accentPath = NSBezierPath(roundedRect: NSRect(x: b.minX + 16,
+                                                          y: b.maxY - 5,
+                                                          width: accentWidth,
                                                           height: 3),
                                       xRadius: 1.5,
                                       yRadius: 1.5)
-        CORAL_ACCENT.withAlphaComponent(isDarkMode ? 0.68 : 0.78).setFill()
+        CORAL_ACCENT.withAlphaComponent(isDarkMode ? 0.72 : 0.84).setFill()
         accentPath.fill()
 
         PANEL_HAIRLINE.setStroke()
         let hairline = NSBezierPath()
-        hairline.move(to: NSPoint(x: b.minX + 18, y: b.maxY - 42))
-        hairline.line(to: NSPoint(x: b.maxX - 18, y: b.maxY - 42))
+        hairline.move(to: NSPoint(x: b.minX + 16, y: b.maxY - 52))
+        hairline.line(to: NSPoint(x: b.maxX - 16, y: b.maxY - 52))
         hairline.lineWidth = 1
         hairline.lineCapStyle = .round
         hairline.stroke()
@@ -350,24 +351,26 @@ final class FloatingWindow: NSObject {
         resizeView.autoresizingMask = [.width, .height]
 
         // Toolbar
-        pinBtn = createToolbarIconButton(symbolName: "pin.fill", fallback: "\u{1F4CC}")
-        quickSourceCopyBtn = createToolbarIconButton(symbolName: "scissors", fallback: "\u{2702}")
-        quickDestCopyBtn = createToolbarIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}")
-        hideBtn = createToolbarIconButton(symbolName: "xmark", fallback: "\u{2715}")
+        pinBtn = createToolbarIconButton(symbolName: "pin.fill", fallback: "P")
+        quickSourceCopyBtn = createToolbarIconButton(symbolName: "text.quote", fallback: "S")
+        quickDestCopyBtn = createToolbarIconButton(symbolName: "doc.on.doc", fallback: "C")
+        hideBtn = createToolbarIconButton(symbolName: "xmark", fallback: "X")
         pinBtn.toolTip = "固定窗口"
         quickSourceCopyBtn.toolTip = "复制原文"
         quickDestCopyBtn.toolTip = "复制译文"
         hideBtn.toolTip = "隐藏窗口"
 
-        headerTitleLabel = createLabel(fontSize: 16, color: TEXT_PRIMARY, bold: true, wraps: false)
-        headerTitleLabel.stringValue = "AutoTranslator"
+        headerTitleLabel = createLabel(fontSize: 18, color: TEXT_PRIMARY, bold: true, wraps: false)
+        headerTitleLabel.font = NSFont.systemFont(ofSize: 18, weight: .bold)
+        headerTitleLabel.stringValue = "划词翻译"
 
-        headerSubtitleLabel = createLabel(fontSize: 11, color: TEXT_SECONDARY, wraps: false)
+        headerSubtitleLabel = createLabel(fontSize: 11.5, color: TEXT_SECONDARY, wraps: false)
         headerSubtitleLabel.stringValue = "自动检测 → 中文简体 · Google"
 
         backendBtn = NSButton()
         backendBtn.isBordered = false
         backendBtn.bezelStyle = .regularSquare
+        backendBtn.focusRingType = .none
         backendBtn.title = "LLM"
         backendBtn.font = NSFont.boldSystemFont(ofSize: 11)
         backendBtn.toolTip = "切换翻译后端"
@@ -384,10 +387,10 @@ final class FloatingWindow: NSObject {
         styleSurface(srcCard, background: SOURCE_CARD_BG, radius: CARD_RADIUS,
                      border: CARD_BORDER, shadow: true)
 
-        srcTitleLabel = createLabel(fontSize: 9, color: TEXT_SECONDARY, bold: true, wraps: false)
+        srcTitleLabel = createLabel(fontSize: 10.5, color: TEXT_SECONDARY, bold: true, wraps: false)
         srcTitleLabel.stringValue = "原文"
 
-        srcMetaChip = createPillLabel(fontSize: 9, color: TEXT_SECONDARY, background: SURFACE_BG_SOFT)
+        srcMetaChip = createPillLabel(fontSize: 9.5, color: TEXT_SECONDARY, background: SURFACE_BG_SOFT)
 
         srcScroll = NSScrollView()
         srcScroll.hasVerticalScroller = true
@@ -400,15 +403,15 @@ final class FloatingWindow: NSObject {
         srcScroll.layer?.masksToBounds = true
 
         srcTextContainer = FlippedContentView()
-        srcLabel = createLabel(fontSize: BODY_FONT_SIZE, color: TEXT_PRIMARY, selectable: true, wraps: true)
+        srcLabel = createLabel(fontSize: SOURCE_FONT_SIZE, color: TEXT_SECONDARY, selectable: true, wraps: true)
         srcTextContainer.addSubview(srcLabel)
         srcScroll.documentView = srcTextContainer
 
-        srcCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}",
-                                      pointSize: 10, tint: TEXT_PRIMARY, size: 20)
+        srcCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "C",
+                                      pointSize: 10, tint: TEXT_SECONDARY, size: 22)
         srcCopyBtn.toolTip = "复制原文"
 
-        srcLangChip = createPillLabel(fontSize: 9, color: BLUE_ACCENT, background: CHIP_BG)
+        srcLangChip = createPillLabel(fontSize: 9.5, color: BLUE_ACCENT, background: CHIP_BG)
 
         for v in [srcTitleLabel, srcMetaChip, srcScroll, srcCopyBtn, srcLangChip] {
             srcCard.addSubview(v)
@@ -422,7 +425,7 @@ final class FloatingWindow: NSObject {
 
         srcLangPop = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 80, height: 26), pullsDown: false)
 
-        swapBtn = createIconButton(symbolName: "arrow.left.arrow.right", fallback: "\u{21C4}",
+        swapBtn = createIconButton(symbolName: "arrow.left.arrow.right", fallback: "<>",
                                    pointSize: 12, tint: TEXT_PRIMARY, size: 24)
         swapBtn.toolTip = "互换语言"
 
@@ -437,17 +440,17 @@ final class FloatingWindow: NSObject {
                      border: CARD_BORDER, shadow: true)
 
         backendBadge = NSView()
-        styleSurface(backendBadge, background: BLUE_ACCENT, radius: 12)
+        styleSurface(backendBadge, background: BLUE_ACCENT, radius: 8)
 
         backendBadgeLabel = createLabel(fontSize: 10, color: .white, bold: true, wraps: false)
         backendBadgeLabel.alignment = .center
         backendBadge.addSubview(backendBadgeLabel)
 
-        backendNameLabel = createLabel(fontSize: 12, color: TEXT_PRIMARY, bold: true, wraps: false)
+        backendNameLabel = createLabel(fontSize: 13, color: TEXT_PRIMARY, bold: true, wraps: false)
 
         destStateChip = createPillLabel(fontSize: 10, color: TEXT_SECONDARY, background: SURFACE_BG_SOFT)
 
-        backendToggleBtn = createIconButton(symbolName: "chevron.down", fallback: "\u{2304}",
+        backendToggleBtn = createIconButton(symbolName: "chevron.down", fallback: "v",
                                             pointSize: 9, tint: TEXT_SECONDARY, size: 24)
         backendToggleBtn.toolTip = "切换翻译后端"
 
@@ -466,9 +469,9 @@ final class FloatingWindow: NSObject {
         destTextContainer.addSubview(destLabel)
         destScroll.documentView = destTextContainer
 
-        destCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}",
+        destCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "C",
                                        pointSize: 11, tint: TEXT_PRIMARY, size: 24)
-        destRefreshBtn = createIconButton(symbolName: "arrow.clockwise", fallback: "\u{21BB}",
+        destRefreshBtn = createIconButton(symbolName: "arrow.clockwise", fallback: "R",
                                           pointSize: 11, tint: TEXT_PRIMARY, size: 24)
         destCopyBtn.toolTip = "复制译文"
         destRefreshBtn.toolTip = "重新翻译"
@@ -937,7 +940,7 @@ final class FloatingWindow: NSObject {
         let cardInnerWidth = contentWidth - (CARD_INSET_X * 2)
 
         let srcTextHeight = measureTextHeight(currentSourceText.isEmpty ? " " : currentSourceText,
-                                              width: cardInnerWidth, fontSize: BODY_FONT_SIZE, minimum: 48)
+                                              width: cardInnerWidth, fontSize: SOURCE_FONT_SIZE, minimum: 44)
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
         let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
                                                fontSize: BODY_FONT_SIZE, minimum: 40)
@@ -967,60 +970,61 @@ final class FloatingWindow: NSObject {
         pinBtn.frame = NSRect(x: OUTER_PADDING, y: toolbarY,
                               width: TOOLBAR_BUTTON_SIZE, height: TOOLBAR_BUTTON_SIZE)
 
-        let titleX = OUTER_PADDING + TOOLBAR_BUTTON_SIZE + 10
-        let titleWidth = max(120, contentWidth - 220)
-        headerTitleLabel.frame = NSRect(x: titleX, y: headerY + 18, width: titleWidth, height: 16)
-        headerSubtitleLabel.frame = NSRect(x: titleX, y: headerY + 2, width: titleWidth + 24, height: 14)
+        let titleX = OUTER_PADDING + TOOLBAR_BUTTON_SIZE + 12
+        let titleWidth = max(124, contentWidth - 232)
+        headerTitleLabel.frame = NSRect(x: titleX, y: headerY + 22, width: titleWidth, height: 20)
+        headerSubtitleLabel.frame = NSRect(x: titleX, y: headerY + 5, width: titleWidth + 24, height: 15)
 
         var rightX = windowWidth - OUTER_PADDING
         for button in [hideBtn, backendBtn, quickDestCopyBtn, quickSourceCopyBtn] {
             let btnW = (button === backendBtn) ? BACKEND_BTN_WIDTH : TOOLBAR_BUTTON_SIZE
             button.frame = NSRect(x: rightX - btnW, y: toolbarY, width: btnW, height: TOOLBAR_BUTTON_SIZE)
-            rightX -= btnW + 6
+            rightX -= btnW + 8
         }
 
         // Source card
         let srcY = headerY - SECTION_GAP - srcCardHeight
         srcCard.frame = NSRect(x: OUTER_PADDING, y: srcY, width: contentWidth, height: srcCardHeight)
-        let srcVisibleH = srcCardHeight - 58
-        srcScroll.frame = NSRect(x: CARD_INSET_X, y: 32, width: cardInnerWidth,
+        let srcVisibleH = srcCardHeight - 62
+        srcScroll.frame = NSRect(x: CARD_INSET_X, y: 34, width: cardInnerWidth,
                                  height: srcVisibleH)
         srcTextContainer.frame = NSRect(x: 0, y: 0, width: cardInnerWidth,
                                         height: max(srcTextHeight, srcVisibleH))
         srcLabel.frame = NSRect(x: 0, y: 0, width: cardInnerWidth, height: srcTextHeight)
-        srcTitleLabel.frame = NSRect(x: CARD_INSET_X, y: srcCardHeight - 22, width: 40, height: 12)
-        srcCopyBtn.frame = NSRect(x: CARD_INSET_X, y: 8, width: 20, height: 20)
+        srcTitleLabel.frame = NSRect(x: CARD_INSET_X, y: srcCardHeight - 26, width: 52, height: 14)
+        srcCopyBtn.frame = NSRect(x: CARD_INSET_X, y: 8, width: 22, height: 22)
 
         let mt = srcMetaChip.stringValue.isEmpty ? "等待选中" : srcMetaChip.stringValue
-        let mw = min(max(measureTextWidth(mt, fontSize: 9, bold: true) + 16, 64), 100)
-        srcMetaChip.frame = NSRect(x: contentWidth - CARD_INSET_X - mw, y: srcCardHeight - 24,
-                                   width: mw, height: 18)
+        let mw = min(max(measureTextWidth(mt, fontSize: 9.5, bold: true) + 18, 68), 112)
+        srcMetaChip.frame = NSRect(x: contentWidth - CARD_INSET_X - mw, y: srcCardHeight - 28,
+                                   width: mw, height: 20)
 
         let ct = srcLangChip.stringValue.isEmpty ? "自动检测" : srcLangChip.stringValue
-        let cw = min(max(measureTextWidth(ct, fontSize: 9, bold: true) + 16, 64), 120)
-        srcLangChip.frame = NSRect(x: contentWidth - CARD_INSET_X - cw, y: 10,
-                                   width: cw, height: 18)
+        let cw = min(max(measureTextWidth(ct, fontSize: 9.5, bold: true) + 18, 68), 128)
+        srcLangChip.frame = NSRect(x: contentWidth - CARD_INSET_X - cw, y: 9,
+                                   width: cw, height: 20)
 
         // Language bar
         let langY = srcY - SECTION_GAP - LANG_BAR_HEIGHT
         langBar.frame = NSRect(x: OUTER_PADDING, y: langY, width: contentWidth, height: LANG_BAR_HEIGHT)
-        let popupWidth = (contentWidth - 72) / 2
-        srcLangPop.frame = NSRect(x: CARD_INSET_X, y: 8, width: popupWidth, height: 24)
-        swapBtn.frame = NSRect(x: (contentWidth - 24) / 2, y: 9, width: 24, height: 24)
+        let swapSize: CGFloat = 28
+        let popupWidth = max(112, (contentWidth - CARD_INSET_X * 2 - swapSize - 16) / 2)
+        srcLangPop.frame = NSRect(x: CARD_INSET_X, y: 8, width: popupWidth, height: 28)
+        swapBtn.frame = NSRect(x: (contentWidth - swapSize) / 2, y: 8, width: swapSize, height: swapSize)
         destLangPop.frame = NSRect(x: contentWidth - CARD_INSET_X - popupWidth, y: 8,
-                                   width: popupWidth, height: 24)
+                                   width: popupWidth, height: 28)
 
         // Dest card
         let destY = langY - SECTION_GAP - destCardHeight
         destCard.frame = NSRect(x: OUTER_PADDING, y: destY, width: contentWidth, height: destCardHeight)
 
-        let destVisibleH = destCardHeight - 84
-        let destTextScrollY: CGFloat = 42
+        let destVisibleH = destCardHeight - 92
+        let destTextScrollY: CGFloat = 48
         destScroll.frame = NSRect(x: CARD_INSET_X, y: destTextScrollY,
                                   width: cardInnerWidth, height: destVisibleH)
         updateDestTextLayout(width: cardInnerWidth, visibleHeight: destVisibleH, textHeight: destTextHeight)
 
-        let providerY = destTextScrollY + destVisibleH + 8
+        let providerY = destTextScrollY + destVisibleH + 10
         let toggleX = contentWidth - CARD_INSET_X - 24
         let st = destStateChip.stringValue.isEmpty ? "待翻译" : destStateChip.stringValue
         let sw = min(max(measureTextWidth(st, fontSize: 10, bold: true) + 18, 60), 78)
@@ -1028,12 +1032,12 @@ final class FloatingWindow: NSObject {
 
         backendBadge.frame = NSRect(x: CARD_INSET_X, y: providerY, width: 24, height: 24)
         backendBadgeLabel.frame = NSRect(x: 0, y: 4, width: 24, height: 14)
-        backendNameLabel.frame = NSRect(x: CARD_INSET_X + 32, y: providerY + 4,
-                                        width: stateX - 58, height: 16)
+        backendNameLabel.frame = NSRect(x: CARD_INSET_X + 34, y: providerY + 3,
+                                        width: max(80, stateX - 60), height: 18)
         destStateChip.frame = NSRect(x: stateX, y: providerY + 2, width: sw, height: 20)
         backendToggleBtn.frame = NSRect(x: toggleX, y: providerY, width: 24, height: 24)
         destCopyBtn.frame = NSRect(x: CARD_INSET_X, y: 12, width: 24, height: 24)
-        destRefreshBtn.frame = NSRect(x: CARD_INSET_X + 30, y: 12, width: 24, height: 24)
+        destRefreshBtn.frame = NSRect(x: CARD_INSET_X + 32, y: 12, width: 24, height: 24)
         rootView.needsLayout = true
         rootView.layoutSubtreeIfNeeded()
         rootView.needsDisplay = true
@@ -1053,7 +1057,7 @@ final class FloatingWindow: NSObject {
         headerTitleLabel.textColor = TEXT_PRIMARY
         headerSubtitleLabel.textColor = TEXT_SECONDARY
         srcTitleLabel.textColor = TEXT_SECONDARY
-        srcLabel.textColor = TEXT_PRIMARY
+        srcLabel.textColor = TEXT_SECONDARY
         // destLabel 是 NSTextView：直接改 textColor 即可；翻译中的"灰色 placeholder"由 setTranslationState 重设
         destLabel.textColor = (currentState == .loading) ? TEXT_MUTED : TEXT_PRIMARY
 
@@ -1061,8 +1065,8 @@ final class FloatingWindow: NSObject {
         restyleToolbarButton(quickDestCopyBtn)
         restyleToolbarButton(hideBtn)
 
-        restyleIconButton(srcCopyBtn, tint: TEXT_PRIMARY, size: 20)
-        restyleIconButton(swapBtn, tint: TEXT_PRIMARY, size: 24)
+        restyleIconButton(srcCopyBtn, tint: TEXT_SECONDARY, size: 22)
+        restyleIconButton(swapBtn, tint: TEXT_PRIMARY, size: 28)
         restyleIconButton(backendToggleBtn, tint: TEXT_SECONDARY, size: 24)
         restyleIconButton(destCopyBtn, tint: TEXT_PRIMARY, size: 24)
         restyleIconButton(destRefreshBtn, tint: TEXT_PRIMARY, size: 24)
@@ -1141,11 +1145,11 @@ final class FloatingWindow: NSObject {
     }
 
     private func refreshPinStyle() {
-        let accent = isPinned ? BLUE_ACCENT : TEXT_SECONDARY
+        let accent = isPinned ? CORAL_ACCENT : TEXT_SECONDARY
         let bg = isPinned ? TOOLBAR_ACTIVE_BG : TOOLBAR_GHOST_BG
         let bd = isPinned ? TOOLBAR_ACTIVE_BORDER : TOOLBAR_BUTTON_BORDER
         styleSurface(pinBtn, background: bg, radius: TOOLBAR_BUTTON_SIZE / 2, border: bd)
-        applySymbol(pinBtn, symbolName: "pin.fill", fallback: "\u{1F4CC}", pointSize: 12, tint: accent)
+        applySymbol(pinBtn, symbolName: "pin.fill", fallback: "P", pointSize: 12, tint: accent)
     }
 
     private func refreshActionState() {
@@ -1239,8 +1243,8 @@ final class FloatingWindow: NSObject {
         let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
             + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
         let available = max(0, clampedWindowHeight(totalHeight) - overhead)
-        let baseSrcCardHeight: CGFloat = 116
-        let baseDestCardHeight = max(CGFloat(132), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
+        let baseSrcCardHeight: CGFloat = 112
+        let baseDestCardHeight = max(CGFloat(164), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
 
         var src = min(baseSrcCardHeight, available)
         var dest = max(baseDestCardHeight, available - src)
@@ -1257,7 +1261,7 @@ final class FloatingWindow: NSObject {
         }
 
         if src + dest > available {
-            dest = max(CGFloat(132), available - src)
+            dest = max(CGFloat(164), available - src)
         }
 
         return (src: src, dest: dest)
@@ -1272,10 +1276,10 @@ final class FloatingWindow: NSObject {
 
         let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
             + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
-        let baseSrcCardHeight: CGFloat = 116
-        let baseDestCardHeight = max(CGFloat(132), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
+        let baseSrcCardHeight: CGFloat = 112
+        let baseDestCardHeight = max(CGFloat(164), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
         let neededDestCardHeight = min(DEST_MAX_CARD_HEIGHT,
-                                       max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + 82))
+                                       max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + 92))
         return min(MAX_WINDOW_HEIGHT,
                    max(WINDOW_MIN_HEIGHT, overhead + baseSrcCardHeight + neededDestCardHeight))
     }

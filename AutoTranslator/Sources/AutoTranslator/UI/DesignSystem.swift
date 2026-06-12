@@ -2,28 +2,29 @@ import AppKit
 
 // MARK: - Layout Constants
 
-let WINDOW_WIDTH: CGFloat = 448
-let WINDOW_MIN_HEIGHT: CGFloat = 400
+let WINDOW_WIDTH: CGFloat = 464
+let WINDOW_MIN_HEIGHT: CGFloat = 424
 let MIN_WINDOW_WIDTH: CGFloat = 360
 let MAX_WINDOW_WIDTH: CGFloat = 720
 let RESIZE_GRIP_SIZE: CGFloat = 14
 let RESIZE_EDGE_THICKNESS: CGFloat = 8
 let RESIZE_CORNER_HIT_SIZE: CGFloat = 22
-let OUTER_PADDING: CGFloat = 14
-let SECTION_GAP: CGFloat = 11
-let HEADER_HEIGHT: CGFloat = 38
-let TOOLBAR_BUTTON_SIZE: CGFloat = 28
-let BACKEND_BTN_WIDTH: CGFloat = 48
-let CARD_RADIUS: CGFloat = 14
-let PANEL_RADIUS: CGFloat = 22
-let CONTROL_RADIUS: CGFloat = 12
+let OUTER_PADDING: CGFloat = 16
+let SECTION_GAP: CGFloat = 12
+let HEADER_HEIGHT: CGFloat = 44
+let TOOLBAR_BUTTON_SIZE: CGFloat = 32
+let BACKEND_BTN_WIDTH: CGFloat = 52
+let CARD_RADIUS: CGFloat = 8
+let PANEL_RADIUS: CGFloat = 20
+let CONTROL_RADIUS: CGFloat = 8
 let CARD_INSET_X: CGFloat = 16
-let MAX_CARD_TEXT_HEIGHT: CGFloat = 220
+let MAX_CARD_TEXT_HEIGHT: CGFloat = 252
 let SRC_MAX_CARD_HEIGHT: CGFloat = 290
-let DEST_MAX_CARD_HEIGHT: CGFloat = 340
+let DEST_MAX_CARD_HEIGHT: CGFloat = 380
 let MAX_WINDOW_HEIGHT: CGFloat = 760
-let LANG_BAR_HEIGHT: CGFloat = 42
-let BODY_FONT_SIZE: CGFloat = 15
+let LANG_BAR_HEIGHT: CGFloat = 44
+let SOURCE_FONT_SIZE: CGFloat = 13.5
+let BODY_FONT_SIZE: CGFloat = 16
 
 // MARK: - Theme Detection
 
@@ -67,83 +68,83 @@ func blendWithBlack(_ color: NSColor, amount: CGFloat, alpha: CGFloat = 1.0) -> 
 var WINDOW_BG: NSColor { rgb(0, 0, 0, 0) }
 
 var PANEL_TOP: NSColor {
-    isDarkMode ? rgb(30, 31, 34, 0.96) : rgb(250, 249, 247, 0.97)
+    isDarkMode ? rgb(32, 31, 29, 0.97) : rgb(253, 251, 248, 0.98)
 }
 var PANEL_BOTTOM: NSColor {
-    isDarkMode ? rgb(24, 25, 28, 0.95) : rgb(241, 244, 246, 0.96)
+    isDarkMode ? rgb(24, 24, 23, 0.96) : rgb(246, 242, 236, 0.97)
 }
 var PANEL_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(40, 45, 52, 0.10)
+    isDarkMode ? rgb(255, 255, 255, 0.13) : rgb(86, 70, 58, 0.14)
 }
 var SOURCE_CARD_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.78)
+    isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.70)
 }
 var LANG_BAR_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.045) : rgb(255, 255, 255, 0.64)
+    isDarkMode ? rgb(255, 255, 255, 0.050) : rgb(255, 255, 255, 0.66)
 }
 var DEST_CARD_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.07) : rgb(255, 255, 255, 0.86)
+    isDarkMode ? rgb(255, 255, 255, 0.078) : rgb(255, 255, 255, 0.92)
 }
 var SURFACE_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.80)
+    isDarkMode ? rgb(255, 255, 255, 0.085) : rgb(255, 255, 255, 0.82)
 }
 var SURFACE_BG_SOFT: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.04) : rgb(246, 247, 248, 0.72)
+    isDarkMode ? rgb(255, 255, 255, 0.045) : rgb(247, 244, 239, 0.74)
 }
 var TOOLBAR_GHOST_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.56)
+    isDarkMode ? rgb(255, 255, 255, 0.060) : rgb(255, 255, 255, 0.58)
 }
 var CARD_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.095) : rgb(42, 48, 57, 0.10)
+    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(87, 71, 58, 0.11)
 }
 var BUTTON_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(42, 48, 57, 0.12)
+    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(87, 71, 58, 0.13)
 }
 var TEXT_PRIMARY: NSColor {
-    isDarkMode ? rgb(238, 239, 242) : rgb(28, 31, 36)
+    isDarkMode ? rgb(240, 239, 236) : rgb(31, 29, 27)
 }
 var TEXT_SECONDARY: NSColor {
-    isDarkMode ? rgb(170, 176, 186) : rgb(96, 103, 113)
+    isDarkMode ? rgb(177, 172, 164) : rgb(101, 91, 82)
 }
 var TEXT_MUTED: NSColor {
-    isDarkMode ? rgb(118, 124, 134) : rgb(142, 148, 157)
+    isDarkMode ? rgb(126, 121, 114) : rgb(143, 132, 121)
 }
 var BLUE_ACCENT: NSColor {
-    isDarkMode ? rgb(112, 152, 224) : rgb(42, 92, 184)
+    isDarkMode ? rgb(112, 145, 176) : rgb(46, 89, 126)
 }
 var TEAL_ACCENT: NSColor {
-    isDarkMode ? rgb(64, 186, 166) : rgb(12, 142, 126)
+    isDarkMode ? rgb(78, 183, 160) : rgb(16, 132, 116)
 }
 var AMBER_ACCENT: NSColor {
-    isDarkMode ? rgb(235, 164, 66) : rgb(184, 112, 25)
+    isDarkMode ? rgb(231, 164, 76) : rgb(177, 103, 28)
 }
 var CORAL_ACCENT: NSColor {
-    isDarkMode ? rgb(242, 128, 103) : rgb(205, 77, 52)
+    isDarkMode ? rgb(238, 121, 92) : rgb(194, 75, 48)
 }
 var PANEL_HAIRLINE: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.72)
+    isDarkMode ? rgb(255, 255, 255, 0.075) : rgb(255, 255, 255, 0.72)
 }
 var TOOLBAR_BUTTON_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(42, 48, 57, 0.10)
+    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(87, 71, 58, 0.12)
 }
 var TOOLBAR_ACTIVE_BG: NSColor {
     isDarkMode
-        ? blendWithBlack(BLUE_ACCENT, amount: 0.55, alpha: 0.55)
-        : blendWithWhite(BLUE_ACCENT, amount: 0.82, alpha: 0.78)
+        ? blendWithBlack(CORAL_ACCENT, amount: 0.55, alpha: 0.58)
+        : blendWithWhite(CORAL_ACCENT, amount: 0.84, alpha: 0.78)
 }
 var TOOLBAR_ACTIVE_BORDER: NSColor {
     isDarkMode
-        ? blendWithBlack(BLUE_ACCENT, amount: 0.35, alpha: 0.75)
-        : blendWithWhite(BLUE_ACCENT, amount: 0.56, alpha: 0.84)
+        ? blendWithBlack(CORAL_ACCENT, amount: 0.30, alpha: 0.78)
+        : blendWithWhite(CORAL_ACCENT, amount: 0.54, alpha: 0.86)
 }
 var CHIP_BG: NSColor {
-    isDarkMode ? rgb(30, 38, 58, 0.92) : rgb(231, 238, 250, 0.94)
+    isDarkMode ? rgb(33, 43, 52, 0.92) : rgb(230, 239, 244, 0.94)
 }
 var CHIP_BG_ALT: NSColor {
-    isDarkMode ? rgb(28, 48, 42, 0.92) : rgb(226, 243, 238, 0.94)
+    isDarkMode ? rgb(28, 48, 42, 0.92) : rgb(226, 242, 236, 0.94)
 }
 var CHIP_BG_WARM: NSColor {
-    isDarkMode ? rgb(50, 42, 28, 0.92) : rgb(252, 236, 207, 0.94)
+    isDarkMode ? rgb(50, 42, 31, 0.92) : rgb(251, 236, 211, 0.94)
 }
 
 // MARK: - View Styling Helpers
@@ -156,9 +157,9 @@ func styleSurface(_ view: NSView, background: NSColor, radius: CGFloat,
     if shadow {
         layer.masksToBounds = false
         layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOffset = CGSize(width: 0, height: 6)
-        layer.shadowRadius = 18
-        layer.shadowOpacity = isDarkMode ? 0.18 : 0.055
+        layer.shadowOffset = CGSize(width: 0, height: 5)
+        layer.shadowRadius = 14
+        layer.shadowOpacity = isDarkMode ? 0.22 : 0.065
     } else {
         layer.masksToBounds = true
         layer.shadowOpacity = 0
@@ -202,7 +203,7 @@ func createTextView(fontSize: CGFloat, color: NSColor = TEXT_PRIMARY,
     textView.isEditable = false
     textView.isSelectable = selectable
     textView.drawsBackground = false
-    textView.font = NSFont.systemFont(ofSize: fontSize)
+    textView.font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
     textView.textColor = color
     textView.isRichText = false
     textView.importsGraphics = false
@@ -230,13 +231,15 @@ func createPillLabel(fontSize: CGFloat = 11, color: NSColor = TEXT_SECONDARY,
 func applySymbol(_ button: NSButton, symbolName: String, fallback: String,
                  pointSize: CGFloat = 16, tint: NSColor = TEXT_SECONDARY) {
     if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .light)
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
         button.image = image.withSymbolConfiguration(config)
         button.imageScaling = .scaleProportionallyUpOrDown
+        button.imagePosition = .imageOnly
         button.title = ""
         button.contentTintColor = tint
     } else {
         button.image = nil
+        button.imagePosition = .noImage
         button.title = fallback
         button.font = NSFont.systemFont(ofSize: pointSize)
     }
@@ -249,6 +252,7 @@ func createIconButton(symbolName: String, fallback: String, pointSize: CGFloat =
     let button = NSButton()
     button.isBordered = false
     button.bezelStyle = .regularSquare
+    button.focusRingType = .none
     styleSurface(button, background: background, radius: size / 2, border: border)
     applySymbol(button, symbolName: symbolName, fallback: fallback,
                 pointSize: pointSize, tint: tint)
