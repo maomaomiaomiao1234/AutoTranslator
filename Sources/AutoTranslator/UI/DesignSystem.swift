@@ -14,8 +14,8 @@ let SECTION_GAP: CGFloat = 11
 let HEADER_HEIGHT: CGFloat = 38
 let TOOLBAR_BUTTON_SIZE: CGFloat = 28
 let BACKEND_BTN_WIDTH: CGFloat = 48
-let CARD_RADIUS: CGFloat = 20
-let PANEL_RADIUS: CGFloat = 28
+let CARD_RADIUS: CGFloat = 8
+let PANEL_RADIUS: CGFloat = 20
 let CARD_INSET_X: CGFloat = 16
 let MAX_CARD_TEXT_HEIGHT: CGFloat = 220
 let SRC_MAX_CARD_HEIGHT: CGFloat = 290
@@ -66,58 +66,64 @@ func blendWithBlack(_ color: NSColor, amount: CGFloat, alpha: CGFloat = 1.0) -> 
 var WINDOW_BG: NSColor { rgb(0, 0, 0, 0) }
 
 var PANEL_TOP: NSColor {
-    isDarkMode ? rgb(40, 40, 44, 0.96) : rgb(248, 242, 232, 0.96)
+    isDarkMode ? rgb(30, 31, 34, 0.96) : rgb(250, 249, 247, 0.97)
 }
 var PANEL_BOTTOM: NSColor {
-    isDarkMode ? rgb(32, 32, 36, 0.94) : rgb(231, 240, 248, 0.94)
+    isDarkMode ? rgb(24, 25, 28, 0.95) : rgb(241, 244, 246, 0.96)
 }
 var PANEL_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(255, 255, 255, 0.62)
+    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(40, 45, 52, 0.10)
 }
 var SOURCE_CARD_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.06) : rgb(255, 255, 255, 0.72)
+    isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.78)
 }
 var LANG_BAR_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.05) : rgb(255, 255, 255, 0.58)
+    isDarkMode ? rgb(255, 255, 255, 0.045) : rgb(255, 255, 255, 0.64)
 }
 var DEST_CARD_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.05) : rgb(251, 253, 255, 0.76)
+    isDarkMode ? rgb(255, 255, 255, 0.07) : rgb(255, 255, 255, 0.86)
 }
 var SURFACE_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.74)
+    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.80)
 }
 var SURFACE_BG_SOFT: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.04) : rgb(255, 255, 255, 0.56)
+    isDarkMode ? rgb(255, 255, 255, 0.04) : rgb(246, 247, 248, 0.72)
 }
 var TOOLBAR_GHOST_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.06) : rgb(255, 255, 255, 0.08)
+    isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.56)
 }
 var CARD_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.58)
+    isDarkMode ? rgb(255, 255, 255, 0.095) : rgb(42, 48, 57, 0.10)
 }
 var BUTTON_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(255, 255, 255, 0.78)
+    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(42, 48, 57, 0.12)
 }
 var TEXT_PRIMARY: NSColor {
-    isDarkMode ? rgb(235, 237, 243) : rgb(31, 35, 42)
+    isDarkMode ? rgb(238, 239, 242) : rgb(28, 31, 36)
 }
 var TEXT_SECONDARY: NSColor {
-    isDarkMode ? rgb(166, 172, 184) : rgb(103, 111, 123)
+    isDarkMode ? rgb(170, 176, 186) : rgb(96, 103, 113)
 }
 var TEXT_MUTED: NSColor {
-    isDarkMode ? rgb(116, 120, 130) : rgb(144, 150, 159)
+    isDarkMode ? rgb(118, 124, 134) : rgb(142, 148, 157)
 }
 var BLUE_ACCENT: NSColor {
-    isDarkMode ? rgb(108, 147, 242) : rgb(53, 97, 214)
+    isDarkMode ? rgb(112, 152, 224) : rgb(42, 92, 184)
 }
 var TEAL_ACCENT: NSColor {
-    isDarkMode ? rgb(56, 185, 168) : rgb(20, 151, 135)
+    isDarkMode ? rgb(64, 186, 166) : rgb(12, 142, 126)
 }
 var AMBER_ACCENT: NSColor {
-    isDarkMode ? rgb(234, 165, 52) : rgb(194, 121, 28)
+    isDarkMode ? rgb(235, 164, 66) : rgb(184, 112, 25)
+}
+var CORAL_ACCENT: NSColor {
+    isDarkMode ? rgb(242, 128, 103) : rgb(205, 77, 52)
+}
+var PANEL_HAIRLINE: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.08) : rgb(255, 255, 255, 0.72)
 }
 var TOOLBAR_BUTTON_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(255, 255, 255, 0.34)
+    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(42, 48, 57, 0.10)
 }
 var TOOLBAR_ACTIVE_BG: NSColor {
     isDarkMode
@@ -130,22 +136,13 @@ var TOOLBAR_ACTIVE_BORDER: NSColor {
         : blendWithWhite(BLUE_ACCENT, amount: 0.56, alpha: 0.84)
 }
 var CHIP_BG: NSColor {
-    isDarkMode ? rgb(30, 38, 58, 0.96) : rgb(235, 242, 255, 0.96)
+    isDarkMode ? rgb(30, 38, 58, 0.92) : rgb(231, 238, 250, 0.94)
 }
 var CHIP_BG_ALT: NSColor {
-    isDarkMode ? rgb(28, 48, 42, 0.96) : rgb(231, 247, 242, 0.96)
+    isDarkMode ? rgb(28, 48, 42, 0.92) : rgb(226, 243, 238, 0.94)
 }
 var CHIP_BG_WARM: NSColor {
-    isDarkMode ? rgb(50, 42, 28, 0.96) : rgb(255, 238, 209, 0.97)
-}
-var GLOW_WARM: NSColor {
-    isDarkMode ? rgb(246, 198, 111, 0.05) : rgb(246, 198, 111, 0.22)
-}
-var GLOW_COOL: NSColor {
-    isDarkMode ? rgb(80, 128, 234, 0.04) : rgb(80, 128, 234, 0.16)
-}
-var GLOW_MINT: NSColor {
-    isDarkMode ? rgb(89, 183, 159, 0.03) : rgb(89, 183, 159, 0.12)
+    isDarkMode ? rgb(50, 42, 28, 0.92) : rgb(252, 236, 207, 0.94)
 }
 
 // MARK: - View Styling Helpers
@@ -158,9 +155,9 @@ func styleSurface(_ view: NSView, background: NSColor, radius: CGFloat,
     if shadow {
         layer.masksToBounds = false
         layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOffset = CGSize(width: 0, height: 8)
-        layer.shadowRadius = 20
-        layer.shadowOpacity = isDarkMode ? 0.18 : 0.08
+        layer.shadowOffset = CGSize(width: 0, height: 6)
+        layer.shadowRadius = 18
+        layer.shadowOpacity = isDarkMode ? 0.18 : 0.055
     } else {
         layer.masksToBounds = true
         layer.shadowOpacity = 0

@@ -66,15 +66,21 @@ final class PanelBackgroundView: NSView {
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
 
-        let glows: [(NSRect, NSColor)] = [
-            (NSRect(x: b.minX - 18, y: b.maxY - 126, width: 190, height: 190), GLOW_WARM),
-            (NSRect(x: b.maxX - 204, y: b.minY - 26, width: 230, height: 230), GLOW_COOL),
-            (NSRect(x: b.maxX - 152, y: b.maxY - 178, width: 176, height: 176), GLOW_MINT),
-        ]
-        for (rect, color) in glows {
-            color.setFill()
-            NSBezierPath(ovalIn: rect).fill()
-        }
+        let accentPath = NSBezierPath(roundedRect: NSRect(x: b.minX + 18,
+                                                          y: b.maxY - 5,
+                                                          width: b.width - 36,
+                                                          height: 2),
+                                      xRadius: 1,
+                                      yRadius: 1)
+        CORAL_ACCENT.withAlphaComponent(isDarkMode ? 0.68 : 0.78).setFill()
+        accentPath.fill()
+
+        PANEL_HAIRLINE.setStroke()
+        let hairline = NSBezierPath()
+        hairline.move(to: NSPoint(x: b.minX + 18, y: b.maxY - 42))
+        hairline.line(to: NSPoint(x: b.maxX - 18, y: b.maxY - 42))
+        hairline.lineWidth = 1
+        hairline.stroke()
 
         NSGraphicsContext.restoreGraphicsState()
 
@@ -350,9 +356,13 @@ final class FloatingWindow: NSObject {
         quickSourceCopyBtn = createToolbarIconButton(symbolName: "scissors", fallback: "\u{2702}")
         quickDestCopyBtn = createToolbarIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}")
         hideBtn = createToolbarIconButton(symbolName: "xmark", fallback: "\u{2715}")
+        pinBtn.toolTip = "固定窗口"
+        quickSourceCopyBtn.toolTip = "复制原文"
+        quickDestCopyBtn.toolTip = "复制译文"
+        hideBtn.toolTip = "隐藏窗口"
 
         headerTitleLabel = createLabel(fontSize: 16, color: TEXT_PRIMARY, bold: true, wraps: false)
-        headerTitleLabel.stringValue = "划词翻译"
+        headerTitleLabel.stringValue = "AutoTranslator"
 
         headerSubtitleLabel = createLabel(fontSize: 11, color: TEXT_SECONDARY, wraps: false)
         headerSubtitleLabel.stringValue = "自动检测 → 中文简体 · Google"
@@ -362,6 +372,7 @@ final class FloatingWindow: NSObject {
         backendBtn.bezelStyle = .regularSquare
         backendBtn.title = "LLM"
         backendBtn.font = NSFont.boldSystemFont(ofSize: 11)
+        backendBtn.toolTip = "切换翻译后端"
         styleSurface(backendBtn, background: TOOLBAR_GHOST_BG, radius: BACKEND_BTN_WIDTH / 2,
                      border: TOOLBAR_BUTTON_BORDER)
 
@@ -394,6 +405,7 @@ final class FloatingWindow: NSObject {
 
         srcCopyBtn = createIconButton(symbolName: "doc.on.doc", fallback: "\u{29C9}",
                                       pointSize: 10, tint: TEXT_PRIMARY, size: 20)
+        srcCopyBtn.toolTip = "复制原文"
 
         srcLangChip = createPillLabel(fontSize: 9, color: BLUE_ACCENT, background: CHIP_BG)
 
@@ -405,12 +417,13 @@ final class FloatingWindow: NSObject {
         // Language bar
         langBar = NSView()
         styleSurface(langBar, background: LANG_BAR_BG, radius: CARD_RADIUS,
-                     border: CARD_BORDER, shadow: true)
+                     border: CARD_BORDER)
 
         srcLangPop = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 80, height: 26), pullsDown: false)
 
         swapBtn = createIconButton(symbolName: "arrow.left.arrow.right", fallback: "\u{21C4}",
                                    pointSize: 12, tint: TEXT_PRIMARY, size: 24)
+        swapBtn.toolTip = "互换语言"
 
         destLangPop = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 80, height: 26), pullsDown: false)
 
@@ -435,6 +448,7 @@ final class FloatingWindow: NSObject {
 
         backendToggleBtn = createIconButton(symbolName: "chevron.down", fallback: "\u{2304}",
                                             pointSize: 9, tint: TEXT_SECONDARY, size: 24)
+        backendToggleBtn.toolTip = "切换翻译后端"
 
         destScroll = NSScrollView()
         destScroll.hasVerticalScroller = true
@@ -452,6 +466,8 @@ final class FloatingWindow: NSObject {
                                        pointSize: 11, tint: TEXT_PRIMARY, size: 24)
         destRefreshBtn = createIconButton(symbolName: "arrow.clockwise", fallback: "\u{21BB}",
                                           pointSize: 11, tint: TEXT_PRIMARY, size: 24)
+        destCopyBtn.toolTip = "复制译文"
+        destRefreshBtn.toolTip = "重新翻译"
 
         for v in [backendBadge, backendBadgeLabel, backendNameLabel, destStateChip,
                   backendToggleBtn, destScroll, destCopyBtn, destRefreshBtn] {
@@ -624,7 +640,7 @@ final class FloatingWindow: NSObject {
                          radius: BACKEND_BTN_WIDTH / 2, border: TOOLBAR_BUTTON_BORDER)
         }
         backendNameLabel.textColor = TEXT_PRIMARY
-        backendBtn.title = "LLM"
+        backendBtn.title = backend == "llm" ? "AI" : "G"
         refreshHeaderStatus()
     }
 
@@ -1017,7 +1033,7 @@ final class FloatingWindow: NSObject {
         styleSurface(srcCard, background: SOURCE_CARD_BG, radius: CARD_RADIUS,
                      border: CARD_BORDER, shadow: true)
         styleSurface(langBar, background: LANG_BAR_BG, radius: CARD_RADIUS,
-                     border: CARD_BORDER, shadow: true)
+                     border: CARD_BORDER)
         styleSurface(destCard, background: DEST_CARD_BG, radius: CARD_RADIUS,
                      border: CARD_BORDER, shadow: true)
 
