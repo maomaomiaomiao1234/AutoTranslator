@@ -3,7 +3,7 @@ import AppKit
 // MARK: - Layout Constants
 
 let WINDOW_WIDTH: CGFloat = 464
-let WINDOW_MIN_HEIGHT: CGFloat = 424
+let WINDOW_MIN_HEIGHT: CGFloat = 432
 let MIN_WINDOW_WIDTH: CGFloat = 360
 let MAX_WINDOW_WIDTH: CGFloat = 720
 let RESIZE_GRIP_SIZE: CGFloat = 14
@@ -147,126 +147,7 @@ var CHIP_BG_WARM: NSColor {
     isDarkMode ? rgb(50, 42, 31, 0.92) : rgb(251, 236, 211, 0.94)
 }
 
-// MARK: - View Styling Helpers
-
-func styleSurface(_ view: NSView, background: NSColor, radius: CGFloat,
-                  border: NSColor? = nil, shadow: Bool = false) {
-    view.wantsLayer = true
-    guard let layer = view.layer else { return }
-    layer.cornerRadius = radius
-    if shadow {
-        layer.masksToBounds = false
-        layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOffset = CGSize(width: 0, height: 5)
-        layer.shadowRadius = 14
-        layer.shadowOpacity = isDarkMode ? 0.22 : 0.065
-    } else {
-        layer.masksToBounds = true
-        layer.shadowOpacity = 0
-    }
-    layer.backgroundColor = background.cgColor
-    if let border = border {
-        layer.borderWidth = 1
-        layer.borderColor = border.cgColor
-    } else {
-        layer.borderWidth = 0
-    }
-}
-
-func stylePill(_ label: NSTextField, textColor: NSColor, background: NSColor,
-               border: NSColor? = nil) {
-    label.textColor = textColor
-    styleSurface(label, background: background, radius: 11, border: border)
-}
-
-func createLabel(fontSize: CGFloat, color: NSColor = TEXT_PRIMARY, bold: Bool = false,
-                 selectable: Bool = false, wraps: Bool = true) -> NSTextField {
-    let label = NSTextField()
-    label.isEditable = false
-    label.isSelectable = selectable
-    label.isBordered = false
-    label.isBezeled = false
-    label.drawsBackground = false
-    label.textColor = color
-    label.font = bold ? NSFont.boldSystemFont(ofSize: fontSize)
-                      : NSFont.systemFont(ofSize: fontSize)
-    label.cell?.wraps = wraps
-    label.cell?.isScrollable = false
-    label.cell?.lineBreakMode = wraps ? .byWordWrapping : .byClipping
-    label.cell?.usesSingleLineMode = !wraps
-    return label
-}
-
-func createTextView(fontSize: CGFloat, color: NSColor = TEXT_PRIMARY,
-                    selectable: Bool = true) -> NSTextView {
-    let textView = NSTextView()
-    textView.isEditable = false
-    textView.isSelectable = selectable
-    textView.drawsBackground = false
-    textView.font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-    textView.textColor = color
-    textView.isRichText = false
-    textView.importsGraphics = false
-    textView.allowsUndo = false
-    textView.isHorizontallyResizable = false
-    textView.isVerticallyResizable = true
-    textView.autoresizingMask = [.width]
-    textView.textContainerInset = .zero
-    textView.textContainer?.widthTracksTextView = true
-    textView.textContainer?.heightTracksTextView = false
-    textView.textContainer?.lineFragmentPadding = 0
-    textView.textContainer?.lineBreakMode = .byWordWrapping
-    return textView
-}
-
-func createPillLabel(fontSize: CGFloat = 11, color: NSColor = TEXT_SECONDARY,
-                     background: NSColor = CHIP_BG) -> NSTextField {
-    let label = createLabel(fontSize: fontSize, color: color, bold: true,
-                            selectable: false, wraps: false)
-    label.alignment = .center
-    stylePill(label, textColor: color, background: background)
-    return label
-}
-
-func applySymbol(_ button: NSButton, symbolName: String, fallback: String,
-                 pointSize: CGFloat = 16, tint: NSColor = TEXT_SECONDARY) {
-    if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
-        button.image = image.withSymbolConfiguration(config)
-        button.imageScaling = .scaleProportionallyUpOrDown
-        button.imagePosition = .imageOnly
-        button.title = ""
-        button.contentTintColor = tint
-    } else {
-        button.image = nil
-        button.imagePosition = .noImage
-        button.title = fallback
-        button.font = NSFont.systemFont(ofSize: pointSize)
-    }
-}
-
-func createIconButton(symbolName: String, fallback: String, pointSize: CGFloat = 16,
-                      tint: NSColor = TEXT_SECONDARY, background: NSColor = SURFACE_BG,
-                      size: CGFloat = TOOLBAR_BUTTON_SIZE,
-                      border: NSColor = BUTTON_BORDER) -> NSButton {
-    let button = NSButton()
-    button.isBordered = false
-    button.bezelStyle = .regularSquare
-    button.focusRingType = .none
-    styleSurface(button, background: background, radius: size / 2, border: border)
-    applySymbol(button, symbolName: symbolName, fallback: fallback,
-                pointSize: pointSize, tint: tint)
-    return button
-}
-
-func createToolbarIconButton(symbolName: String, fallback: String,
-                             pointSize: CGFloat = 12,
-                             tint: NSColor = TEXT_SECONDARY) -> NSButton {
-    return createIconButton(symbolName: symbolName, fallback: fallback,
-                            pointSize: pointSize, tint: tint,
-                            background: TOOLBAR_GHOST_BG, size: TOOLBAR_BUTTON_SIZE,
-                            border: TOOLBAR_BUTTON_BORDER)
-}
+// MARK: - Text Measurement
 
 func measureTextHeight(_ text: String, width: CGFloat, fontSize: CGFloat,
                        bold: Bool = false, minimum: CGFloat = 0) -> CGFloat {
@@ -278,11 +159,4 @@ func measureTextHeight(_ text: String, width: CGFloat, fontSize: CGFloat,
         options: [.usesLineFragmentOrigin, .usesFontLeading]
     )
     return max(minimum, ceil(rect.height) + 2)
-}
-
-func measureTextWidth(_ text: String, fontSize: CGFloat, bold: Bool = false) -> CGFloat {
-    let font = bold ? NSFont.boldSystemFont(ofSize: fontSize) : NSFont.systemFont(ofSize: fontSize)
-    let attributes: [NSAttributedString.Key: Any] = [.font: font]
-    let attributedString = NSAttributedString(string: text, attributes: attributes)
-    return ceil(attributedString.size().width)
 }
