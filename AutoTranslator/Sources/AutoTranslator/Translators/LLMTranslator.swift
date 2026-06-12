@@ -13,6 +13,9 @@ final class LLMTranslator: TranslatorProtocol {
     let baseURL: String
     private let apiKey: String
 
+    static let defaultModel = "deepseek-v3.2"
+    static let defaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
     private static let sharedSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -20,8 +23,8 @@ final class LLMTranslator: TranslatorProtocol {
     }()
 
     init(source: String = "auto", target: String = "zh-CN",
-         apiKey: String? = nil, model: String = "deepseek-v3.2",
-         baseURL: String = "https://dashscope.aliyuncs.com/compatible-mode/v1") throws {
+         apiKey: String? = nil, model: String? = nil,
+         baseURL: String? = nil) throws {
 
         let resolvedKey = apiKey
             ?? ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
@@ -32,9 +35,32 @@ final class LLMTranslator: TranslatorProtocol {
 
         self.source = source
         self.target = target
-        self.model = model
-        self.baseURL = baseURL
+        self.model = Self.resolveConfigValue(model, envKey: "LLM_MODEL", fallback: Self.defaultModel)
+        self.baseURL = Self.normalizeBaseURL(
+            Self.resolveConfigValue(baseURL, envKey: "LLM_BASE_URL", fallback: Self.defaultBaseURL)
+        )
         self.apiKey = key
+    }
+
+    private static func resolveConfigValue(_ explicit: String?, envKey: String, fallback: String) -> String {
+        let value = explicit ?? ProcessInfo.processInfo.environment[envKey]
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private static func normalizeBaseURL(_ value: String) -> String {
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
+    }
+
+    private func completionsURL() throws -> URL {
+        guard let url = URL(string: "\(baseURL)/chat/completions") else {
+            throw RuntimeError("LLM Base URL 无效: \(baseURL)")
+        }
+        return url
     }
 
     private func buildInstruction() -> String {
@@ -65,7 +91,7 @@ final class LLMTranslator: TranslatorProtocol {
     }
 
     func translate(_ text: String) async throws -> String {
-        let url = URL(string: "\(baseURL)/chat/completions")!
+        let url = try completionsURL()
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -101,7 +127,7 @@ final class LLMTranslator: TranslatorProtocol {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let url = URL(string: "\(baseURL)/chat/completions")!
+                    let url = try completionsURL()
                     var request = URLRequest(url: url)
                     request.httpMethod = "POST"
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")

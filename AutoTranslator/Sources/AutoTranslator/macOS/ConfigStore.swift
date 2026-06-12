@@ -10,6 +10,8 @@ final class ConfigStore {
         case backend = "TRANSLATOR_BACKEND"
         case deepseekKey = "DEEPSEEK_API_KEY"
         case llmKey = "LLM_API_KEY"
+        case llmModel = "LLM_MODEL"
+        case llmBaseURL = "LLM_BASE_URL"
         case srcLang = "SRC_LANG"
         case destLang = "DEST_LANG"
         case theme = "THEME"

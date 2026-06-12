@@ -16,6 +16,8 @@ final class PreferencesWindowController: NSWindowController {
 
     private let backendPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let apiKeyField = NSSecureTextField()
+    private let modelField = NSTextField()
+    private let baseURLField = NSTextField()
     private let srcLangPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let destLangPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let themePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -27,7 +29,7 @@ final class PreferencesWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 680),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -118,16 +120,23 @@ final class PreferencesWindowController: NSWindowController {
         buttonRow.addView(saveButton, in: .trailing)
 
         apiKeyField.placeholderString = "sk-... (DeepSeek / DashScope)"
-        apiKeyField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        apiKeyField.translatesAutoresizingMaskIntoConstraints = false
-        apiKeyField.widthAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
+        modelField.placeholderString = LLMTranslator.defaultModel
+        baseURLField.placeholderString = LLMTranslator.defaultBaseURL
+
+        for field in [apiKeyField, modelField, baseURLField] {
+            field.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.widthAnchor.constraint(greaterThanOrEqualToConstant: 360).isActive = true
+        }
 
         let engineGrid = makeGrid([
             [formLabel("翻译后端"), backendPopup],
             [formLabel("API Key"), apiKeyField],
+            [formLabel("Model"), modelField],
+            [formLabel("Base URL"), baseURLField],
         ])
 
-        let engineHint = makeHint("API Key 仅在使用大模型后端时需要；未配置时会回退到 Google 翻译。")
+        let engineHint = makeHint("Model 和 Base URL 留空时使用默认值；未配置 API Key 时会回退到 Google 翻译。注意 Base URL 填到 /v1 即可，不要带 /chat/completions，代码会自动拼接。")
 
         let engineSection = makeSection(
             title: "翻译引擎",
@@ -195,7 +204,7 @@ final class PreferencesWindowController: NSWindowController {
     private func makeHint(_ text: String) -> NSTextField {
         let hint = createLabel(fontSize: 11, color: TEXT_MUTED, wraps: true)
         hint.stringValue = text
-        hint.maximumNumberOfLines = 2
+        hint.maximumNumberOfLines = 3
         return hint
     }
 
@@ -248,6 +257,12 @@ final class PreferencesWindowController: NSWindowController {
 
         let apiKey = ConfigStore.shared.get(.deepseekKey) ?? ConfigStore.shared.get(.llmKey) ?? ""
         apiKeyField.stringValue = apiKey
+        modelField.stringValue = ConfigStore.shared.get(.llmModel)
+            ?? ProcessInfo.processInfo.environment["LLM_MODEL"]
+            ?? ""
+        baseURLField.stringValue = ConfigStore.shared.get(.llmBaseURL)
+            ?? ProcessInfo.processInfo.environment["LLM_BASE_URL"]
+            ?? ""
 
         let srcCode = prefDelegate?.preferencesCurrentSourceLang()
             ?? ConfigStore.shared.get(.srcLang)
@@ -271,6 +286,8 @@ final class PreferencesWindowController: NSWindowController {
     @objc private func savePreferences() {
         let backend = backendPopup.indexOfSelectedItem == 1 ? "google" : "llm"
         let apiKey = apiKeyField.stringValue.trimmingCharacters(in: .whitespaces)
+        let model = modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let srcName = srcLangPopup.titleOfSelectedItem ?? ""
         let destName = destLangPopup.titleOfSelectedItem ?? ""
@@ -293,6 +310,8 @@ final class PreferencesWindowController: NSWindowController {
             updates[.deepseekKey] = apiKey
             updates[.llmKey] = apiKey
         }
+        updates[.llmModel] = model.isEmpty ? nil : model
+        updates[.llmBaseURL] = baseURL.isEmpty ? nil : baseURL
         ConfigStore.shared.update(updates)
 
         statusLabel.stringValue = "已保存 \(timestamp())"
