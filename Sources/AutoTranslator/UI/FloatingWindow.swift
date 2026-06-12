@@ -583,12 +583,13 @@ final class FloatingWindow: NSObject {
 
     /// 降到普通层级，让其它 App 窗口能自然盖过它。
     private func sinkBelowOtherWindows() {
-        guard window.isVisible else { return }
+        guard window.isVisible, !isPinned else { return }
         window.level = .normal
         window.orderBack(nil)
     }
 
     /// 全局点击监听：点击翻译窗以外时延迟 350ms 下沉。
+    /// 固定窗口时保持浮动层，不因外部点击后置。
     /// 窗口自身的 sendEvent（raiseToTop）或 didBecomeKey（Mission Control 回调）
     /// 会在这段时间内取消该任务，消除闪动竞态。
     private func installGlobalClickMonitorIfNeeded() {
@@ -598,6 +599,7 @@ final class FloatingWindow: NSObject {
         ) { [weak self] _ in
             guard let self = self,
                   self.window.isVisible,
+                  !self.isPinned,
                   self.window.level == .floating else { return }
             let work = DispatchWorkItem { [weak self] in self?.sinkBelowOtherWindows() }
             self.pendingSinkWorkItem?.cancel()
@@ -648,6 +650,11 @@ final class FloatingWindow: NSObject {
         refreshHeaderStatus()
     }
 
+    func containsScreenPoint(_ point: CGPoint) -> Bool {
+        guard window.isVisible else { return false }
+        return window.frame.contains(NSPoint(x: point.x, y: point.y))
+    }
+
     func setLanguages(_ languages: [String: String], source: String, target: String) {
         self.languages = languages
         srcLang = source
@@ -674,6 +681,8 @@ final class FloatingWindow: NSObject {
     }
 
     func show(srcText: String, destText: String?) {
+        pendingSinkWorkItem?.cancel()
+        pendingSinkWorkItem = nil
         stopStream()
         let wasVisible = window.isVisible
 

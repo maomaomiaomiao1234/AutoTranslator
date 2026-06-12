@@ -12,9 +12,11 @@ final class MouseMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var mouseDownPoint: CGPoint?
     private var mouseDraggedSinceDown = false
+    private var ignoresCurrentMouseSequence = false
     private var pendingSelectionWorkItem: DispatchWorkItem?
 
     weak var delegate: MouseMonitorDelegate?
+    var shouldIgnoreMouseSequenceStartingAt: ((CGPoint) -> Bool)?
 
     deinit {
         pendingSelectionWorkItem?.cancel()
@@ -73,7 +75,9 @@ final class MouseMonitor {
             pendingSelectionWorkItem = nil
             mouseDownPoint = event.location
             mouseDraggedSinceDown = false
+            ignoresCurrentMouseSequence = shouldIgnoreMouseSequenceStartingAt?(event.location) ?? false
         case .leftMouseDragged:
+            guard !ignoresCurrentMouseSequence else { return }
             guard let down = mouseDownPoint else { return }
             let loc = event.location
             let dx = loc.x - down.x
@@ -82,10 +86,17 @@ final class MouseMonitor {
                 mouseDraggedSinceDown = true
             }
         case .leftMouseUp:
+            guard !ignoresCurrentMouseSequence else {
+                mouseDownPoint = nil
+                mouseDraggedSinceDown = false
+                ignoresCurrentMouseSequence = false
+                return
+            }
             let clickCount = event.getIntegerValueField(.mouseEventClickState)
             let allow = mouseDraggedSinceDown || clickCount > 1
             mouseDownPoint = nil
             mouseDraggedSinceDown = false
+            ignoresCurrentMouseSequence = false
             scheduleSelectionEvent(allowClipboardFallback: allow)
         default:
             break

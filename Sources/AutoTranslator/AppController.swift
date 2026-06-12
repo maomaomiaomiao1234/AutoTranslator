@@ -47,6 +47,9 @@ final class AppController: NSObject {
         window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
         window.setBackendLabel(translatorBackend)
         mouseMonitor.delegate = self
+        mouseMonitor.shouldIgnoreMouseSequenceStartingAt = { [weak window] point in
+            window?.containsScreenPoint(point) ?? false
+        }
 
         // 恢复保存的主题（必须在 NSApp 创建之后才有效，此处只是记录；
         // 实际应用由 start() 调用，那时 NSApplication.shared 已就绪）
@@ -241,11 +244,11 @@ extension AppController: MouseMonitorDelegate {
         selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
             let text = await self.textSelector.getSelectedText(
-                allowClipboardFallback: allowClipboardFallback,
-                previousText: self.lastText
+                allowClipboardFallback: allowClipboardFallback
             )
             guard !Task.isCancelled else { return }
-            guard let text = text, !text.isEmpty, text != self.lastText else { return }
+            guard let text = text, !text.isEmpty else { return }
+            guard allowClipboardFallback || text != self.lastText else { return }
 
             self.lastText = text
             self.window.show(srcText: text, destText: nil)

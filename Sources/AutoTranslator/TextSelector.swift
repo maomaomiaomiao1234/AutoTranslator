@@ -18,7 +18,7 @@ final class TextSelector {
     private let maxCopyPollCount: Int
     private var lastCopyTime: TimeInterval = 0
 
-    init(copyInterval: TimeInterval = 0.4,
+    init(copyInterval: TimeInterval = 0.12,
          copyPollInterval: TimeInterval = 0.01,
          maxCopyPollCount: Int = 20) {
         self.copyInterval = copyInterval
@@ -27,8 +27,7 @@ final class TextSelector {
     }
 
     @MainActor
-    func getSelectedText(allowClipboardFallback: Bool = false,
-                         previousText: String = "") async -> String? {
+    func getSelectedText(allowClipboardFallback: Bool = false) async -> String? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         let pid = frontApp.processIdentifier
 
@@ -38,7 +37,7 @@ final class TextSelector {
         }
 
         guard allowClipboardFallback else { return nil }
-        return await getByClipboard(previousText: previousText)
+        return await getByClipboard()
     }
 
     private func getSelectedTextViaAccessibility(pid: pid_t) -> String? {
@@ -57,7 +56,7 @@ final class TextSelector {
     }
 
     @MainActor
-    private func getByClipboard(previousText: String) async -> String? {
+    private func getByClipboard() async -> String? {
         let now = ProcessInfo.processInfo.systemUptime
         if now - lastCopyTime < copyInterval { return nil }
         lastCopyTime = now
@@ -80,7 +79,7 @@ final class TextSelector {
         }
 
         guard let text = newText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty, text != previousText else { return nil }
+              !text.isEmpty else { return nil }
         return text
     }
 
