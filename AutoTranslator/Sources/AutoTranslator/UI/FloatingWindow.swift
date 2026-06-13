@@ -168,6 +168,7 @@ protocol FloatingWindowDelegate: AnyObject {
     func languageChanged(srcName: String, destName: String)
     func swapLanguages()
     func toggleTranslator()
+    func screenshotTranslation()
     func retranslateCurrent()
     func hideWindow()
 }
@@ -517,6 +518,17 @@ final class FloatingWindow: NSObject {
         }
     }
 
+    func hideImmediately() {
+        stopStream()
+        setSourceResizeInteractionActive(false)
+        if !isPinned { savedOrigin = window.frame.origin }
+        savedHeight = window.frame.height
+        pendingSinkWorkItem?.cancel()
+        pendingSinkWorkItem = nil
+        window.alphaValue = 1
+        window.orderOut(nil)
+    }
+
     // MARK: - Actions
 
     private func handlePin() {
@@ -534,6 +546,10 @@ final class FloatingWindow: NSObject {
 
     private func handleBackendToggle() {
         delegate?.toggleTranslator()
+    }
+
+    private func handleScreenshotTranslation() {
+        delegate?.screenshotTranslation()
     }
 
     private func handleHide() {
@@ -753,6 +769,7 @@ final class FloatingWindow: NSObject {
         viewModel.onCopySource = { [weak self] in self?.handleCopySource() }
         viewModel.onCopyDest = { [weak self] in self?.handleCopyDest() }
         viewModel.onToggleBackend = { [weak self] in self?.handleBackendToggle() }
+        viewModel.onScreenshotTranslation = { [weak self] in self?.handleScreenshotTranslation() }
         viewModel.onHide = { [weak self] in self?.handleHide() }
         viewModel.onRefresh = { [weak self] in self?.handleRefresh() }
         viewModel.onSwapLanguages = { [weak self] in self?.handleSwapLanguages() }

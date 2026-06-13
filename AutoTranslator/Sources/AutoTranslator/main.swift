@@ -48,6 +48,12 @@ extension AppDelegate: StatusBarControllerDelegate {
     var isMonitoringPaused: Bool { controller.isMonitoringPaused }
     var currentTheme: Theme { controller.currentTheme }
 
+    func statusBarRequestedScreenshotTranslation() {
+        Task { @MainActor [controller] in
+            controller.startScreenshotTranslation()
+        }
+    }
+
     func statusBarRequestedSwitchBackend(to backend: String) {
         controller.setBackend(backend)
         statusBar.refresh()

@@ -18,6 +18,7 @@ final class FloatingWindowViewModel: ObservableObject {
     var onCopySource: (() -> Void)?
     var onCopyDest: (() -> Void)?
     var onToggleBackend: (() -> Void)?
+    var onScreenshotTranslation: (() -> Void)?
     var onHide: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onSwapLanguages: (() -> Void)?
@@ -145,13 +146,15 @@ struct FloatingWindowView: View {
 
                 Spacer(minLength: 8)
 
-                Button { model.onCopySource?() } label: {
-                    Image(systemName: "text.quote")
+                Button { model.onScreenshotTranslation?() } label: {
+                    Image(systemName: "text.viewfinder")
                 }
-                .buttonStyle(IconButtonStyle())
-                .disabled(!model.canCopySource)
-                .opacity(model.canCopySource ? 1 : 0.36)
-                .help("复制原文")
+                .buttonStyle(IconButtonStyle(
+                    tint: AppUI.accent,
+                    background: AppUI.activeToolbar,
+                    border: AppUI.activeToolbarBorder
+                ))
+                .help("截图翻译")
 
                 Button { model.onCopyDest?() } label: {
                     Image(systemName: "doc.on.doc")

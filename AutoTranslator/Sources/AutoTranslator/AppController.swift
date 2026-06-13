@@ -15,10 +15,12 @@ final class AppController: NSObject {
     private let window: FloatingWindow
     private let textSelector = TextSelector()
     private let mouseMonitor = MouseMonitor()
+    private let ocrService = OCRService()
 
     private var translateVersion = 0
     private var translateTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
+    private var screenshotTask: Task<Void, Never>?
 
     private(set) var isMonitoringPaused = false
     private(set) var currentTheme: Theme = .default
@@ -63,10 +65,12 @@ final class AppController: NSObject {
         mouseMonitor.start()
     }
 
+    @MainActor
     func stop() {
         mouseMonitor.stop()
         selectionTask?.cancel()
         translateTask?.cancel()
+        screenshotTask?.cancel()
     }
 
     // MARK: - Public control surface (供菜单栏/偏好设置调用)
@@ -88,6 +92,70 @@ final class AppController: NSObject {
 
     func toggleMonitoring() {
         if isMonitoringPaused { resumeMonitoring() } else { pauseMonitoring() }
+    }
+
+    @MainActor
+    func startScreenshotTranslation() {
+        selectionTask?.cancel()
+        screenshotTask?.cancel()
+
+        screenshotTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+
+            guard ScreenCaptureService.ensurePermission() else {
+                NotificationManager.shared.post(
+                    title: "需要屏幕录制权限",
+                    body: "请在 系统设置 > 隐私与安全性 > 屏幕与系统音频录制 中允许 AutoTranslator，然后重新点击 OCR。"
+                )
+                self.window.show(
+                    srcText: "截图翻译需要屏幕录制权限",
+                    destText: "授权后请重新点击 OCR 按钮"
+                )
+                return
+            }
+
+            let shouldResumeMonitoring = !self.isMonitoringPaused
+            if shouldResumeMonitoring {
+                self.mouseMonitor.stop()
+            }
+            defer {
+                if shouldResumeMonitoring {
+                    self.mouseMonitor.start()
+                }
+            }
+
+            do {
+                self.window.hideImmediately()
+                let capture = try await ScreenCaptureService.captureInteractively()
+                self.window.show(srcText: "正在识别截图文字...", destText: nil)
+                let recognizedText = try await self.ocrService.recognizeText(
+                    in: capture.image,
+                    imageURL: capture.debugURL,
+                    sourceLanguage: self.srcLang
+                )
+                let text = recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                guard !text.isEmpty else {
+                    self.window.show(
+                        srcText: "截图中未识别到文字",
+                        destText: "请重新框选更清晰的文字区域"
+                    )
+                    return
+                }
+
+                self.lastText = text
+                self.window.show(srcText: text, destText: nil)
+                self.dispatchTranslate(text)
+            } catch ScreenCaptureError.cancelled {
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                let errMsg = String(error.localizedDescription.prefix(80))
+                self.window.show(srcText: "截图翻译失败", destText: "错误: \(errMsg)")
+                NotificationManager.shared.post(title: "截图翻译失败", body: errMsg)
+            }
+        }
     }
 
     /// 切换到指定后端；若与当前一致则无操作。
@@ -288,6 +356,12 @@ extension AppController: FloatingWindowDelegate {
 
     func toggleTranslator() {
         switchTranslatorBackend()
+    }
+
+    func screenshotTranslation() {
+        Task { @MainActor [weak self] in
+            self?.startScreenshotTranslation()
+        }
     }
 
     func retranslateCurrent() {

@@ -28,6 +28,8 @@
 	<string>AutoTranslator 需要辅助功能权限以监听鼠标事件与读取选中文本。</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>AutoTranslator 需要发送键盘事件以读取选中文本。</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>AutoTranslator 需要屏幕录制权限以截取框选区域并识别其中的文字。</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

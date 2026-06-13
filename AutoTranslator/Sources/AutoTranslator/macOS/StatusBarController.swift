@@ -4,6 +4,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     var currentBackend: String { get }
     var isMonitoringPaused: Bool { get }
     var currentTheme: Theme { get }
+    func statusBarRequestedScreenshotTranslation()
     func statusBarRequestedSwitchBackend(to backend: String)
     func statusBarRequestedTogglePause()
     func statusBarRequestedOpenPreferences()
@@ -21,6 +22,7 @@ final class StatusBarController: NSObject {
 
     private let backendLLMItem = NSMenuItem(title: "大模型 (DeepSeek)", action: #selector(switchToLLM), keyEquivalent: "")
     private let backendGoogleItem = NSMenuItem(title: "谷歌翻译", action: #selector(switchToGoogle), keyEquivalent: "")
+    private let screenshotItem = NSMenuItem(title: "截图翻译", action: #selector(startScreenshotTranslation), keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "暂停监听", action: #selector(togglePause), keyEquivalent: "p")
     private let prefsItem = NSMenuItem(title: "偏好设置…", action: #selector(openPreferences), keyEquivalent: ",")
     private let quitItem = NSMenuItem(title: "退出 AutoTranslator", action: #selector(quitApp), keyEquivalent: "q")
@@ -66,6 +68,9 @@ final class StatusBarController: NSObject {
         menu.addItem(backendLLMItem)
         menu.addItem(backendGoogleItem)
         menu.addItem(.separator())
+
+        screenshotItem.target = self
+        menu.addItem(screenshotItem)
 
         pauseItem.target = self
         menu.addItem(pauseItem)
@@ -134,6 +139,10 @@ final class StatusBarController: NSObject {
 
     @objc private func togglePause() {
         delegate?.statusBarRequestedTogglePause()
+    }
+
+    @objc private func startScreenshotTranslation() {
+        delegate?.statusBarRequestedScreenshotTranslation()
     }
 
     @objc private func openPreferences() {
