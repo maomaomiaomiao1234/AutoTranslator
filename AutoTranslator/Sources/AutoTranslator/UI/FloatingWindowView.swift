@@ -12,6 +12,7 @@ final class FloatingWindowViewModel: ObservableObject {
     @Published var selectedSource = "自动检测"
     @Published var selectedTarget = "中文简体"
     @Published var appearanceVersion = 0
+    @Published var sourceCardHeight: CGFloat = SOURCE_CARD_MIN_HEIGHT
 
     var onPin: (() -> Void)?
     var onCopySource: (() -> Void)?
@@ -169,46 +170,57 @@ struct FloatingWindowView: View {
     }
 
     private var sourceCard: some View {
-        VStack(spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "text.alignleft")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppUI.accent)
+                    .frame(width: 22, height: 22)
+                    .background(AppUI.activeToolbar)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
                 Text("原文")
-                    .font(.system(size: 10.5, weight: .bold))
-                    .foregroundStyle(AppUI.textSecondary)
-                Spacer()
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(AppUI.textPrimary)
+
                 Chip(text: model.sourceMeta)
-            }
 
-            ScrollView {
-                Text(model.sourceText.isEmpty ? " " : model.sourceText)
-                    .font(.system(size: SOURCE_FONT_SIZE))
-                    .foregroundStyle(AppUI.textSecondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minHeight: 30, maxHeight: SRC_MAX_CARD_HEIGHT - 82)
-
-            HStack {
-                Button { model.onCopySource?() } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 22))
-                .disabled(!model.canCopySource)
-                .opacity(model.canCopySource ? 1 : 0.36)
-                .help("复制原文")
-
-                Spacer()
+                Spacer(minLength: 8)
 
                 Chip(
                     text: model.selectedSource,
                     foreground: model.selectedSource == "自动检测" ? AppUI.textSecondary : AppUI.blue,
-                    background: model.selectedSource == "自动检测" ? AppUI.surface : AppUI.chipBlue
+                    background: model.selectedSource == "自动检测" ? AppUI.surfaceSoft : AppUI.chipBlue
                 )
+
+                Button { model.onCopySource?() } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 24))
+                .disabled(!model.canCopySource)
+                .opacity(model.canCopySource ? 1 : 0.36)
+                .help("复制原文")
             }
+
+            ScrollView {
+                Text(model.sourceText.isEmpty ? " " : model.sourceText)
+                    .font(.system(size: SOURCE_FONT_SIZE, weight: .regular))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.top, 2)
+            }
+            .frame(height: sourceTextAreaHeight)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .frame(height: 112)
+        .frame(height: model.sourceCardHeight, alignment: .top)
         .appSurface(background: Color(nsColor: SOURCE_CARD_BG), shadow: true)
+    }
+
+    private var sourceTextAreaHeight: CGFloat {
+        max(SOURCE_TEXT_MIN_HEIGHT, model.sourceCardHeight - SOURCE_CARD_CHROME_HEIGHT)
     }
 
     private var languageBar: some View {
@@ -300,7 +312,7 @@ struct FloatingWindowView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .frame(minHeight: 164, maxHeight: .infinity, alignment: .top)
+        .frame(minHeight: DEST_CARD_MIN_HEIGHT, maxHeight: .infinity, alignment: .top)
         .appSurface(background: Color(nsColor: DEST_CARD_BG), shadow: true)
     }
 

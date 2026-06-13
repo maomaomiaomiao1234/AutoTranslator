@@ -366,7 +366,7 @@ final class FloatingWindow: NSObject {
         } else if let restored = savedHeight {
             targetHeight = max(clampedWindowHeight(restored), desiredAutomaticWindowHeight(for: window.frame.width))
         } else {
-            targetHeight = WINDOW_MIN_HEIGHT
+            targetHeight = desiredAutomaticWindowHeight(for: window.frame.width)
         }
         layoutWindow(forcedHeight: targetHeight)
 
@@ -563,6 +563,7 @@ final class FloatingWindow: NSObject {
 
     private func layoutWindow(forcedHeight: CGFloat? = nil) {
         let windowWidth = clampedWindowWidth(window.frame.width)
+        let desiredSourceHeight = desiredSourceCardHeight(for: windowWidth)
         let totalHeight: CGFloat
         if let forcedHeight {
             totalHeight = clampedWindowHeight(forcedHeight)
@@ -572,6 +573,14 @@ final class FloatingWindow: NSObject {
             totalHeight = desiredAutomaticWindowHeight(for: windowWidth)
         }
 
+        let displayedSourceHeight = min(
+            desiredSourceHeight,
+            max(SOURCE_CARD_MIN_HEIGHT, totalHeight - minimumNonSourceHeight)
+        )
+        if abs(viewModel.sourceCardHeight - displayedSourceHeight) > 0.5 {
+            viewModel.sourceCardHeight = displayedSourceHeight
+        }
+
         rootView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         hostingView.frame = rootView.bounds
         resizeView.frame = rootView.bounds
@@ -579,20 +588,43 @@ final class FloatingWindow: NSObject {
     }
 
     private func desiredAutomaticWindowHeight(for width: CGFloat) -> CGFloat {
-        let contentWidth = width - (OUTER_PADDING * 2)
-        let cardInnerWidth = contentWidth - (CARD_INSET_X * 2)
+        let sourceCardHeight = desiredSourceCardHeight(for: width)
+        let cardInnerWidth = textMeasureWidth(for: width)
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
         let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
                                                fontSize: BODY_FONT_SIZE, minimum: 64)
 
-        let overhead = OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
-            + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
-        let baseSrcCardHeight: CGFloat = 112
-        let baseDestCardHeight = max(CGFloat(164), WINDOW_MIN_HEIGHT - overhead - baseSrcCardHeight)
+        let overhead = windowChromeHeight
+        let baseDestCardHeight = max(DEST_CARD_MIN_HEIGHT, WINDOW_MIN_HEIGHT - overhead - sourceCardHeight)
         let neededDestCardHeight = min(DEST_MAX_CARD_HEIGHT,
                                        max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + 92))
         return min(MAX_WINDOW_HEIGHT,
-                   max(WINDOW_MIN_HEIGHT, overhead + baseSrcCardHeight + neededDestCardHeight))
+                   max(WINDOW_MIN_HEIGHT, overhead + sourceCardHeight + neededDestCardHeight))
+    }
+
+    private func desiredSourceCardHeight(for width: CGFloat) -> CGFloat {
+        let sourceDisplayText = currentSourceText.isEmpty ? " " : currentSourceText
+        let sourceTextHeight = measureTextHeight(sourceDisplayText,
+                                                 width: textMeasureWidth(for: width),
+                                                 fontSize: SOURCE_FONT_SIZE,
+                                                 minimum: SOURCE_TEXT_MIN_HEIGHT)
+        let neededTextHeight = min(sourceTextHeight, SOURCE_TEXT_MAX_HEIGHT)
+        return min(SRC_MAX_CARD_HEIGHT,
+                   max(SOURCE_CARD_MIN_HEIGHT, neededTextHeight + SOURCE_CARD_CHROME_HEIGHT))
+    }
+
+    private func textMeasureWidth(for width: CGFloat) -> CGFloat {
+        let contentWidth = width - (OUTER_PADDING * 2)
+        return max(120, contentWidth - (CARD_INSET_X * 2))
+    }
+
+    private var windowChromeHeight: CGFloat {
+        OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
+            + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
+    }
+
+    private var minimumNonSourceHeight: CGFloat {
+        windowChromeHeight + DEST_CARD_MIN_HEIGHT
     }
 
     private func growWindowForStreamingIfNeeded() {
