@@ -21,6 +21,9 @@ final class FloatingWindowViewModel: ObservableObject {
     var onHide: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onSwapLanguages: (() -> Void)?
+    var onSourceLineCountChanged: ((Int) -> Void)?
+    var onSourceResizeEnded: (() -> Void)?
+    var onSourceResizeInteractionChanged: ((Bool) -> Void)?
     var onLanguageChanged: ((String, String) -> Void)?
 
     var backendDisplayName: String {
@@ -48,6 +51,16 @@ final class FloatingWindowViewModel: ObservableObject {
     var canCopyDest: Bool { !destText.isEmpty }
     var canRefresh: Bool { !sourceText.isEmpty }
     var canSwap: Bool { selectedSource != "自动检测" }
+    var sourceVisibleLineCount: Int {
+        let textHeight = max(SOURCE_TEXT_MIN_HEIGHT, sourceCardHeight - SOURCE_CARD_CHROME_HEIGHT)
+        return max(minSourceLineCount, Int((textHeight / SOURCE_TEXT_LINE_HEIGHT).rounded(.down)))
+    }
+    var minSourceLineCount: Int {
+        max(1, Int((SOURCE_TEXT_MIN_HEIGHT / SOURCE_TEXT_LINE_HEIGHT).rounded(.up)))
+    }
+    var maxSourceLineCount: Int {
+        max(minSourceLineCount, Int((SOURCE_TEXT_MAX_HEIGHT / SOURCE_TEXT_LINE_HEIGHT).rounded(.down)))
+    }
 
     func selectSource(_ value: String) {
         selectedSource = value
@@ -62,6 +75,10 @@ final class FloatingWindowViewModel: ObservableObject {
 
 struct FloatingWindowView: View {
     @ObservedObject var model: FloatingWindowViewModel
+    @State private var sourceResizeStartHeight: CGFloat?
+    @State private var sourceResizeLastLineCount: Int?
+    @State private var isHoveringSourceResizeHandle = false
+    @State private var sourceResizePreviewLineCount: Int?
 
     var body: some View {
         let _ = model.appearanceVersion
@@ -170,7 +187,7 @@ struct FloatingWindowView: View {
     }
 
     private var sourceCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "text.alignleft")
                     .font(.system(size: 12, weight: .semibold))
@@ -212,6 +229,8 @@ struct FloatingWindowView: View {
                     .padding(.top, 2)
             }
             .frame(height: sourceTextAreaHeight)
+
+            sourceResizeHandle
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -221,6 +240,94 @@ struct FloatingWindowView: View {
 
     private var sourceTextAreaHeight: CGFloat {
         max(SOURCE_TEXT_MIN_HEIGHT, model.sourceCardHeight - SOURCE_CARD_CHROME_HEIGHT)
+    }
+
+    private var sourceResizeHandle: some View {
+        HStack(spacing: 8) {
+            sourceLineButton(systemName: "minus", targetLineCount: displayedSourceLineCount - 1)
+
+            sourceDragHandle
+
+            sourceLineButton(systemName: "plus", targetLineCount: displayedSourceLineCount + 1)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: SOURCE_RESIZE_HANDLE_HEIGHT)
+        .help("拖动调整原文显示行数")
+    }
+
+    private var sourceDragHandle: some View {
+        HStack(spacing: 8) {
+            Capsule()
+                .fill(AppUI.textMuted.opacity(isDarkMode ? 0.48 : 0.40))
+                .frame(width: 44, height: 3)
+
+            Text("\(displayedSourceLineCount) 行")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(sourceResizePreviewLineCount == nil ? AppUI.textMuted : AppUI.accent)
+                .monospacedDigit()
+
+            Image(systemName: "arrow.up.and.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AppUI.textMuted.opacity(0.78))
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: SOURCE_RESIZE_HANDLE_HEIGHT)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHoveringSourceResizeHandle = hovering
+            model.onSourceResizeInteractionChanged?(hovering || sourceResizeStartHeight != nil)
+        }
+        .gesture(
+            DragGesture(minimumDistance: 2)
+                .onChanged { value in
+                    let startHeight = sourceResizeStartHeight ?? model.sourceCardHeight
+                    if sourceResizeStartHeight == nil {
+                        sourceResizeStartHeight = startHeight
+                        sourceResizeLastLineCount = model.sourceVisibleLineCount
+                        model.onSourceResizeInteractionChanged?(true)
+                    }
+                    let proposedLineCount = sourceLineCount(for: startHeight + value.translation.height)
+                    guard proposedLineCount != sourceResizeLastLineCount else { return }
+                    sourceResizeLastLineCount = proposedLineCount
+                    sourceResizePreviewLineCount = proposedLineCount
+                }
+                .onEnded { _ in
+                    if let previewLineCount = sourceResizePreviewLineCount {
+                        model.onSourceLineCountChanged?(previewLineCount)
+                    }
+                    sourceResizeStartHeight = nil
+                    sourceResizeLastLineCount = nil
+                    sourceResizePreviewLineCount = nil
+                    model.onSourceResizeEnded?()
+                    model.onSourceResizeInteractionChanged?(isHoveringSourceResizeHandle)
+                }
+        )
+        .help("拖动调整原文显示行数")
+    }
+
+    private var displayedSourceLineCount: Int {
+        sourceResizePreviewLineCount ?? model.sourceVisibleLineCount
+    }
+
+    private func sourceLineButton(systemName: String, targetLineCount: Int) -> some View {
+        let clampedTarget = min(model.maxSourceLineCount, max(model.minSourceLineCount, targetLineCount))
+        let enabled = clampedTarget != displayedSourceLineCount
+        return Button {
+            model.onSourceLineCountChanged?(clampedTarget)
+            model.onSourceResizeEnded?()
+        } label: {
+            Image(systemName: systemName)
+        }
+        .buttonStyle(IconButtonStyle(tint: AppUI.textMuted, size: 28))
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.34)
+        .help(systemName == "plus" ? "增加原文显示行数" : "减少原文显示行数")
+    }
+
+    private func sourceLineCount(for proposedHeight: CGFloat) -> Int {
+        let rawTextHeight = proposedHeight - SOURCE_CARD_CHROME_HEIGHT
+        let lineCount = Int((rawTextHeight / SOURCE_TEXT_LINE_HEIGHT).rounded())
+        return min(model.maxSourceLineCount, max(model.minSourceLineCount, lineCount))
     }
 
     private var languageBar: some View {

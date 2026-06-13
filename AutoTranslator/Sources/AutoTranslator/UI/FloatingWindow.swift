@@ -193,6 +193,8 @@ final class FloatingWindow: NSObject {
     private var suppressAutoPin = false
     private var activeResizeEdges: ResizeEdges = []
     private var hasManualHeight = false
+    private var sourceCardHeightOverride: CGFloat?
+    private var isSourceResizeInteractionActive = false
     private var currentState: TranslationState = .idle
 
     private var streamTimer: Timer?
@@ -502,6 +504,7 @@ final class FloatingWindow: NSObject {
 
     func hide() {
         stopStream()
+        setSourceResizeInteractionActive(false)
         if !isPinned { savedOrigin = window.frame.origin }
         savedHeight = window.frame.height
 
@@ -549,6 +552,41 @@ final class FloatingWindow: NSObject {
         delegate?.swapLanguages()
     }
 
+    private func handleSourceLineCountChange(_ lineCount: Int) {
+        let nextHeight = sourceCardHeight(forLineCount: lineCount)
+        guard abs((sourceCardHeightOverride ?? viewModel.sourceCardHeight) - nextHeight) > 0.5 else {
+            return
+        }
+        sourceCardHeightOverride = nextHeight
+
+        let frame = window.frame
+        layoutWindow(forcedHeight: clampedWindowHeight(frame.height))
+        if window.isVisible {
+            window.displayIfNeeded()
+        }
+    }
+
+    private func handleSourceResizeEnd() {
+        guard !usesManualHeightForLayout, window.isVisible else { return }
+        let frame = window.frame
+        let targetHeight = desiredAutomaticWindowHeight(for: frame.width)
+        guard abs(frame.height - targetHeight) > 0.5 else { return }
+
+        layoutWindow(forcedHeight: targetHeight)
+        suppressAutoPin = true
+        window.setFrame(
+            NSRect(x: frame.origin.x, y: frame.maxY - targetHeight, width: frame.width, height: targetHeight),
+            display: true
+        )
+        suppressAutoPin = false
+    }
+
+    private func setSourceResizeInteractionActive(_ active: Bool) {
+        guard active != isSourceResizeInteractionActive else { return }
+        isSourceResizeInteractionActive = active
+        window.isMovableByWindowBackground = !active
+    }
+
     @objc private func windowDidMove(_ notification: Notification) {
         guard !suppressAutoPin else { return }
         autoPin()
@@ -563,7 +601,7 @@ final class FloatingWindow: NSObject {
 
     private func layoutWindow(forcedHeight: CGFloat? = nil) {
         let windowWidth = clampedWindowWidth(window.frame.width)
-        let desiredSourceHeight = desiredSourceCardHeight(for: windowWidth)
+        let preferredSourceHeight = preferredSourceCardHeight(for: windowWidth)
         let totalHeight: CGFloat
         if let forcedHeight {
             totalHeight = clampedWindowHeight(forcedHeight)
@@ -574,7 +612,7 @@ final class FloatingWindow: NSObject {
         }
 
         let displayedSourceHeight = min(
-            desiredSourceHeight,
+            preferredSourceHeight,
             max(SOURCE_CARD_MIN_HEIGHT, totalHeight - minimumNonSourceHeight)
         )
         if abs(viewModel.sourceCardHeight - displayedSourceHeight) > 0.5 {
@@ -588,7 +626,7 @@ final class FloatingWindow: NSObject {
     }
 
     private func desiredAutomaticWindowHeight(for width: CGFloat) -> CGFloat {
-        let sourceCardHeight = desiredSourceCardHeight(for: width)
+        let sourceCardHeight = preferredSourceCardHeight(for: width)
         let cardInnerWidth = textMeasureWidth(for: width)
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
         let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
@@ -611,6 +649,19 @@ final class FloatingWindow: NSObject {
         let neededTextHeight = min(sourceTextHeight, SOURCE_TEXT_MAX_HEIGHT)
         return min(SRC_MAX_CARD_HEIGHT,
                    max(SOURCE_CARD_MIN_HEIGHT, neededTextHeight + SOURCE_CARD_CHROME_HEIGHT))
+    }
+
+    private func preferredSourceCardHeight(for width: CGFloat) -> CGFloat {
+        sourceCardHeightOverride ?? desiredSourceCardHeight(for: width)
+    }
+
+    private func sourceCardHeight(forLineCount lineCount: Int) -> CGFloat {
+        let minLines = max(1, Int((SOURCE_TEXT_MIN_HEIGHT / SOURCE_TEXT_LINE_HEIGHT).rounded(.up)))
+        let maxLines = max(minLines, Int((SOURCE_TEXT_MAX_HEIGHT / SOURCE_TEXT_LINE_HEIGHT).rounded(.down)))
+        let clampedLineCount = min(maxLines, max(minLines, lineCount))
+        let textHeight = CGFloat(clampedLineCount) * SOURCE_TEXT_LINE_HEIGHT
+        return min(SRC_MAX_CARD_HEIGHT,
+                   max(SOURCE_CARD_MIN_HEIGHT, textHeight + SOURCE_CARD_CHROME_HEIGHT))
     }
 
     private func textMeasureWidth(for width: CGFloat) -> CGFloat {
@@ -705,6 +756,15 @@ final class FloatingWindow: NSObject {
         viewModel.onHide = { [weak self] in self?.handleHide() }
         viewModel.onRefresh = { [weak self] in self?.handleRefresh() }
         viewModel.onSwapLanguages = { [weak self] in self?.handleSwapLanguages() }
+        viewModel.onSourceLineCountChanged = { [weak self] lineCount in
+            self?.handleSourceLineCountChange(lineCount)
+        }
+        viewModel.onSourceResizeEnded = { [weak self] in
+            self?.handleSourceResizeEnd()
+        }
+        viewModel.onSourceResizeInteractionChanged = { [weak self] active in
+            self?.setSourceResizeInteractionActive(active)
+        }
         viewModel.onLanguageChanged = { [weak self] src, dest in
             self?.handleLangChange(srcName: src, destName: dest)
         }
