@@ -72,10 +72,7 @@ enum ScreenCaptureService {
                     return
                 }
 
-                fputs(
-                    "[AutoTranslator] 原始截图已保存 image=\(properties.width)x\(properties.height) debugImage=\(debugURL.path)\n",
-                    stderr
-                )
+                AppLog.debug("原始截图已保存 image=\(properties.width)x\(properties.height) debugImage=\(debugURL.path)")
                 continuation.resume(returning: ScreenCaptureResult(
                     imageURL: debugURL,
                     width: properties.width,
@@ -105,7 +102,7 @@ enum ScreenCaptureService {
             try fileManager.copyItem(at: sourceURL, to: debugURL)
             return debugURL
         } catch {
-            fputs("[AutoTranslator] 保存原始截图失败: \(error.localizedDescription)\n", stderr)
+            AppLog.error("保存原始截图失败: \(error.localizedDescription)")
             return nil
         }
     }

@@ -7,6 +7,7 @@ final class FloatingWindowViewModel: ObservableObject {
     @Published var backend = "google"
     @Published var isPinned = false
     @Published var state: TranslationState = .idle
+    @Published var errorStatusText = "翻译失败"
     @Published var sourceOptions: [String] = []
     @Published var targetOptions: [String] = []
     @Published var selectedSource = "自动检测"
@@ -97,8 +98,8 @@ struct FloatingWindowView: View {
             Capsule()
                 .fill(AppUI.accent.opacity(isDarkMode ? 0.72 : 0.84))
                 .frame(width: 116, height: 3)
-                .padding(.leading, 16)
-                .padding(.top, 4)
+                .padding(.leading, AppUI.Space.l)
+                .padding(.top, AppUI.Space.xs)
         }
         .overlay {
             RoundedRectangle(cornerRadius: AppUI.panelRadius, style: .continuous)
@@ -106,8 +107,8 @@ struct FloatingWindowView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             ResizeGrip()
-                .padding(.trailing, 7)
-                .padding(.bottom, 7)
+                .padding(.trailing, AppUI.Space.s)
+                .padding(.bottom, AppUI.Space.s)
         }
     }
 
@@ -120,8 +121,8 @@ struct FloatingWindowView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
+        VStack(spacing: AppUI.Space.s) {
+            HStack(spacing: AppUI.Space.m) {
                 Button {
                     model.onPin?()
                 } label: {
@@ -134,12 +135,12 @@ struct FloatingWindowView: View {
                 ))
                 .help("固定窗口")
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                     Text("划词翻译")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.system(size: AppUI.FontSize.title, weight: .bold))
                         .foregroundStyle(AppUI.textPrimary)
                     Text(model.headerSubtitle)
-                        .font(.system(size: 11.5))
+                        .font(.system(size: AppUI.FontSize.small))
                         .foregroundStyle(AppUI.textSecondary)
                         .lineLimit(1)
                 }
@@ -156,26 +157,6 @@ struct FloatingWindowView: View {
                 ))
                 .help("截图翻译")
 
-                Button { model.onCopyDest?() } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(IconButtonStyle())
-                .disabled(!model.canCopyDest)
-                .opacity(model.canCopyDest ? 1 : 0.36)
-                .help("复制译文")
-
-                Button { model.onToggleBackend?() } label: {
-                    Text(model.backend == "llm" ? "AI" : "G")
-                        .font(.system(size: 11, weight: .bold))
-                }
-                .buttonStyle(IconButtonStyle(
-                    tint: model.backend == "llm" ? AppUI.teal : AppUI.textSecondary,
-                    background: model.backend == "llm" ? AppUI.chipTeal : AppUI.toolbarGhost,
-                    size: TOOLBAR_BUTTON_SIZE,
-                    pillWidth: BACKEND_BTN_WIDTH
-                ))
-                .help("切换翻译后端")
-
                 Button { model.onHide?() } label: {
                     Image(systemName: "xmark")
                 }
@@ -190,17 +171,17 @@ struct FloatingWindowView: View {
     }
 
     private var sourceCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: AppUI.Space.s) {
+            HStack(spacing: AppUI.Space.s) {
                 Image(systemName: "text.alignleft")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: AppUI.FontSize.small, weight: .semibold))
                     .foregroundStyle(AppUI.accent)
                     .frame(width: 22, height: 22)
                     .background(AppUI.activeToolbar)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous))
 
                 Text("原文")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.mini, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
 
                 Chip(text: model.sourceMeta)
@@ -229,14 +210,14 @@ struct FloatingWindowView: View {
                     .lineSpacing(3)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.top, 2)
+                    .padding(.top, AppUI.Space.xxs)
             }
             .frame(height: sourceTextAreaHeight)
 
             sourceResizeHandle
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, AppUI.Space.l)
+        .padding(.vertical, AppUI.Space.m)
         .frame(height: model.sourceCardHeight, alignment: .top)
         .appSurface(background: Color(nsColor: SOURCE_CARD_BG), shadow: true)
     }
@@ -246,7 +227,7 @@ struct FloatingWindowView: View {
     }
 
     private var sourceResizeHandle: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AppUI.Space.s) {
             sourceLineButton(systemName: "minus", targetLineCount: displayedSourceLineCount - 1)
 
             sourceDragHandle
@@ -259,18 +240,18 @@ struct FloatingWindowView: View {
     }
 
     private var sourceDragHandle: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: AppUI.Space.s) {
             Capsule()
                 .fill(AppUI.textMuted.opacity(isDarkMode ? 0.48 : 0.40))
                 .frame(width: 44, height: 3)
 
             Text("\(displayedSourceLineCount) 行")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: AppUI.FontSize.micro, weight: .semibold))
                 .foregroundStyle(sourceResizePreviewLineCount == nil ? AppUI.textMuted : AppUI.accent)
                 .monospacedDigit()
 
             Image(systemName: "arrow.up.and.down")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: AppUI.FontSize.micro, weight: .semibold))
                 .foregroundStyle(AppUI.textMuted.opacity(0.78))
         }
         .frame(maxWidth: .infinity)
@@ -334,7 +315,7 @@ struct FloatingWindowView: View {
     }
 
     private var languageBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AppUI.Space.m) {
             Picker("", selection: Binding(
                 get: { model.selectedSource },
                 set: { model.selectSource($0) }
@@ -361,23 +342,23 @@ struct FloatingWindowView: View {
             .labelsHidden()
             .pickerStyle(.menu)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, AppUI.Space.l)
         .frame(height: LANG_BAR_HEIGHT)
         .appSurface(background: Color(nsColor: LANG_BAR_BG))
     }
 
     private var destinationCard: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
+        VStack(spacing: AppUI.Space.s) {
+            HStack(spacing: AppUI.Space.s) {
                 Text(model.backendBadgeText)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.micro, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 24, height: 24)
                     .background(model.backendTint)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous))
 
                 Text(model.backendDisplayName)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.base, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
 
                 Spacer()
@@ -394,13 +375,13 @@ struct FloatingWindowView: View {
             ScrollView {
                 Text(model.destText.isEmpty ? "正在翻译..." : model.destText)
                     .font(.system(size: BODY_FONT_SIZE))
-                    .foregroundStyle(model.state == .loading ? AppUI.textMuted : AppUI.textPrimary)
+                    .foregroundStyle(destTextColor)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: DEST_TEXT_MIN_HEIGHT, maxHeight: .infinity)
 
-            HStack(spacing: 8) {
+            HStack(spacing: AppUI.Space.s) {
                 Button { model.onCopyDest?() } label: {
                     Image(systemName: "doc.on.doc")
                 }
@@ -420,8 +401,8 @@ struct FloatingWindowView: View {
                 Spacer()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, AppUI.Space.l)
+        .padding(.vertical, AppUI.Space.m)
         .frame(minHeight: DEST_CARD_MIN_HEIGHT, maxHeight: .infinity, alignment: .top)
         .appSurface(background: Color(nsColor: DEST_CARD_BG), shadow: true)
     }
@@ -434,10 +415,20 @@ struct FloatingWindowView: View {
             return Chip(text: "翻译中", foreground: AppUI.amber, background: AppUI.chipWarm)
         case .idle:
             return Chip(text: "待翻译", foreground: AppUI.textMuted, background: AppUI.surfaceSoft)
+        case .error:
+            return Chip(text: model.errorStatusText, foreground: AppUI.accent, background: AppUI.chipWarm)
+        }
+    }
+
+    private var destTextColor: Color {
+        switch model.state {
+        case .loading: return AppUI.textMuted
+        case .error: return AppUI.accent
+        default: return AppUI.textPrimary
         }
     }
 }
 
 enum TranslationState {
-    case idle, loading, done
+    case idle, loading, done, error
 }

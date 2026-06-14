@@ -424,6 +424,14 @@ final class FloatingWindow: NSObject {
         installGlobalClickMonitorIfNeeded()
     }
 
+    /// 以错误态展示。复用 show() 的尺寸自适应、定位与出现动画，
+    /// 仅在末尾把状态翻为 .error 并写入状态标签（驱动红色 chip 与珊瑚色文案）。
+    func showError(srcText: String, message: String, status: String = "翻译失败") {
+        viewModel.errorStatusText = status
+        show(srcText: srcText, destText: message)
+        setTranslationState(.error)
+    }
+
     // MARK: - Stream
 
     func streamAppend(_ token: String) {

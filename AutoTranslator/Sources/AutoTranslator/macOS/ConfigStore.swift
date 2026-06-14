@@ -77,7 +77,7 @@ final class ConfigStore {
             let data = try JSONSerialization.data(withJSONObject: cache, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: fileURL, options: [.atomic])
         } catch {
-            fputs("[AutoTranslator] 保存配置失败: \(error)\n", stderr)
+            AppLog.error("保存配置失败: \(error)")
         }
     }
 

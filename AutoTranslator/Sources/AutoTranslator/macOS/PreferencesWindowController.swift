@@ -13,6 +13,7 @@ final class PreferencesWindowController: NSWindowController {
     weak var prefDelegate: PreferencesWindowControllerDelegate?
 
     private let hostingView: NSHostingView<PreferencesView>
+    private var isRootViewLoaded = false
 
     init() {
         let window = NSWindow(
@@ -42,15 +43,20 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     override func showWindow(_ sender: Any?) {
-        reloadRootView()
+        reloadRootViewIfNeeded()
         super.showWindow(sender)
     }
 
     func showAndFocus() {
-        reloadRootView()
+        reloadRootViewIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func reloadRootViewIfNeeded() {
+        guard window?.isVisible != true || !isRootViewLoaded else { return }
+        reloadRootView()
     }
 
     private func reloadRootView() {
@@ -63,6 +69,7 @@ final class PreferencesWindowController: NSWindowController {
                 self?.window?.performClose(nil)
             }
         )
+        isRootViewLoaded = true
     }
 
     private static func makeSnapshot(prefDelegate: PreferencesWindowControllerDelegate?) -> PreferencesSnapshot {
@@ -133,5 +140,6 @@ final class PreferencesWindowController: NSWindowController {
             destLang: payload.targetLang,
             theme: payload.theme
         )
+        isRootViewLoaded = false
     }
 }

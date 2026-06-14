@@ -48,7 +48,7 @@ final class MouseMonitor {
             callback: callback,
             userInfo: refcon
         ) else {
-            fputs("[AutoTranslator] 无法创建 EventTap\n", stderr)
+            AppLog.error("无法创建 EventTap")
             return
         }
 

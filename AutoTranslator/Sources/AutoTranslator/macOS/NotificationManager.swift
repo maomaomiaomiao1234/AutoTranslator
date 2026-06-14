@@ -28,23 +28,22 @@ final class NotificationManager {
         requested = true
 
         guard isBundled else {
-            fputs("[AutoTranslator] 未以 .app 形式运行，已跳过系统通知权限请求（仅日志输出）。\n", stderr)
+            AppLog.debug("未以 .app 形式运行，已跳过系统通知权限请求")
             return
         }
 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             self?.authorized = granted
             if let error = error {
-                fputs("[AutoTranslator] 通知权限请求失败: \(error)\n", stderr)
+                AppLog.error("通知权限请求失败: \(error)")
             }
         }
     }
 
     func post(title: String, body: String) {
-        // 始终在 stderr 留一份，方便日志调试
-        fputs("[AutoTranslator] [通知] \(title) - \(body)\n", stderr)
+        AppLog.debug("[通知] \(title) - \(body)")
 
-        guard isBundled else { return }
+        guard isBundled, authorized else { return }
 
         let content = UNMutableNotificationContent()
         content.title = title
@@ -58,7 +57,7 @@ final class NotificationManager {
         )
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                fputs("[AutoTranslator] 投递通知失败: \(error)\n", stderr)
+                AppLog.error("投递通知失败: \(error)")
             }
         }
     }

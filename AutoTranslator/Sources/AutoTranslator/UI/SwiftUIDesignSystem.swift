@@ -27,6 +27,39 @@ enum AppUI {
     static let controlRadius: CGFloat = CONTROL_RADIUS
     static let outerPadding: CGFloat = OUTER_PADDING
     static let sectionGap: CGFloat = SECTION_GAP
+
+    // MARK: - Design Tokens
+
+    /// 字号标度（pt）。原文 / 译文正文另由 DesignSystem 的 `SOURCE_FONT_SIZE` /
+    /// `BODY_FONT_SIZE` 提供（与文本高度测量耦合），取值分别与 `base` / `body` 一致。
+    enum FontSize {
+        static let micro: CGFloat = 10    // 徽标 / 计数 / 路径等最小文字
+        static let mini: CGFloat = 11     // 次级粗体小标题
+        static let small: CGFloat = 12    // 辅助说明 / 等宽输入 / 状态
+        static let base: CGFloat = 13     // 行标题 / 项值 / 原文正文
+        static let section: CGFloat = 15  // 设置分区标题
+        static let body: CGFloat = 16     // 译文正文
+        static let title: CGFloat = 18    // 浮窗标题
+        static let display: CGFloat = 24  // 偏好页标题
+    }
+
+    /// 4pt 间距栅格。`xxs`(2) 为发丝级光学微调，其余为标准档。
+    enum Space {
+        static let xxs: CGFloat = 2
+        static let xs: CGFloat = 4
+        static let s: CGFloat = 8
+        static let m: CGFloat = 12
+        static let l: CGFloat = 16
+        static let xl: CGFloat = 20
+        static let xxl: CGFloat = 24
+    }
+
+    /// 圆角标度。
+    enum Radius {
+        static let chip: CGFloat = CARD_RADIUS   // 8 · 小徽标 / 输入
+        static let card: CGFloat = CARD_RADIUS   // 8
+        static let panel: CGFloat = PANEL_RADIUS // 20
+    }
 }
 
 extension View {
@@ -80,10 +113,10 @@ struct Chip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: AppUI.FontSize.micro, weight: .semibold))
             .foregroundStyle(foreground)
             .lineLimit(1)
-            .padding(.horizontal, 9)
+            .padding(.horizontal, AppUI.Space.s)
             .frame(height: 20)
             .background(background)
             .clipShape(Capsule())
@@ -102,9 +135,9 @@ struct SymbolBadge: View {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous)
                     .stroke(AppUI.buttonBorder, lineWidth: 1)
             }
     }

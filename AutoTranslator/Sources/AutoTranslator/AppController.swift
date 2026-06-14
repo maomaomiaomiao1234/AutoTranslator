@@ -107,9 +107,10 @@ final class AppController: NSObject {
                     title: "需要屏幕录制权限",
                     body: "请在 系统设置 > 隐私与安全性 > 屏幕与系统音频录制 中允许 AutoTranslator，然后重新点击 OCR。"
                 )
-                self.window.show(
+                self.window.showError(
                     srcText: "截图翻译需要屏幕录制权限",
-                    destText: "授权后请重新点击 OCR 按钮"
+                    message: "授权后请重新点击 OCR 按钮",
+                    status: "需要授权"
                 )
                 return
             }
@@ -137,9 +138,10 @@ final class AppController: NSObject {
                 let text = recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 guard !text.isEmpty else {
-                    self.window.show(
+                    self.window.showError(
                         srcText: "截图中未识别到文字",
-                        destText: "请重新框选更清晰的文字区域"
+                        message: "请重新框选更清晰的文字区域",
+                        status: "未识别"
                     )
                     return
                 }
@@ -153,7 +155,7 @@ final class AppController: NSObject {
                 return
             } catch {
                 let errMsg = String(error.localizedDescription.prefix(80))
-                self.window.show(srcText: "截图翻译失败", destText: "错误: \(errMsg)")
+                self.window.showError(srcText: "截图翻译失败", message: "错误: \(errMsg)", status: "截图失败")
                 NotificationManager.shared.post(title: "截图翻译失败", body: errMsg)
             }
         }
@@ -215,10 +217,10 @@ final class AppController: NSObject {
     private func createTranslator() -> TranslatorProtocol {
         if translatorBackend == "llm" {
             do {
-                fputs("[AutoTranslator] 使用大模型翻译 (LLM)\n", stderr)
+                AppLog.debug("使用大模型翻译 (LLM)")
                 return try LLMTranslator(source: srcLang, target: destLang)
             } catch {
-                fputs("[AutoTranslator] 大模型翻译初始化失败，回退到谷歌翻译: \(error)\n", stderr)
+                AppLog.error("大模型翻译初始化失败，回退到谷歌翻译: \(error)")
                 NotificationManager.shared.post(
                     title: "大模型不可用，已回退到谷歌翻译",
                     body: "请在偏好设置中配置 API Key。"
@@ -227,7 +229,7 @@ final class AppController: NSObject {
                 window.setBackendLabel("google")
             }
         }
-        fputs("[AutoTranslator] 使用谷歌翻译 (Google)\n", stderr)
+        AppLog.debug("使用谷歌翻译 (Google)")
         return GoogleTranslator(source: srcLang, target: destLang)
     }
 
@@ -236,7 +238,7 @@ final class AppController: NSObject {
         translatorBackend = translatorBackend == "llm" ? "google" : "llm"
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
-        fputs("[AutoTranslator] 翻译后端切换为: \(translatorBackend)\n", stderr)
+        AppLog.debug("翻译后端切换为: \(translatorBackend)")
         retranslateLast()
     }
 
@@ -298,17 +300,24 @@ final class AppController: NSObject {
                     if version == self.translateVersion {
                         await MainActor.run { [weak self] in
                             if version == self?.translateVersion {
-                                self?.window.streamFinish(finalBuffer.isEmpty ? "翻译结果为空" : finalBuffer)
+                                if finalBuffer.isEmpty {
+                                    self?.window.showError(srcText: text, message: "翻译结果为空", status: "无结果")
+                                } else {
+                                    self?.window.streamFinish(finalBuffer)
+                                }
                             }
                         }
                     }
                 } else {
                     let translated = try await requestTranslator.translate(text)
-                    let result = translated.isEmpty ? "翻译结果为空" : translated
                     if version == self.translateVersion {
                         await MainActor.run { [weak self] in
                             if version == self?.translateVersion {
-                                self?.window.show(srcText: text, destText: result)
+                                if translated.isEmpty {
+                                    self?.window.showError(srcText: text, message: "翻译结果为空", status: "无结果")
+                                } else {
+                                    self?.window.show(srcText: text, destText: translated)
+                                }
                             }
                         }
                     }
@@ -318,7 +327,9 @@ final class AppController: NSObject {
                 if version == self.translateVersion {
                     let errMsg = String(error.localizedDescription.prefix(50))
                     await MainActor.run { [weak self] in
-                        self?.window.show(srcText: text, destText: "错误: \(errMsg)")
+                        if version == self?.translateVersion {
+                            self?.window.showError(srcText: text, message: "错误: \(errMsg)")
+                        }
                     }
                 }
             }
@@ -353,7 +364,7 @@ extension AppController: FloatingWindowDelegate {
     func languageChanged(srcName: String, destName: String) {
         srcLang = Languages.code(for: srcName) ?? Languages.defaultSourceCode
         destLang = Languages.code(for: destName) ?? Languages.defaultTargetCode
-        fputs("[AutoTranslator] 语言切换: \(srcName)(\(srcLang)) -> \(destName)(\(destLang))\n", stderr)
+        AppLog.debug("语言切换: \(srcName)(\(srcLang)) -> \(destName)(\(destLang))")
         translateTask?.cancel()
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
@@ -363,7 +374,7 @@ extension AppController: FloatingWindowDelegate {
 
     func swapLanguages() {
         guard srcLang != "auto" else {
-            fputs("[AutoTranslator] 源语言为自动检测，跳过语言互换\n", stderr)
+            AppLog.debug("源语言为自动检测，跳过语言互换")
             return
         }
         swap(&srcLang, &destLang)
@@ -372,7 +383,7 @@ extension AppController: FloatingWindowDelegate {
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
         ConfigStore.shared.update([.srcLang: srcLang, .destLang: destLang])
-        fputs("[AutoTranslator] 语言互换完成: \(srcLang) -> \(destLang)\n", stderr)
+        AppLog.debug("语言互换完成: \(srcLang) -> \(destLang)")
         retranslateLast()
     }
 

@@ -15,7 +15,7 @@ func runOCRHelperIfRequested() -> Bool {
     }
 
     guard let imagePath = value(after: "--image") else {
-        fputs("[AutoTranslator] OCR 子进程缺少 --image 参数\n", stderr)
+        AppLog.error("OCR 子进程缺少 --image 参数")
         exit(2)
     }
 
@@ -30,7 +30,7 @@ func runOCRHelperIfRequested() -> Bool {
         }
         return true
     } catch {
-        fputs("[AutoTranslator] OCR 子进程失败: \(error.localizedDescription)\n", stderr)
+        AppLog.error("OCR 子进程失败: \(error.localizedDescription)")
         exit(2)
     }
 }
@@ -43,7 +43,7 @@ func ensureAccessibilityPermission() -> Bool {
     let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     if AXIsProcessTrustedWithOptions(options) { return true }
 
-    fputs("[AutoTranslator] 需要辅助功能权限，请在 系统设置 > 隐私与安全性 > 辅助功能 中允许 AutoTranslator。\n", stderr)
+    AppLog.error("需要辅助功能权限，请在 系统设置 > 隐私与安全性 > 辅助功能 中允许 AutoTranslator。")
     return false
 }
 
@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationManager.shared.requestAuthorization()
 
         let backendName = controller.currentBackend == "google" ? "谷歌翻译" : "大模型"
-        fputs("[AutoTranslator] 翻译器已启动（\(backendName)），支持语言切换\n", stderr)
+        AppLog.debug("翻译器已启动（\(backendName)），支持语言切换")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -150,7 +150,7 @@ func main() {
         let apiKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
             ?? ProcessInfo.processInfo.environment["LLM_API_KEY"]
         if apiKey == nil || apiKey!.isEmpty {
-            fputs("[AutoTranslator] 未设置 API Key，回退到谷歌翻译。可在菜单栏 → 偏好设置中配置。\n", stderr)
+            AppLog.error("未设置 API Key，回退到谷歌翻译。可在菜单栏 → 偏好设置中配置。")
             setenv("TRANSLATOR_BACKEND", "google", 1)
         }
     }

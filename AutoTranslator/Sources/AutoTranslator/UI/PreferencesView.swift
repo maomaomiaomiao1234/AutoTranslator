@@ -51,40 +51,40 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: AppUI.Space.l) {
             header
             summaryPanel
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: AppUI.Space.l) {
                     engineSection
                     languageSection
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, AppUI.Space.xxs)
             }
             .frame(maxHeight: .infinity)
             footer
         }
-        .padding(.top, 24)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 20)
+        .padding(.top, AppUI.Space.xxl)
+        .padding(.horizontal, AppUI.Space.xxl)
+        .padding(.bottom, AppUI.Space.xl)
         .frame(width: 640, height: 620)
         .background(AppUI.panelBottom)
     }
 
     private var header: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: AppUI.Space.l) {
             SymbolBadge(
                 symbol: "slider.horizontal.3",
                 tint: AppUI.accent,
                 background: AppUI.activeToolbar,
                 size: 44
             )
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                 Text("偏好配置")
-                    .font(.system(size: 25, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.display, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
                 Text("管理划词后的翻译行为、默认语言和浮窗外观。")
-                    .font(.system(size: 13))
+                    .font(.system(size: AppUI.FontSize.base))
                     .foregroundStyle(AppUI.textSecondary)
             }
             Spacer()
@@ -92,12 +92,12 @@ struct PreferencesView: View {
     }
 
     private var summaryPanel: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: AppUI.Space.m) {
             SummaryItem(icon: "bolt.horizontal", title: "引擎", value: backend == "google" ? "Google" : "大模型")
             SummaryItem(icon: "arrow.left.arrow.right", title: "语言", value: "\(Languages.name(for: sourceLang)) → \(Languages.name(for: targetLang))")
             SummaryItem(icon: "circle.lefthalf.filled", title: "主题", value: theme.displayName)
         }
-        .padding(16)
+        .padding(AppUI.Space.l)
         .appSurface(shadow: true)
     }
 
@@ -116,8 +116,8 @@ struct PreferencesView: View {
             SettingRow(icon: "key", title: "API Key", detail: "仅大模型后端需要；留空时会回退到 Google。") {
                 SecureField("sk-... (DeepSeek / DashScope)", text: $apiKey)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12, design: .monospaced))
-                    .padding(.horizontal, 10)
+                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
+                    .padding(.horizontal, AppUI.Space.s)
                     .frame(width: 292, height: 34)
                     .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
             }
@@ -125,8 +125,8 @@ struct PreferencesView: View {
             SettingRow(icon: "cube", title: "Model", detail: "留空使用默认模型。") {
                 TextField(LLMTranslator.defaultModel, text: $model)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12, design: .monospaced))
-                    .padding(.horizontal, 10)
+                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
+                    .padding(.horizontal, AppUI.Space.s)
                     .frame(width: 292, height: 34)
                     .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
             }
@@ -134,8 +134,8 @@ struct PreferencesView: View {
             SettingRow(icon: "link", title: "Base URL", detail: "填到 /v1 即可，代码会自动拼接接口路径。") {
                 TextField(LLMTranslator.defaultBaseURL, text: $baseURL)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12, design: .monospaced))
-                    .padding(.horizontal, 10)
+                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
+                    .padding(.horizontal, AppUI.Space.s)
                     .frame(width: 292, height: 34)
                     .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
             }
@@ -180,17 +180,17 @@ struct PreferencesView: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: AppUI.Space.m) {
             Text("配置文件：\(configPath)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: AppUI.FontSize.micro, design: .monospaced))
                 .foregroundStyle(AppUI.textMuted)
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 10) {
+            HStack(spacing: AppUI.Space.s) {
                 Text(statusText)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: AppUI.FontSize.small, weight: .medium))
                     .foregroundStyle(AppUI.teal)
                 Spacer()
                 Button("关闭") {
@@ -204,7 +204,7 @@ struct PreferencesView: View {
                 .tint(AppUI.accent)
             }
         }
-        .padding(16)
+        .padding(AppUI.Space.l)
         .appSurface(background: AppUI.surfaceSoft)
     }
 
@@ -242,14 +242,14 @@ private struct SummaryItem: View {
     let value: String
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AppUI.Space.s) {
             SymbolBadge(symbol: icon, tint: AppUI.accent, background: AppUI.activeToolbar, size: 30)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                 Text(title)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.mini, weight: .bold))
                     .foregroundStyle(AppUI.textMuted)
                 Text(value)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: AppUI.FontSize.base, weight: .semibold))
                     .foregroundStyle(AppUI.textPrimary)
                     .lineLimit(1)
             }
@@ -265,18 +265,18 @@ private struct SettingsSection<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: AppUI.Space.m) {
+            VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                 Text(title)
-                    .font(.system(size: 15.5, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.section, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.system(size: AppUI.FontSize.small))
                     .foregroundStyle(AppUI.textSecondary)
             }
             content
         }
-        .padding(18)
+        .padding(AppUI.Space.l)
         .appSurface(shadow: true)
     }
 }
@@ -288,15 +288,15 @@ private struct SettingRow<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(spacing: 16) {
-            HStack(spacing: 12) {
+        HStack(spacing: AppUI.Space.l) {
+            HStack(spacing: AppUI.Space.m) {
                 SymbolBadge(symbol: icon, tint: AppUI.textSecondary, background: AppUI.surfaceSoft, size: 30)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                     Text(title)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: AppUI.FontSize.base, weight: .bold))
                         .foregroundStyle(AppUI.textPrimary)
                     Text(detail)
-                        .font(.system(size: 11.5))
+                        .font(.system(size: AppUI.FontSize.small))
                         .foregroundStyle(AppUI.textSecondary)
                         .lineLimit(2)
                 }

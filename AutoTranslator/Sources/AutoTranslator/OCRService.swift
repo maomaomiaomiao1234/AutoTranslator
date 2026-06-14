@@ -11,13 +11,10 @@ final class OCRService {
                 inFileAt: imageURL,
                 sourceLanguage: sourceLanguage
             )
-            fputs(
-                "[AutoTranslator] OCR 子进程完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)\n",
-                stderr
-            )
+            AppLog.debug("OCR 子进程完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)")
             return text
         } catch {
-            fputs("[AutoTranslator] OCR 子进程失败，回退到主进程识别: \(error.localizedDescription)\n", stderr)
+            AppLog.error("OCR 子进程失败，回退到主进程识别: \(error.localizedDescription)")
             return try await recognizeTextInProcess(
                 inFileAt: imageURL,
                 imageWidth: imageWidth,
@@ -77,7 +74,7 @@ final class OCRService {
                     if !errorData.isEmpty,
                        let stderrText = String(data: errorData, encoding: .utf8),
                        !stderrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        fputs(stderrText, stderr)
+                        AppLog.debug(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
                     }
 
                     guard process.terminationStatus == 0 else {
@@ -105,7 +102,7 @@ final class OCRService {
                             inFileAt: imageURL,
                             sourceLanguage: sourceLanguage
                         )
-                        fputs("[AutoTranslator] OCR 主进程回退完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)\n", stderr)
+                        AppLog.debug("OCR 主进程回退完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)")
                         continuation.resume(returning: text)
                     } catch {
                         continuation.resume(throwing: error)
@@ -131,10 +128,7 @@ final class OCRService {
                                 )
                                 let text = result.text
                                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    fputs(
-                                        "[AutoTranslator] OCR 识别成功 source=file image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
-                                        stderr
-                                    )
+                                    AppLog.debug("OCR 识别成功 source=file image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)")
                                     continuation.resume(returning: text)
                                     return
                                 }
@@ -148,19 +142,13 @@ final class OCRService {
                             )
                             let text = result.text
                             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                fputs(
-                                    "[AutoTranslator] OCR 识别成功 source=cgImage image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
-                                    stderr
-                                )
+                                AppLog.debug("OCR 识别成功 source=cgImage image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)")
                                 continuation.resume(returning: text)
                                 return
                             }
                         }
 
-                        fputs(
-                            "[AutoTranslator] OCR 未识别到文字 image=\(image.width)x\(image.height) attempts=\(attemptSummaries.joined(separator: ","))\n",
-                            stderr
-                        )
+                        AppLog.debug("OCR 未识别到文字 image=\(image.width)x\(image.height) attempts=\(attemptSummaries.joined(separator: ","))")
                         continuation.resume(returning: "")
                     } catch {
                         continuation.resume(throwing: error)
@@ -186,18 +174,12 @@ final class OCRService {
             )
             let text = result.text
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                fputs(
-                    "[AutoTranslator] OCR 识别成功 source=file languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
-                    stderr
-                )
+                AppLog.debug("OCR 识别成功 source=file languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)")
                 return text
             }
         }
 
-        fputs(
-            "[AutoTranslator] OCR 未识别到文字 attempts=\(attemptSummaries.joined(separator: ","))\n",
-            stderr
-        )
+        AppLog.debug("OCR 未识别到文字 attempts=\(attemptSummaries.joined(separator: ","))")
         return ""
     }
 

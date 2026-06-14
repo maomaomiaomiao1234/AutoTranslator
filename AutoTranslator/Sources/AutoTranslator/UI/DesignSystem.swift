@@ -13,7 +13,6 @@ let OUTER_PADDING: CGFloat = 16
 let SECTION_GAP: CGFloat = 12
 let HEADER_HEIGHT: CGFloat = 44
 let TOOLBAR_BUTTON_SIZE: CGFloat = 32
-let BACKEND_BTN_WIDTH: CGFloat = 52
 let CARD_RADIUS: CGFloat = 8
 let PANEL_RADIUS: CGFloat = 20
 let CONTROL_RADIUS: CGFloat = 8
@@ -31,8 +30,8 @@ let DEST_TEXT_MIN_HEIGHT: CGFloat = 40
 let DEST_MAX_CARD_HEIGHT: CGFloat = 380
 let MAX_WINDOW_HEIGHT: CGFloat = 760
 let LANG_BAR_HEIGHT: CGFloat = 44
-let SOURCE_FONT_SIZE: CGFloat = 13.5
-let BODY_FONT_SIZE: CGFloat = 16
+let SOURCE_FONT_SIZE: CGFloat = 13   // = AppUI.FontSize.base；与 measureTextHeight 测量耦合，二者须一致
+let BODY_FONT_SIZE: CGFloat = 16     // = AppUI.FontSize.body；同上
 let STREAM_RENDER_INTERVAL: TimeInterval = 0.05
 let STREAM_RENDER_TIMER_TOLERANCE: TimeInterval = 0.015
 
