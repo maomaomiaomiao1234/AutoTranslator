@@ -17,8 +17,9 @@ enum ScreenCaptureError: LocalizedError {
 }
 
 struct ScreenCaptureResult {
-    let image: CGImage
-    let debugURL: URL?
+    let imageURL: URL
+    let width: Int
+    let height: Int
 }
 
 enum ScreenCaptureService {
@@ -61,21 +62,37 @@ enum ScreenCaptureService {
                     return
                 }
 
-                let debugURL = saveDebugCapture(from: fileURL)
+                guard let debugURL = saveDebugCapture(from: fileURL) else {
+                    continuation.resume(throwing: ScreenCaptureError.failed("无法保存截图图像"))
+                    return
+                }
 
-                guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
-                      let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                guard let properties = imageProperties(at: debugURL) else {
                     continuation.resume(throwing: ScreenCaptureError.failed("无法读取截图图像"))
                     return
                 }
 
                 fputs(
-                    "[AutoTranslator] 原始截图已保存 image=\(image.width)x\(image.height) debugImage=\(debugURL?.path ?? "none")\n",
+                    "[AutoTranslator] 原始截图已保存 image=\(properties.width)x\(properties.height) debugImage=\(debugURL.path)\n",
                     stderr
                 )
-                continuation.resume(returning: ScreenCaptureResult(image: image, debugURL: debugURL))
+                continuation.resume(returning: ScreenCaptureResult(
+                    imageURL: debugURL,
+                    width: properties.width,
+                    height: properties.height
+                ))
             }
         }
+    }
+
+    private nonisolated static func imageProperties(at url: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+            return nil
+        }
+        return (width, height)
     }
 
     private nonisolated static func saveDebugCapture(from sourceURL: URL) -> URL? {

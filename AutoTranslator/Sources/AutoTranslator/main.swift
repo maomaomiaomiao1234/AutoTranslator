@@ -1,5 +1,40 @@
 import Cocoa
 
+// MARK: - OCR Helper Mode
+
+func runOCRHelperIfRequested() -> Bool {
+    let arguments = CommandLine.arguments
+    guard arguments.contains("--autotranslator-ocr") else { return false }
+
+    func value(after flag: String) -> String? {
+        guard let index = arguments.firstIndex(of: flag),
+              arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
+
+    guard let imagePath = value(after: "--image") else {
+        fputs("[AutoTranslator] OCR 子进程缺少 --image 参数\n", stderr)
+        exit(2)
+    }
+
+    let sourceLanguage = value(after: "--source-language") ?? Languages.defaultSourceCode
+    do {
+        let text = try OCRService.recognizeTextForCommandLine(
+            inFileAt: URL(fileURLWithPath: imagePath),
+            sourceLanguage: sourceLanguage
+        )
+        if let data = text.data(using: .utf8) {
+            FileHandle.standardOutput.write(data)
+        }
+        return true
+    } catch {
+        fputs("[AutoTranslator] OCR 子进程失败: \(error.localizedDescription)\n", stderr)
+        exit(2)
+    }
+}
+
 // MARK: - Permission
 
 func ensureAccessibilityPermission() -> Bool {
@@ -98,6 +133,10 @@ extension AppDelegate: PreferencesWindowControllerDelegate {
 // MARK: - Entry Point
 
 func main() {
+    if runOCRHelperIfRequested() {
+        return
+    }
+
     // 加载持久化配置 → 同步到环境变量（不覆盖已有变量）
     ConfigStore.shared.applyToEnvironment()
 

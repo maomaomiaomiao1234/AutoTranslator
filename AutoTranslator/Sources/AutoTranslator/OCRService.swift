@@ -2,52 +2,90 @@ import Foundation
 import Vision
 
 final class OCRService {
-    func recognizeText(in image: CGImage, imageURL: URL?, sourceLanguage: String) async throws -> String {
+    func recognizeText(inFileAt imageURL: URL,
+                       imageWidth: Int,
+                       imageHeight: Int,
+                       sourceLanguage: String) async throws -> String {
+        do {
+            let text = try await recognizeTextOutOfProcess(
+                inFileAt: imageURL,
+                sourceLanguage: sourceLanguage
+            )
+            fputs(
+                "[AutoTranslator] OCR 子进程完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)\n",
+                stderr
+            )
+            return text
+        } catch {
+            fputs("[AutoTranslator] OCR 子进程失败，回退到主进程识别: \(error.localizedDescription)\n", stderr)
+            return try await recognizeTextInProcess(
+                inFileAt: imageURL,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight,
+                sourceLanguage: sourceLanguage
+            )
+        }
+    }
+
+    static func recognizeTextForCommandLine(inFileAt imageURL: URL,
+                                            sourceLanguage: String) throws -> String {
+        try recognizeTextSynchronously(inFileAt: imageURL, sourceLanguage: sourceLanguage)
+    }
+
+    private func recognizeTextOutOfProcess(inFileAt imageURL: URL,
+                                           sourceLanguage: String) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let attempts = Self.recognitionLanguageAttempts(for: sourceLanguage)
-                    var attemptSummaries: [String] = []
-
-                    if let imageURL {
-                        for languages in attempts {
-                            let result = try Self.recognizeText(inFileAt: imageURL, languages: languages)
-                            attemptSummaries.append(
-                                "file/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
-                            )
-                            let text = result.text
-                            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                fputs(
-                                    "[AutoTranslator] OCR 识别成功 source=file image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
-                                    stderr
-                                )
-                                continuation.resume(returning: text)
-                                return
-                            }
-                        }
+                    guard let executableURL = Bundle.main.executableURL else {
+                        throw ScreenCaptureError.failed("无法定位 OCR 子进程可执行文件")
                     }
 
-                    for languages in attempts {
-                        let result = try Self.recognizeText(in: image, languages: languages)
-                        attemptSummaries.append(
-                            "cgImage/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
-                        )
-                        let text = result.text
-                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            fputs(
-                                "[AutoTranslator] OCR 识别成功 source=cgImage image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
-                                stderr
-                            )
-                            continuation.resume(returning: text)
-                            return
-                        }
+                    let process = Process()
+                    process.executableURL = executableURL
+                    process.arguments = [
+                        "--autotranslator-ocr",
+                        "--image", imageURL.path,
+                        "--source-language", sourceLanguage,
+                    ]
+
+                    let stdoutPipe = Pipe()
+                    let stderrPipe = Pipe()
+                    process.standardOutput = stdoutPipe
+                    process.standardError = stderrPipe
+
+                    var outputData = Data()
+                    var errorData = Data()
+                    let readGroup = DispatchGroup()
+
+                    readGroup.enter()
+                    DispatchQueue.global(qos: .utility).async {
+                        outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                        readGroup.leave()
                     }
 
-                    fputs(
-                        "[AutoTranslator] OCR 未识别到文字 image=\(image.width)x\(image.height) attempts=\(attemptSummaries.joined(separator: ","))\n",
-                        stderr
-                    )
-                    continuation.resume(returning: "")
+                    readGroup.enter()
+                    DispatchQueue.global(qos: .utility).async {
+                        errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                        readGroup.leave()
+                    }
+
+                    try process.run()
+                    process.waitUntilExit()
+                    readGroup.wait()
+
+                    if !errorData.isEmpty,
+                       let stderrText = String(data: errorData, encoding: .utf8),
+                       !stderrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        fputs(stderrText, stderr)
+                    }
+
+                    guard process.terminationStatus == 0 else {
+                        let message = String(data: errorData, encoding: .utf8) ?? "OCR 子进程退出码 \(process.terminationStatus)"
+                        throw ScreenCaptureError.failed(String(message.prefix(200)))
+                    }
+
+                    continuation.resume(returning: String(data: outputData, encoding: .utf8) ?? "")
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -55,8 +93,112 @@ final class OCRService {
         }
     }
 
+    private func recognizeTextInProcess(inFileAt imageURL: URL,
+                                        imageWidth: Int,
+                                        imageHeight: Int,
+                                        sourceLanguage: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                autoreleasepool {
+                    do {
+                        let text = try Self.recognizeTextSynchronously(
+                            inFileAt: imageURL,
+                            sourceLanguage: sourceLanguage
+                        )
+                        fputs("[AutoTranslator] OCR 主进程回退完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)\n", stderr)
+                        continuation.resume(returning: text)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+    }
+
+    func recognizeText(in image: CGImage, imageURL: URL?, sourceLanguage: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                autoreleasepool {
+                    do {
+                        let attempts = Self.recognitionLanguageAttempts(for: sourceLanguage)
+                        var attemptSummaries: [String] = []
+
+                        if let imageURL {
+                            for languages in attempts {
+                                let result = try Self.recognizeText(inFileAt: imageURL, languages: languages)
+                                attemptSummaries.append(
+                                    "file/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
+                                )
+                                let text = result.text
+                                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    fputs(
+                                        "[AutoTranslator] OCR 识别成功 source=file image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
+                                        stderr
+                                    )
+                                    continuation.resume(returning: text)
+                                    return
+                                }
+                            }
+                        }
+
+                        for languages in attempts {
+                            let result = try Self.recognizeText(in: image, languages: languages)
+                            attemptSummaries.append(
+                                "cgImage/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
+                            )
+                            let text = result.text
+                            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                fputs(
+                                    "[AutoTranslator] OCR 识别成功 source=cgImage image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
+                                    stderr
+                                )
+                                continuation.resume(returning: text)
+                                return
+                            }
+                        }
+
+                        fputs(
+                            "[AutoTranslator] OCR 未识别到文字 image=\(image.width)x\(image.height) attempts=\(attemptSummaries.joined(separator: ","))\n",
+                            stderr
+                        )
+                        continuation.resume(returning: "")
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+    }
+
     func recognizeText(in image: CGImage, sourceLanguage: String) async throws -> String {
         try await recognizeText(in: image, imageURL: nil, sourceLanguage: sourceLanguage)
+    }
+
+    private nonisolated static func recognizeTextSynchronously(inFileAt imageURL: URL,
+                                                               sourceLanguage: String) throws -> String {
+        let attempts = recognitionLanguageAttempts(for: sourceLanguage)
+        var attemptSummaries: [String] = []
+
+        for languages in attempts {
+            let result = try recognizeText(inFileAt: imageURL, languages: languages)
+            attemptSummaries.append(
+                "file/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
+            )
+            let text = result.text
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                fputs(
+                    "[AutoTranslator] OCR 识别成功 source=file languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)\n",
+                    stderr
+                )
+                return text
+            }
+        }
+
+        fputs(
+            "[AutoTranslator] OCR 未识别到文字 attempts=\(attemptSummaries.joined(separator: ","))\n",
+            stderr
+        )
+        return ""
     }
 
     private nonisolated static func recognizeText(inFileAt url: URL,

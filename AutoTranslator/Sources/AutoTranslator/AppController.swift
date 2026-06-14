@@ -129,8 +129,9 @@ final class AppController: NSObject {
                 let capture = try await ScreenCaptureService.captureInteractively()
                 self.window.show(srcText: "正在识别截图文字...", destText: nil)
                 let recognizedText = try await self.ocrService.recognizeText(
-                    in: capture.image,
-                    imageURL: capture.debugURL,
+                    inFileAt: capture.imageURL,
+                    imageWidth: capture.width,
+                    imageHeight: capture.height,
                     sourceLanguage: self.srcLang
                 )
                 let text = recognizedText.trimmingCharacters(in: .whitespacesAndNewlines)
