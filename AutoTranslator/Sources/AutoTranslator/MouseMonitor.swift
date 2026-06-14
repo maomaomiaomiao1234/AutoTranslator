@@ -24,6 +24,8 @@ final class MouseMonitor {
     }
 
     func start() {
+        guard eventTap == nil else { return }
+
         let mask: CGEventMask =
             (1 << CGEventType.leftMouseDown.rawValue) |
             (1 << CGEventType.leftMouseDragged.rawValue) |
@@ -58,6 +60,8 @@ final class MouseMonitor {
     }
 
     func stop() {
+        pendingSelectionWorkItem?.cancel()
+        pendingSelectionWorkItem = nil
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }

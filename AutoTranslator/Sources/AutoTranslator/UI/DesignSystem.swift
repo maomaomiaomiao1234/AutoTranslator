@@ -33,6 +33,8 @@ let MAX_WINDOW_HEIGHT: CGFloat = 760
 let LANG_BAR_HEIGHT: CGFloat = 44
 let SOURCE_FONT_SIZE: CGFloat = 13.5
 let BODY_FONT_SIZE: CGFloat = 16
+let STREAM_RENDER_INTERVAL: TimeInterval = 0.05
+let STREAM_RENDER_TIMER_TOLERANCE: TimeInterval = 0.015
 
 // MARK: - Theme Detection
 

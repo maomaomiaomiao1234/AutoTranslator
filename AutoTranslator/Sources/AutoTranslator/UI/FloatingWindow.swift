@@ -246,7 +246,6 @@ final class FloatingWindow: NSObject {
 
         wireViewModel()
         setupMenu()
-        setupKeyMonitor()
 
         NotificationCenter.default.addObserver(self, selector: #selector(windowDidMove),
                                                name: NSWindow.didMoveNotification,
@@ -272,9 +271,8 @@ final class FloatingWindow: NSObject {
     deinit {
         stopStream()
         NotificationCenter.default.removeObserver(self)
-        if let m = localKeyMonitor { NSEvent.removeMonitor(m) }
-        if let m = globalKeyMonitor { NSEvent.removeMonitor(m) }
-        if let m = globalClickMonitor { NSEvent.removeMonitor(m) }
+        removeKeyMonitors()
+        removeGlobalClickMonitor()
         pendingSinkWorkItem?.cancel()
     }
 
@@ -294,7 +292,7 @@ final class FloatingWindow: NSObject {
     }
 
     private func installGlobalClickMonitorIfNeeded() {
-        guard globalClickMonitor == nil else { return }
+        guard globalClickMonitor == nil, !isPinned else { return }
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
@@ -309,6 +307,15 @@ final class FloatingWindow: NSObject {
         }
     }
 
+    private func removeGlobalClickMonitor() {
+        if let monitor = globalClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalClickMonitor = nil
+        }
+        pendingSinkWorkItem?.cancel()
+        pendingSinkWorkItem = nil
+    }
+
     @objc private func windowDidBecomeKey() {
         pendingSinkWorkItem?.cancel()
         pendingSinkWorkItem = nil
@@ -319,6 +326,7 @@ final class FloatingWindow: NSObject {
     // MARK: - Public API
 
     func setBackendLabel(_ backend: String) {
+        guard self.backend != backend || viewModel.backend != backend else { return }
         self.backend = backend
         viewModel.backend = backend
     }
@@ -412,21 +420,32 @@ final class FloatingWindow: NSObject {
             }
         }
 
+        installKeyMonitorsIfNeeded()
         installGlobalClickMonitorIfNeeded()
     }
 
     // MARK: - Stream
 
+    func streamAppend(_ token: String) {
+        guard !token.isEmpty else { return }
+        if streamTimer == nil { startStream() }
+        streamBuffer += token
+        streamBufferCount += token.count
+    }
+
     func streamFeed(_ text: String) {
         if streamTimer == nil { startStream() }
+        guard streamBuffer != text else { return }
         streamBuffer = text
         streamBufferCount = text.count
     }
 
     func streamFinish(_ finalText: String) {
         streamFinal = finalText
-        streamBuffer = finalText
-        streamBufferCount = finalText.count
+        if streamBuffer != finalText {
+            streamBuffer = finalText
+            streamBufferCount = finalText.count
+        }
         if streamPos >= streamBufferCount { finishStream() }
     }
 
@@ -439,9 +458,11 @@ final class FloatingWindow: NSObject {
         currentDestText = ""
         setDestText("正在翻译...")
         setTranslationState(.loading)
-        streamTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: STREAM_RENDER_INTERVAL, repeats: true) { [weak self] _ in
             self?.streamTick()
         }
+        timer.tolerance = STREAM_RENDER_TIMER_TOLERANCE
+        streamTimer = timer
     }
 
     private func streamTick() {
@@ -514,6 +535,8 @@ final class FloatingWindow: NSObject {
         } completionHandler: {
             self.window.orderOut(nil)
             self.window.alphaValue = 1
+            self.removeGlobalClickMonitor()
+            self.removeKeyMonitors()
         }
     }
 
@@ -521,10 +544,10 @@ final class FloatingWindow: NSObject {
         stopStream()
         setSourceResizeInteractionActive(false)
         if !isPinned { savedOrigin = window.frame.origin }
-        pendingSinkWorkItem?.cancel()
-        pendingSinkWorkItem = nil
         window.alphaValue = 1
         window.orderOut(nil)
+        removeGlobalClickMonitor()
+        removeKeyMonitors()
     }
 
     // MARK: - Actions
@@ -532,6 +555,11 @@ final class FloatingWindow: NSObject {
     private func handlePin() {
         isPinned.toggle()
         viewModel.isPinned = isPinned
+        if isPinned {
+            removeGlobalClickMonitor()
+        } else if window.isVisible {
+            installGlobalClickMonitorIfNeeded()
+        }
     }
 
     private func handleCopySource() {
@@ -785,7 +813,8 @@ final class FloatingWindow: NSObject {
         }
     }
 
-    private func setupKeyMonitor() {
+    private func installKeyMonitorsIfNeeded() {
+        guard localKeyMonitor == nil, globalKeyMonitor == nil else { return }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53 else { return event }
             if self.window.isVisible, NSPointInRect(NSEvent.mouseLocation, self.window.frame) {
@@ -799,6 +828,17 @@ final class FloatingWindow: NSObject {
             if self.window.isVisible, NSPointInRect(NSEvent.mouseLocation, self.window.frame) {
                 self.hide()
             }
+        }
+    }
+
+    private func removeKeyMonitors() {
+        if let monitor = localKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyMonitor = nil
+        }
+        if let monitor = globalKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalKeyMonitor = nil
         }
     }
 
@@ -829,11 +869,13 @@ final class FloatingWindow: NSObject {
     }
 
     private func setDestText(_ text: String) {
+        guard currentDestText != text || viewModel.destText != text else { return }
         currentDestText = text
         viewModel.destText = text
     }
 
     private func setTranslationState(_ state: TranslationState) {
+        guard currentState != state || viewModel.state != state else { return }
         currentState = state
         viewModel.state = state
     }

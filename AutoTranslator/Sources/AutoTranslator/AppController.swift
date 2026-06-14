@@ -259,16 +259,37 @@ final class AppController: NSObject {
             do {
                 if requestTranslator.supportsStreaming {
                     var buffer = ""
+                    var pendingDisplayChunk = ""
+                    var lastDisplayFlush = ProcessInfo.processInfo.systemUptime
                     let stream = requestTranslator.translateStream(text)
                     for try await token in stream {
                         if version != self.translateVersion { return }
+                        guard !token.isEmpty else { continue }
                         buffer += token
-                        let current = buffer
+                        pendingDisplayChunk += token
+
+                        let now = ProcessInfo.processInfo.systemUptime
+                        guard pendingDisplayChunk.count >= 12 || now - lastDisplayFlush >= 0.05 else {
+                            continue
+                        }
+
+                        let chunk = pendingDisplayChunk
+                        pendingDisplayChunk = ""
+                        lastDisplayFlush = now
+
                         if version == self.translateVersion {
                             await MainActor.run { [weak self] in
                                 if version == self?.translateVersion {
-                                    self?.window.streamFeed(current)
+                                    self?.window.streamAppend(chunk)
                                 }
+                            }
+                        }
+                    }
+                    if !pendingDisplayChunk.isEmpty, version == self.translateVersion {
+                        let chunk = pendingDisplayChunk
+                        await MainActor.run { [weak self] in
+                            if version == self?.translateVersion {
+                                self?.window.streamAppend(chunk)
                             }
                         }
                     }
