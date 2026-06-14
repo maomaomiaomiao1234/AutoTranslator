@@ -398,7 +398,7 @@ struct FloatingWindowView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(minHeight: 64, maxHeight: .infinity)
+            .frame(minHeight: DEST_TEXT_MIN_HEIGHT, maxHeight: .infinity)
 
             HStack(spacing: 8) {
                 Button { model.onCopyDest?() } label: {

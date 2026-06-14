@@ -190,7 +190,6 @@ final class FloatingWindow: NSObject {
     private var backend = "google"
     private var isPinned = false
     private var savedOrigin: NSPoint?
-    private var savedHeight: CGFloat?
     private var suppressAutoPin = false
     private var activeResizeEdges: ResizeEdges = []
     private var hasManualHeight = false
@@ -347,6 +346,11 @@ final class FloatingWindow: NSObject {
         pendingSinkWorkItem = nil
         stopStream()
         let wasVisible = window.isVisible
+        let isNewSourceText = srcText != currentSourceText
+
+        if isNewSourceText, !isSourceResizeInteractionActive {
+            sourceCardHeightOverride = nil
+        }
 
         currentSourceText = srcText
         currentDestText = destText ?? ""
@@ -364,10 +368,6 @@ final class FloatingWindow: NSObject {
         let targetHeight: CGFloat
         if usesManualHeightForLayout {
             targetHeight = currentHeight
-        } else if wasVisible {
-            targetHeight = max(currentHeight, desiredAutomaticWindowHeight(for: window.frame.width))
-        } else if let restored = savedHeight {
-            targetHeight = max(clampedWindowHeight(restored), desiredAutomaticWindowHeight(for: window.frame.width))
         } else {
             targetHeight = desiredAutomaticWindowHeight(for: window.frame.width)
         }
@@ -489,7 +489,7 @@ final class FloatingWindow: NSObject {
         let frame = window.frame
         let desiredHeight = usesManualHeightForLayout
             ? clampedWindowHeight(frame.height)
-            : max(clampedWindowHeight(frame.height), desiredAutomaticWindowHeight(for: frame.width))
+            : desiredAutomaticWindowHeight(for: frame.width)
         layoutWindow(forcedHeight: desiredHeight)
 
         guard window.isVisible else { return }
@@ -507,7 +507,6 @@ final class FloatingWindow: NSObject {
         stopStream()
         setSourceResizeInteractionActive(false)
         if !isPinned { savedOrigin = window.frame.origin }
-        savedHeight = window.frame.height
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
@@ -522,7 +521,6 @@ final class FloatingWindow: NSObject {
         stopStream()
         setSourceResizeInteractionActive(false)
         if !isPinned { savedOrigin = window.frame.origin }
-        savedHeight = window.frame.height
         pendingSinkWorkItem?.cancel()
         pendingSinkWorkItem = nil
         window.alphaValue = 1
@@ -646,7 +644,7 @@ final class FloatingWindow: NSObject {
         let cardInnerWidth = textMeasureWidth(for: width)
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
         let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
-                                               fontSize: BODY_FONT_SIZE, minimum: 64)
+                                               fontSize: BODY_FONT_SIZE, minimum: DEST_TEXT_MIN_HEIGHT)
 
         let overhead = windowChromeHeight
         let baseDestCardHeight = max(DEST_CARD_MIN_HEIGHT, WINDOW_MIN_HEIGHT - overhead - sourceCardHeight)
