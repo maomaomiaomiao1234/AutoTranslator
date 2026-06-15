@@ -46,6 +46,8 @@ final class AppController: NSObject {
     private var selectionTask: Task<Void, Never>?
     private var screenshotTask: Task<Void, Never>?
     private var speechTask: Task<Void, Never>?
+    private var speechStatusResetTask: Task<Void, Never>?
+    private var speechGeneration = 0
 
     private(set) var isMonitoringPaused = false
     private(set) var currentTheme: Theme = .default
@@ -548,19 +550,31 @@ final class AppController: NSObject {
         let input = Self.pronunciationInput(from: text)
         guard !input.isEmpty else { return }
 
+        speechGeneration += 1
+        let generation = speechGeneration
+        speechStatusResetTask?.cancel()
         speechTask?.cancel()
+        window.setSpeechState(.preparing)
         speechTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try await speechService.speak(input, languageHint: srcLang)
+                guard !Task.isCancelled, self.speechGeneration == generation else { return }
+                self.window.setSpeechState(.playing)
+                self.scheduleSpeechStatusReset(for: generation, after: Self.estimatedPlaybackStatusDuration(for: input))
             } catch is CancellationError {
+                guard self.speechGeneration == generation else { return }
+                self.window.setSpeechState(.idle)
                 return
             } catch {
+                guard self.speechGeneration == generation else { return }
                 let message = Self.userFacingErrorMessage(
                     from: error,
                     fallback: "发音生成失败，请检查 TTS 配置",
                     maxLength: 80
                 )
+                self.window.setSpeechState(.failed)
+                self.scheduleSpeechStatusReset(for: generation, after: 2.2)
                 if isAutomatic {
                     AppLog.error("自动发音失败: \(message)")
                 } else {
@@ -568,6 +582,22 @@ final class AppController: NSObject {
                 }
             }
         }
+    }
+
+    private func scheduleSpeechStatusReset(for generation: Int, after delay: TimeInterval) {
+        speechStatusResetTask?.cancel()
+        speechStatusResetTask = Task { @MainActor [weak self] in
+            let nanoseconds = UInt64(delay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled,
+                  let self,
+                  self.speechGeneration == generation else { return }
+            self.window.setSpeechState(.idle)
+        }
+    }
+
+    private static func estimatedPlaybackStatusDuration(for text: String) -> TimeInterval {
+        min(8.0, max(1.6, Double(text.count) * 0.16))
     }
 
     private static func pronunciationInput(from text: String) -> String {

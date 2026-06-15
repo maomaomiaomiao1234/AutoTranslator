@@ -30,6 +30,7 @@ final class FloatingWindowViewModel: ObservableObject {
     @Published var selectedTarget = "中文简体"
     @Published var appearanceVersion = 0
     @Published var sourceCardHeight: CGFloat = SOURCE_CARD_MIN_HEIGHT
+    @Published var speechState: SpeechPlaybackState = .idle
 
     var onPin: (() -> Void)?
     var onCopySource: (() -> Void)?
@@ -75,6 +76,7 @@ final class FloatingWindowViewModel: ObservableObject {
 
     var canCopySource: Bool { !sourceText.isEmpty }
     var canSpeakSource: Bool { !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var isSpeechBusy: Bool { speechState == .preparing }
     var canCopyDest: Bool { !destText.isEmpty }
     var canRefresh: Bool { !sourceText.isEmpty }
     var canSwap: Bool { selectedSource != "自动检测" }
@@ -242,6 +244,11 @@ struct FloatingWindowView: View {
 
                 Chip(text: model.sourceMeta)
 
+                if model.speechState.isVisible {
+                    SpeechStatusChip(state: model.speechState)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                }
+
                 Spacer(minLength: 8)
 
                 Chip(
@@ -259,18 +266,19 @@ struct FloatingWindowView: View {
                 .help("复制原文")
 
                 Button { model.onSpeakSource?() } label: {
-                    Image(systemName: "speaker.wave.2")
+                    speechButtonLabel
                 }
                 .buttonStyle(IconButtonStyle(
-                    tint: AppUI.accent,
-                    background: AppUI.activeToolbar,
-                    border: AppUI.activeToolbarBorder,
+                    tint: speechButtonTint,
+                    background: speechButtonBackground,
+                    border: speechButtonBorder,
                     size: 24
                 ))
-                .disabled(!model.canSpeakSource)
+                .disabled(!model.canSpeakSource || model.isSpeechBusy)
                 .opacity(model.canSpeakSource ? 1 : 0.36)
-                .help("播放发音")
+                .help(model.speechState.helpText)
             }
+            .animation(.easeInOut(duration: 0.16), value: model.speechState)
 
             ScrollView {
                 Text(model.sourceText.isEmpty ? " " : model.sourceText)
@@ -289,6 +297,52 @@ struct FloatingWindowView: View {
         .padding(.vertical, AppUI.Space.m)
         .frame(height: model.sourceCardHeight, alignment: .top)
         .appSurface(background: Color(nsColor: SOURCE_CARD_BG), shadow: true)
+    }
+
+    @ViewBuilder
+    private var speechButtonLabel: some View {
+        if model.speechState == .preparing {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.55)
+                .frame(width: 14, height: 14)
+        } else {
+            Image(systemName: model.speechState.buttonSymbol)
+                .symbolRenderingMode(.hierarchical)
+        }
+    }
+
+    private var speechButtonTint: Color {
+        switch model.speechState {
+        case .idle:
+            return AppUI.accent
+        case .preparing, .playing:
+            return AppUI.teal
+        case .failed:
+            return AppUI.accent
+        }
+    }
+
+    private var speechButtonBackground: Color {
+        switch model.speechState {
+        case .idle:
+            return AppUI.activeToolbar
+        case .preparing, .playing:
+            return AppUI.chipTeal
+        case .failed:
+            return AppUI.chipWarm
+        }
+    }
+
+    private var speechButtonBorder: Color {
+        switch model.speechState {
+        case .idle:
+            return AppUI.activeToolbarBorder
+        case .preparing, .playing:
+            return AppUI.teal.opacity(isDarkMode ? 0.34 : 0.26)
+        case .failed:
+            return AppUI.activeToolbarBorder
+        }
     }
 
     private var sourceTextAreaHeight: CGFloat {
@@ -523,6 +577,108 @@ struct FloatingWindowView: View {
 
 enum TranslationState {
     case idle, loading, done, error
+}
+
+enum SpeechPlaybackState: Equatable {
+    case idle
+    case preparing
+    case playing
+    case failed
+
+    var isVisible: Bool {
+        self != .idle
+    }
+
+    var label: String {
+        switch self {
+        case .idle:
+            return ""
+        case .preparing:
+            return "生成中"
+        case .playing:
+            return "播放中"
+        case .failed:
+            return "失败"
+        }
+    }
+
+    var buttonSymbol: String {
+        switch self {
+        case .idle:
+            return "speaker.wave.2"
+        case .preparing:
+            return "speaker.wave.2"
+        case .playing:
+            return "speaker.wave.3.fill"
+        case .failed:
+            return "exclamationmark"
+        }
+    }
+
+    var helpText: String {
+        switch self {
+        case .idle:
+            return "播放发音"
+        case .preparing:
+            return "正在生成语音"
+        case .playing:
+            return "正在播放"
+        case .failed:
+            return "发音失败"
+        }
+    }
+}
+
+private struct SpeechStatusChip: View {
+    let state: SpeechPlaybackState
+
+    var body: some View {
+        HStack(spacing: AppUI.Space.xs) {
+            if state == .preparing {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.45)
+                    .frame(width: 10, height: 10)
+                    .tint(foreground)
+            } else {
+                Image(systemName: state.buttonSymbol)
+                    .font(.system(size: 9, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+            }
+
+            Text(state.label)
+                .font(.system(size: AppUI.FontSize.micro, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, AppUI.Space.s)
+        .frame(height: 20)
+        .background(background)
+        .clipShape(Capsule())
+        .accessibilityLabel(state.helpText)
+    }
+
+    private var foreground: Color {
+        switch state {
+        case .idle:
+            return AppUI.textMuted
+        case .preparing, .playing:
+            return AppUI.teal
+        case .failed:
+            return AppUI.accent
+        }
+    }
+
+    private var background: Color {
+        switch state {
+        case .idle:
+            return AppUI.surfaceSoft
+        case .preparing, .playing:
+            return AppUI.chipTeal
+        case .failed:
+            return AppUI.chipWarm
+        }
+    }
 }
 
 private struct DictionaryDefinitionView: View {

@@ -371,6 +371,9 @@ final class FloatingWindow: NSObject {
         currentPresentation = presentation
         viewModel.sourceText = srcText
         viewModel.presentation = presentation
+        if isNewSourceText {
+            setSpeechState(.idle)
+        }
 
         if let destText {
             setDestText(destText)
@@ -443,6 +446,11 @@ final class FloatingWindow: NSObject {
         viewModel.errorStatusText = status
         show(srcText: srcText, destText: message, presentation: presentation)
         setTranslationState(.error)
+    }
+
+    func setSpeechState(_ state: SpeechPlaybackState) {
+        guard viewModel.speechState != state else { return }
+        viewModel.speechState = state
     }
 
     // MARK: - Stream
