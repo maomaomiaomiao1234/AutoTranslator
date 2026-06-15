@@ -6,6 +6,7 @@ final class OCRService {
                        imageWidth: Int,
                        imageHeight: Int,
                        sourceLanguage: String) async throws -> String {
+        var subprocessFailure: Error?
         do {
             let text = try await recognizeTextOutOfProcess(
                 inFileAt: imageURL,
@@ -14,13 +15,23 @@ final class OCRService {
             AppLog.debug("OCR 子进程完成 image=\(imageWidth)x\(imageHeight) chars=\(text.count)")
             return text
         } catch {
-            AppLog.error("OCR 子进程失败，回退到主进程识别: \(error.localizedDescription)")
+            subprocessFailure = error
+            AppLog.debug("OCR 子进程失败，尝试主进程识别: \(Self.logMessage(from: error.localizedDescription))")
+        }
+
+        do {
             return try await recognizeTextInProcess(
                 inFileAt: imageURL,
                 imageWidth: imageWidth,
                 imageHeight: imageHeight,
                 sourceLanguage: sourceLanguage
             )
+        } catch {
+            let subprocessMessage = subprocessFailure
+                .map { Self.logMessage(from: $0.localizedDescription) }
+                ?? "未知"
+            AppLog.error("OCR 识别失败: 子进程=\(subprocessMessage); 主进程=\(error.localizedDescription)")
+            throw error
         }
     }
 
@@ -71,18 +82,24 @@ final class OCRService {
                     process.waitUntilExit()
                     readGroup.wait()
 
-                    if !errorData.isEmpty,
-                       let stderrText = String(data: errorData, encoding: .utf8),
-                       !stderrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        AppLog.debug(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
+                    let stderrMessage = Self.logMessage(from: errorData)
+                    if !stderrMessage.isEmpty {
+                        AppLog.debug("OCR 子进程 stderr: \(stderrMessage)")
                     }
 
                     guard process.terminationStatus == 0 else {
-                        let message = String(data: errorData, encoding: .utf8) ?? "OCR 子进程退出码 \(process.terminationStatus)"
+                        let message = stderrMessage.isEmpty
+                            ? "OCR 子进程退出码 \(process.terminationStatus)"
+                            : "OCR 子进程退出码 \(process.terminationStatus): \(stderrMessage)"
                         throw ScreenCaptureError.failed(String(message.prefix(200)))
                     }
 
-                    continuation.resume(returning: String(data: outputData, encoding: .utf8) ?? "")
+                    let rawOutput = String(data: outputData, encoding: .utf8) ?? ""
+                    let output = Self.sanitizedRecognizedText(rawOutput)
+                    if output != rawOutput {
+                        AppLog.debug("已清理 OCR stdout 中的系统框架日志 rawChars=\(rawOutput.count) cleanChars=\(output.count)")
+                    }
+                    continuation.resume(returning: output)
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -126,7 +143,7 @@ final class OCRService {
                                 attemptSummaries.append(
                                     "file/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
                                 )
-                                let text = result.text
+                                let text = Self.sanitizedRecognizedText(result.text)
                                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                     AppLog.debug("OCR 识别成功 source=file image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)")
                                     continuation.resume(returning: text)
@@ -140,7 +157,7 @@ final class OCRService {
                             attemptSummaries.append(
                                 "cgImage/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
                             )
-                            let text = result.text
+                            let text = Self.sanitizedRecognizedText(result.text)
                             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 AppLog.debug("OCR 识别成功 source=cgImage image=\(image.width)x\(image.height) languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)")
                                 continuation.resume(returning: text)
@@ -172,7 +189,7 @@ final class OCRService {
             attemptSummaries.append(
                 "file/\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")):\(result.observationCount)"
             )
-            let text = result.text
+            let text = sanitizedRecognizedText(result.text)
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AppLog.debug("OCR 识别成功 source=file languages=\(result.languages.isEmpty ? "default" : result.languages.joined(separator: "+")) observations=\(result.observationCount) chars=\(text.count)")
                 return text
@@ -285,5 +302,69 @@ final class OCRService {
         case "ru": return "ru-RU"
         default: return nil
         }
+    }
+
+    private nonisolated static func logMessage(from data: Data) -> String {
+        guard let text = String(data: data, encoding: .utf8) else { return "" }
+        return logMessage(from: text)
+    }
+
+    private nonisolated static func logMessage(from text: String) -> String {
+        text
+            .components(separatedBy: .newlines)
+            .map { line in
+                line
+                    .replacingOccurrences(of: "[AutoTranslator]", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: " | ")
+    }
+
+    private nonisolated static func sanitizedRecognizedText(_ text: String) -> String {
+        var cleaned = text.replacingOccurrences(of: "\u{00A0}", with: " ")
+
+        cleaned = replacingRegex(
+            #"Unable to find a valid E5 in provided path .*? @ GetE5PathFromCompositeBundle"#,
+            in: cleaned,
+            with: ""
+        )
+        cleaned = replacingRegex(
+            #"\[AutoTranslator\][^\r\n]*(\r?\n)?"#,
+            in: cleaned,
+            with: ""
+        )
+
+        let lines = cleaned
+            .components(separatedBy: .newlines)
+            .filter { line in
+                let lowered = line.lowercased()
+                return !lowered.contains("textrecognition.framework")
+                    && !lowered.contains("gete5pathfromcompositebundle")
+                    && !lowered.contains(".mlmodelc.bundle")
+            }
+
+        return lines
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func replacingRegex(_ pattern: String,
+                                                   in text: String,
+                                                   with replacement: String) -> String {
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.dotMatchesLineSeparators]
+        ) else {
+            return text
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: replacement
+        )
     }
 }

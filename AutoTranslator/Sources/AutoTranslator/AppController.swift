@@ -154,8 +154,12 @@ final class AppController: NSObject {
             } catch is CancellationError {
                 return
             } catch {
-                let errMsg = String(error.localizedDescription.prefix(80))
-                self.window.showError(srcText: "截图翻译失败", message: "错误: \(errMsg)", status: "截图失败")
+                let errMsg = Self.userFacingErrorMessage(
+                    from: error,
+                    fallback: "截图翻译失败，请重新框选更清晰的文字区域",
+                    maxLength: 80
+                )
+                self.window.showError(srcText: "截图翻译失败", message: errMsg, status: "截图失败")
                 NotificationManager.shared.post(title: "截图翻译失败", body: errMsg)
             }
         }
@@ -242,6 +246,37 @@ final class AppController: NSObject {
         retranslateLast()
     }
 
+    private static func userFacingErrorMessage(from error: Error,
+                                               fallback: String,
+                                               maxLength: Int) -> String {
+        let raw = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return fallback }
+
+        let cleaned = raw
+            .replacingOccurrences(of: "[AutoTranslator]", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let normalized = cleaned.lowercased()
+        let message: String
+        if normalized.contains("llm api http 401") || normalized.contains("llm api http 403") {
+            message = "大模型认证失败，请检查 API Key"
+        } else if normalized.contains("llm api http") {
+            message = "大模型服务返回错误，请检查 API Key、模型或网络"
+        } else if normalized.contains("google translate http") {
+            message = "Google 翻译服务返回错误，请稍后重试"
+        } else if normalized.contains("timed out")
+                    || normalized.contains("offline")
+                    || normalized.contains("network connection") {
+            message = "网络请求失败，请检查网络连接"
+        } else if normalized.contains("ocr 子进程") || normalized.contains("vision") {
+            message = "OCR 识别失败，请重新框选更清晰的文字区域"
+        } else {
+            message = cleaned
+        }
+
+        return String(message.prefix(maxLength))
+    }
+
     private func retranslateLast() {
         guard !lastText.isEmpty else { return }
         window.show(srcText: lastText, destText: nil)
@@ -325,10 +360,14 @@ final class AppController: NSObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 if version == self.translateVersion {
-                    let errMsg = String(error.localizedDescription.prefix(50))
+                    let errMsg = Self.userFacingErrorMessage(
+                        from: error,
+                        fallback: "翻译服务暂时不可用",
+                        maxLength: 50
+                    )
                     await MainActor.run { [weak self] in
                         if version == self?.translateVersion {
-                            self?.window.showError(srcText: text, message: "错误: \(errMsg)")
+                            self?.window.showError(srcText: text, message: errMsg)
                         }
                     }
                 }

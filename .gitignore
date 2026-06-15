@@ -5,3 +5,5 @@
 .swiftpm/
 *.xcodeproj/
 Package.resolved
+
+.dist/

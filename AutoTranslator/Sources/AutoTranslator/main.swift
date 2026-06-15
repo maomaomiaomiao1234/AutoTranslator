@@ -1,6 +1,25 @@
 import Cocoa
+import Darwin
 
 // MARK: - OCR Helper Mode
+
+func withStandardOutputRedirectedToStandardError<T>(_ work: () throws -> T) rethrows -> T {
+    let originalStdout = dup(STDOUT_FILENO)
+    if originalStdout >= 0 {
+        fflush(stdout)
+        _ = dup2(STDERR_FILENO, STDOUT_FILENO)
+    }
+
+    defer {
+        if originalStdout >= 0 {
+            fflush(stdout)
+            _ = dup2(originalStdout, STDOUT_FILENO)
+            close(originalStdout)
+        }
+    }
+
+    return try work()
+}
 
 func runOCRHelperIfRequested() -> Bool {
     let arguments = CommandLine.arguments
@@ -21,10 +40,12 @@ func runOCRHelperIfRequested() -> Bool {
 
     let sourceLanguage = value(after: "--source-language") ?? Languages.defaultSourceCode
     do {
-        let text = try OCRService.recognizeTextForCommandLine(
-            inFileAt: URL(fileURLWithPath: imagePath),
-            sourceLanguage: sourceLanguage
-        )
+        let text = try withStandardOutputRedirectedToStandardError {
+            try OCRService.recognizeTextForCommandLine(
+                inFileAt: URL(fileURLWithPath: imagePath),
+                sourceLanguage: sourceLanguage
+            )
+        }
         if let data = text.data(using: .utf8) {
             FileHandle.standardOutput.write(data)
         }
