@@ -49,6 +49,10 @@ final class AppController: NSObject {
     private var speechStatusResetTask: Task<Void, Never>?
     private var speechGeneration = 0
 
+    /// 翻译/词典结果缓存：避免重复划选同一文本时重复请求后端。
+    /// key 含后端与源/目标语言，故切换它们天然命中不同条目；模型/BaseURL 变更时由 reloadFromConfig 清空。
+    private let translationCache = LRUCache<String, String>(capacity: 200)
+
     private(set) var isMonitoringPaused = false
     private(set) var currentTheme: Theme = .default
 
@@ -225,6 +229,7 @@ final class AppController: NSObject {
         let newBackend = ConfigStore.shared.get(.backend) ?? translatorBackend
         translateTask?.cancel()
         speechTask?.cancel()
+        translationCache.removeAll()
         translatorBackend = newBackend
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
@@ -380,6 +385,19 @@ final class AppController: NSObject {
         return .translation
     }
 
+    private static func translationCacheKey(backend: String,
+                                            src: String,
+                                            dest: String,
+                                            mode: TranslationMode,
+                                            text: String) -> String {
+        let kind: String
+        switch mode {
+        case .translation: kind = "t"
+        case .dictionary: kind = "d"
+        }
+        return "\(backend)|\(src)|\(dest)|\(kind)|\(text)"
+    }
+
     private static func dictionaryWord(from text: String) -> String? {
         let boundaryPunctuation = CharacterSet(charactersIn: "\"“”‘’()[]{}<>.,;:!?，。？！；：")
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines.union(boundaryPunctuation))
@@ -409,6 +427,14 @@ final class AppController: NSObject {
             speechService.stop()
         }
 
+        let cacheKey = Self.translationCacheKey(
+            backend: translatorBackend,
+            src: srcLang,
+            dest: destLang,
+            mode: mode,
+            text: text
+        )
+
         translateTask = Task { [weak self, mode] in
             guard let self = self else { return }
 
@@ -421,6 +447,20 @@ final class AppController: NSObject {
                                 srcText: text,
                                 destText: definition,
                                 presentation: .systemDictionary
+                            )
+                            self?.playPronunciationIfNeeded(for: text, mode: mode)
+                        }
+                    }
+                    return
+                }
+
+                if let cached = self.translationCache.value(forKey: cacheKey) {
+                    await MainActor.run { [weak self] in
+                        if version == self?.translateVersion {
+                            self?.window.show(
+                                srcText: text,
+                                destText: cached,
+                                presentation: mode.floatingPresentation
                             )
                             self?.playPronunciationIfNeeded(for: text, mode: mode)
                         }
@@ -472,6 +512,9 @@ final class AppController: NSObject {
                         }
                     }
                     let finalBuffer = buffer
+                    if !finalBuffer.isEmpty {
+                        self.translationCache.setValue(finalBuffer, forKey: cacheKey)
+                    }
                     if version == self.translateVersion {
                         await MainActor.run { [weak self] in
                             if version == self?.translateVersion {
@@ -496,6 +539,9 @@ final class AppController: NSObject {
                         result = try await requestTranslator.translate(text)
                     case .dictionary(let word):
                         result = try await requestTranslator.define(word)
+                    }
+                    if !result.isEmpty {
+                        self.translationCache.setValue(result, forKey: cacheKey)
                     }
                     if version == self.translateVersion {
                         await MainActor.run { [weak self] in

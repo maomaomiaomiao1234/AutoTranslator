@@ -21,17 +21,35 @@ final class SpeechService {
     private var player: AVAudioPlayer?
     private var streamingPlayer: StreamingAudioPlayer?
 
+    /// 缓存最近合成的音频：避免对同一文本（如词典自动朗读高频词）重复请求 TTS。
+    /// 存储实时播放时入队的原始音频块，命中时按序重放，行为与现网一致。
+    private var capturedChunks: [Data] = []
+    private let audioCache = LRUCache<String, [Data]>(capacity: 32)
+    nonisolated private static let maxCacheableAudioBytes = 8 * 1024 * 1024
+
     func speak(_ text: String, languageHint _: String) async throws {
         let input = Self.normalizedInput(text)
         guard !input.isEmpty else { return }
 
         stop()
-        if Self.resolvedAudioFormat() == "wav" {
+        let format = Self.resolvedAudioFormat()
+        let cacheKey = Self.audioCacheKey(input: input, format: format)
+
+        if format == "wav" {
             let nextStreamingPlayer = StreamingAudioPlayer()
             streamingPlayer = nextStreamingPlayer
             do {
-                try await streamSpeechAudio(input: input, player: nextStreamingPlayer)
-                try Task.checkCancellation()
+                if let cached = audioCache.value(forKey: cacheKey) {
+                    for chunk in cached {
+                        try Task.checkCancellation()
+                        try nextStreamingPlayer.enqueue(chunk)
+                    }
+                } else {
+                    capturedChunks = []
+                    try await streamSpeechAudio(input: input, player: nextStreamingPlayer)
+                    try Task.checkCancellation()
+                    storeCapturedAudio(forKey: cacheKey)
+                }
             } catch {
                 stop()
                 throw error
@@ -40,7 +58,17 @@ final class SpeechService {
         }
 
         do {
-            let data = try await Self.requestSpeechAudio(input: input)
+            let data: Data
+            if let cached = audioCache.value(forKey: cacheKey)?.first {
+                data = cached
+            } else {
+                let fetched = try await Self.requestSpeechAudio(input: input)
+                try Task.checkCancellation()
+                if fetched.count <= Self.maxCacheableAudioBytes {
+                    audioCache.setValue([fetched], forKey: cacheKey)
+                }
+                data = fetched
+            }
             try Task.checkCancellation()
 
             let nextPlayer = try AVAudioPlayer(data: data)
@@ -54,10 +82,31 @@ final class SpeechService {
     }
 
     func stop() {
+        capturedChunks = []
         streamingPlayer?.stop()
         streamingPlayer = nil
         player?.stop()
         player = nil
+    }
+
+    /// 入队播放并同时记录音频块，供合成成功后写入缓存。
+    private func enqueueAndCapture(_ data: Data, to player: StreamingAudioPlayer) throws {
+        capturedChunks.append(data)
+        try player.enqueue(data)
+    }
+
+    /// 将本次合成捕获的音频块写入缓存（受总大小上限约束）。
+    private func storeCapturedAudio(forKey key: String) {
+        let chunks = capturedChunks
+        capturedChunks = []
+        guard !chunks.isEmpty else { return }
+        let total = chunks.reduce(0) { $0 + $1.count }
+        guard total > 0, total <= Self.maxCacheableAudioBytes else { return }
+        audioCache.setValue(chunks, forKey: key)
+    }
+
+    nonisolated private static func audioCacheKey(input: String, format: String) -> String {
+        "\(resolvedSpeechModel())|\(resolvedSpeechVoice())|\(format)|\(input)"
     }
 
     private func streamSpeechAudio(input: String, player: StreamingAudioPlayer) async throws {
@@ -86,7 +135,7 @@ final class SpeechService {
             } else {
                 try await Self.extractAudioData(from: data)
             }
-            try player.enqueue(audio)
+            try enqueueAndCapture(audio, to: player)
             return
         }
 
@@ -124,14 +173,14 @@ final class SpeechService {
         guard let jsonData = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: jsonData) else {
             if let audio = Self.decodeBase64Data(payload), audio.count > 32 {
-                try player.enqueue(audio)
+                try enqueueAndCapture(audio, to: player)
             }
             return
         }
 
         if let audio = Self.findBase64AudioChunk(in: json) {
             AppLog.debug("TTS 流式音频块 bytes=\(audio.count)")
-            try player.enqueue(audio)
+            try enqueueAndCapture(audio, to: player)
             return
         }
         if let message = Self.findErrorMessage(in: json),
