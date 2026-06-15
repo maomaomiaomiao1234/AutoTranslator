@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureMainMenu()
         controller.start()
         statusBar.refresh()
         NotificationManager.shared.requestAuthorization()
@@ -96,6 +97,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         controller.stop()
+    }
+
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(
+            title: "隐藏 AutoTranslator",
+            action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h"
+        ))
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(
+            title: "退出 AutoTranslator",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        ))
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        addEditItem(to: editMenu, title: "撤销", action: "undo:", key: "z")
+        addEditItem(to: editMenu, title: "重做", action: "redo:", key: "Z", modifiers: [.command, .shift])
+        editMenu.addItem(.separator())
+        addEditItem(to: editMenu, title: "剪切", action: "cut:", key: "x")
+        addEditItem(to: editMenu, title: "拷贝", action: "copy:", key: "c")
+        addEditItem(to: editMenu, title: "粘贴", action: "paste:", key: "v")
+        addEditItem(to: editMenu, title: "粘贴并匹配样式", action: "pasteAsPlainText:", key: "V", modifiers: [.command, .shift])
+        editMenu.addItem(.separator())
+        addEditItem(to: editMenu, title: "全选", action: "selectAll:", key: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func addEditItem(to menu: NSMenu,
+                             title: String,
+                             action: String,
+                             key: String,
+                             modifiers: NSEvent.ModifierFlags = [.command]) {
+        let item = NSMenuItem(title: title, action: Selector(action), keyEquivalent: key)
+        item.target = nil
+        item.keyEquivalentModifierMask = modifiers
+        menu.addItem(item)
     }
 }
 
