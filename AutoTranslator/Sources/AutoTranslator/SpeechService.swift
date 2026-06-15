@@ -19,47 +19,129 @@ final class SpeechService {
     }()
 
     private var player: AVAudioPlayer?
+    private var streamingPlayer: StreamingAudioPlayer?
 
     func speak(_ text: String, languageHint _: String) async throws {
         let input = Self.normalizedInput(text)
         guard !input.isEmpty else { return }
 
         stop()
-        let data = try await Self.requestSpeechAudio(input: input)
-        try Task.checkCancellation()
+        if Self.resolvedAudioFormat() == "wav" {
+            let nextStreamingPlayer = StreamingAudioPlayer()
+            streamingPlayer = nextStreamingPlayer
+            do {
+                try await streamSpeechAudio(input: input, player: nextStreamingPlayer)
+                try Task.checkCancellation()
+            } catch {
+                stop()
+                throw error
+            }
+            return
+        }
 
-        let nextPlayer = try AVAudioPlayer(data: data)
-        nextPlayer.prepareToPlay()
-        nextPlayer.play()
-        player = nextPlayer
+        do {
+            let data = try await Self.requestSpeechAudio(input: input)
+            try Task.checkCancellation()
+
+            let nextPlayer = try AVAudioPlayer(data: data)
+            nextPlayer.prepareToPlay()
+            nextPlayer.play()
+            player = nextPlayer
+        } catch {
+            stop()
+            throw error
+        }
     }
 
     func stop() {
+        streamingPlayer?.stop()
+        streamingPlayer = nil
         player?.stop()
         player = nil
     }
 
+    private func streamSpeechAudio(input: String, player: StreamingAudioPlayer) async throws {
+        let request = try Self.speechRequest(input: input)
+        let (bytes, response) = try await Self.sharedSession.bytes(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            var bodyData = Data()
+            for try await byte in bytes {
+                bodyData.append(byte)
+                if bodyData.count >= 1024 { break }
+            }
+            let body = String(data: bodyData, encoding: .utf8) ?? ""
+            throw RuntimeError("TTS API HTTP \(http.statusCode): \(body.prefix(200))")
+        }
+
+        let contentType = (response as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "Content-Type")?
+            .lowercased() ?? ""
+        AppLog.debug("TTS 流式响应 Content-Type: \(contentType.isEmpty ? "<empty>" : contentType)")
+        guard contentType.contains("text/event-stream") else {
+            let data = try await Self.collect(bytes)
+            let audio = if contentType.contains("audio/") || Self.isLikelyAudio(data) {
+                data
+            } else if Self.looksLikeSSE(data) {
+                try Self.extractAudioDataFromSSE(data)
+            } else {
+                try await Self.extractAudioData(from: data)
+            }
+            try player.enqueue(audio)
+            return
+        }
+
+        var eventLines: [String] = []
+        var dataEventCount = 0
+        for try await rawLine in bytes.lines {
+            try Task.checkCancellation()
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty {
+                try processStreamingEvent(eventLines.joined(separator: "\n"), player: player)
+                eventLines.removeAll(keepingCapacity: true)
+            } else if line.hasPrefix("data:") {
+                let payload = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                dataEventCount += 1
+                if payload.hasPrefix("{") || payload == "[DONE]" {
+                    try processStreamingEvent(payload, player: player)
+                } else {
+                    eventLines.append(payload)
+                }
+            }
+        }
+        if !eventLines.isEmpty {
+            try processStreamingEvent(eventLines.joined(separator: "\n"), player: player)
+        }
+
+        guard player.hasStarted else {
+            throw RuntimeError("TTS SSE 未找到音频数据，data 事件数=\(dataEventCount)")
+        }
+    }
+
+    private func processStreamingEvent(_ event: String, player: StreamingAudioPlayer) throws {
+        let payload = event.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !payload.isEmpty, payload != "[DONE]" else { return }
+
+        guard let jsonData = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) else {
+            if let audio = Self.decodeBase64Data(payload), audio.count > 32 {
+                try player.enqueue(audio)
+            }
+            return
+        }
+
+        if let audio = Self.findBase64AudioChunk(in: json) {
+            AppLog.debug("TTS 流式音频块 bytes=\(audio.count)")
+            try player.enqueue(audio)
+            return
+        }
+        if let message = Self.findErrorMessage(in: json),
+           !Self.isNonFinalSynthesisEvent(json) {
+            throw RuntimeError("TTS API 返回错误: \(message)")
+        }
+    }
+
     nonisolated private static func requestSpeechAudio(input: String) async throws -> Data {
-        let apiKey = try resolvedAPIKey()
-        let url = try speechURL()
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("enable", forHTTPHeaderField: "X-DashScope-SSE")
-
-        let body: [String: Any] = [
-            "model": resolvedSpeechModel(),
-            "input": [
-                "text": input,
-                "voice": resolvedSpeechVoice(),
-                "format": resolvedConfigValue("TTS_AUDIO_FORMAT", fallback: "wav"),
-                "sample_rate": resolvedIntConfigValue("TTS_SAMPLE_RATE", fallback: 24000),
-            ],
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
+        let request = try speechRequest(input: input)
         let (data, response) = try await sharedSession.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? ""
@@ -78,6 +160,163 @@ final class SpeechService {
             return try extractAudioDataFromSSE(data)
         }
         return try await extractAudioData(from: data)
+    }
+
+    nonisolated private static func speechRequest(input: String) throws -> URLRequest {
+        let apiKey = try resolvedAPIKey()
+        let url = try speechURL()
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("enable", forHTTPHeaderField: "X-DashScope-SSE")
+
+        let body: [String: Any] = [
+            "model": resolvedSpeechModel(),
+            "input": [
+                "text": input,
+                "voice": resolvedSpeechVoice(),
+                "format": resolvedAudioFormat(),
+                "sample_rate": resolvedIntConfigValue("TTS_SAMPLE_RATE", fallback: 24000),
+            ],
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    nonisolated private static func collect(_ bytes: URLSession.AsyncBytes) async throws -> Data {
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+        }
+        return data
+    }
+
+    private final class StreamingAudioPlayer {
+        private let engine = AVAudioEngine()
+        private let playerNode = AVAudioPlayerNode()
+        private var pcmFormat: AVAudioFormat?
+        private var bytesPerFrame = 2
+        private var channelCount = 1
+        private var scheduledFrameCount = 0
+        private(set) var hasStarted = false
+
+        init() {
+            engine.attach(playerNode)
+        }
+
+        func enqueue(_ data: Data) throws {
+            guard !data.isEmpty else { return }
+
+            let payload: Data
+            if let description = SpeechService.wavDescription(data) {
+                if pcmFormat == nil {
+                    try configure(description: description)
+                }
+                payload = data.subdata(in: description.payloadRange)
+            } else {
+                if pcmFormat == nil {
+                    try configure(
+                        sampleRate: Double(SpeechService.resolvedIntConfigValue("TTS_SAMPLE_RATE", fallback: 24000)),
+                        channels: 1,
+                        bitsPerSample: 16,
+                        blockAlign: 2
+                    )
+                }
+                payload = data
+            }
+
+            try enqueuePCM(payload)
+        }
+
+        func stop() {
+            playerNode.stop()
+            if engine.isRunning {
+                engine.stop()
+            }
+            engine.reset()
+            hasStarted = false
+        }
+
+        private func configure(description: WAVDescription) throws {
+            try configure(
+                sampleRate: description.sampleRate,
+                channels: description.channels,
+                bitsPerSample: description.bitsPerSample,
+                blockAlign: description.blockAlign
+            )
+        }
+
+        private func configure(sampleRate: Double, channels: Int, bitsPerSample: Int, blockAlign: Int) throws {
+            guard bitsPerSample == 16 else {
+                throw RuntimeError("TTS 流式播放仅支持 16-bit PCM WAV")
+            }
+            guard channels > 0, channels <= 2, sampleRate > 0, blockAlign > 0 else {
+                throw RuntimeError("TTS 流式音频格式无效")
+            }
+            guard let format = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: sampleRate,
+                channels: AVAudioChannelCount(channels),
+                interleaved: false
+            ) else {
+                throw RuntimeError("无法创建 TTS 流式音频格式")
+            }
+
+            pcmFormat = format
+            bytesPerFrame = blockAlign
+            channelCount = channels
+            engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+            engine.prepare()
+            AppLog.debug("TTS 流式播放器初始化 sampleRate=\(Int(sampleRate)) channels=\(channels) blockAlign=\(blockAlign)")
+        }
+
+        private func enqueuePCM(_ data: Data) throws {
+            guard let pcmFormat else {
+                throw RuntimeError("TTS 流式音频格式未初始化")
+            }
+
+            let byteCount = (data.count / bytesPerFrame) * bytesPerFrame
+            guard byteCount > 0 else { return }
+            let frameCount = byteCount / bytesPerFrame
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: pcmFormat,
+                frameCapacity: AVAudioFrameCount(frameCount)
+            ) else {
+                throw RuntimeError("无法创建 TTS 流式音频缓冲区")
+            }
+
+            buffer.frameLength = AVAudioFrameCount(frameCount)
+            guard let channelData = buffer.floatChannelData else {
+                throw RuntimeError("无法写入 TTS 流式音频缓冲区")
+            }
+            data.withUnsafeBytes { source in
+                guard let bytes = source.bindMemory(to: UInt8.self).baseAddress else { return }
+                for frame in 0..<frameCount {
+                    let frameOffset = frame * bytesPerFrame
+                    for channel in 0..<channelCount {
+                        let sampleOffset = frameOffset + channel * 2
+                        guard sampleOffset + 1 < byteCount else { continue }
+                        let rawSample = UInt16(bytes[sampleOffset])
+                            | (UInt16(bytes[sampleOffset + 1]) << 8)
+                        let sample = Int16(bitPattern: rawSample)
+                        channelData[channel][frame] = Float(sample) / 32768.0
+                    }
+                }
+            }
+
+            if !engine.isRunning {
+                try engine.start()
+            }
+            if !playerNode.isPlaying {
+                playerNode.play()
+            }
+            playerNode.scheduleBuffer(buffer, completionHandler: nil)
+            scheduledFrameCount += frameCount
+            AppLog.debug("TTS 流式播放器排队 frames=\(frameCount) totalFrames=\(scheduledFrameCount)")
+            hasStarted = true
+        }
     }
 
     nonisolated private static func resolvedAPIKey() throws -> String {
@@ -123,6 +362,12 @@ final class SpeechService {
     nonisolated private static func resolvedSpeechVoice() -> String {
         let value = normalizedStoredVoice(ProcessInfo.processInfo.environment["TTS_VOICE"])
         return value.isEmpty ? defaultVoice : value
+    }
+
+    nonisolated private static func resolvedAudioFormat() -> String {
+        resolvedConfigValue("TTS_AUDIO_FORMAT", fallback: "wav")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".").union(.whitespacesAndNewlines))
+            .lowercased()
     }
 
     nonisolated static func normalizedStoredModel(_ value: String?) -> String {
@@ -300,14 +545,18 @@ final class SpeechService {
     nonisolated private static func findBase64AudioChunk(in value: Any, parentKey: String = "") -> Data? {
         if let string = value as? String {
             guard isAudioDataKey(parentKey) else { return nil }
-            return decodeBase64Data(string)
+            guard let decoded = decodeBase64Data(string), !decoded.isEmpty else {
+                return nil
+            }
+            return decoded
         }
 
         if let dictionary = value as? [String: Any] {
             let preferredKeys = ["audio", "audio_data", "audioData", "audio_base64", "base64", "data", "b64_json"]
             for key in preferredKeys {
                 if let string = dictionary[key] as? String,
-                   let decoded = decodeBase64Data(string) {
+                   let decoded = decodeBase64Data(string),
+                   !decoded.isEmpty {
                     return decoded
                 }
             }
@@ -363,10 +612,15 @@ final class SpeechService {
 
     nonisolated private static func findErrorMessage(in value: Any) -> String? {
         if let dictionary = value as? [String: Any] {
-            for key in ["message", "error_message", "code"] {
+            for key in ["message", "error_message"] {
                 if let string = dictionary[key] as? String, !string.isEmpty {
                     return string
                 }
+            }
+            if let code = dictionary["code"] as? String,
+               !code.isEmpty,
+               code != "20000000" {
+                return code
             }
             if let error = dictionary["error"] {
                 if let string = error as? String, !string.isEmpty {
@@ -392,6 +646,23 @@ final class SpeechService {
         }
 
         return nil
+    }
+
+    nonisolated private static func isNonFinalSynthesisEvent(_ value: Any) -> Bool {
+        guard let dictionary = value as? [String: Any] else {
+            return false
+        }
+        if let output = dictionary["output"] as? [String: Any] {
+            if let type = output["type"] as? String,
+               type.hasPrefix("sentence-") {
+                return true
+            }
+            if let finishReason = output["finish_reason"] as? String,
+               finishReason == "null" || finishReason == "stop" {
+                return true
+            }
+        }
+        return false
     }
 
     nonisolated private static func decodeBase64Audio(_ value: String) -> Data? {
@@ -482,6 +753,14 @@ final class SpeechService {
         let dataSize: Int
     }
 
+    nonisolated private struct WAVDescription {
+        let sampleRate: Double
+        let channels: Int
+        let bitsPerSample: Int
+        let blockAlign: Int
+        let payloadRange: Range<Int>
+    }
+
     nonisolated private static func concatenateWAVChunks(_ chunks: [Data]) -> Data? {
         guard let first = chunks.first,
               let firstLayout = wavLayout(first) else {
@@ -518,17 +797,76 @@ final class SpeechService {
             let chunkID = fourCC(data, at: offset)
             let chunkSize = Int(readUInt32LE(data, at: offset + 4))
             let chunkDataStart = offset + 8
-            guard chunkDataStart + chunkSize <= data.count else { return nil }
             if chunkID == "data" {
+                let availableSize = max(0, data.count - chunkDataStart)
                 return WAVLayout(
                     dataSizeOffset: offset + 4,
                     dataStart: chunkDataStart,
-                    dataSize: chunkSize
+                    dataSize: min(chunkSize, availableSize)
                 )
             }
+            guard chunkDataStart + chunkSize <= data.count else { return nil }
             offset = chunkDataStart + chunkSize + (chunkSize % 2)
         }
         return nil
+    }
+
+    nonisolated private static func wavDescription(_ data: Data) -> WAVDescription? {
+        guard data.count >= 44,
+              fourCC(data, at: 0) == "RIFF",
+              fourCC(data, at: 8) == "WAVE" else {
+            return nil
+        }
+
+        var sampleRate: Double?
+        var channels: Int?
+        var bitsPerSample: Int?
+        var blockAlign: Int?
+        var payloadRange: Range<Int>?
+
+        var offset = 12
+        while offset + 8 <= data.count {
+            let chunkID = fourCC(data, at: offset)
+            let chunkSize = Int(readUInt32LE(data, at: offset + 4))
+            let chunkDataStart = offset + 8
+
+            if chunkID == "fmt " {
+                guard chunkDataStart + 16 <= data.count else { return nil }
+                let audioFormat = readUInt16LE(data, at: chunkDataStart)
+                guard audioFormat == 1 else { return nil }
+                channels = Int(readUInt16LE(data, at: chunkDataStart + 2))
+                sampleRate = Double(readUInt32LE(data, at: chunkDataStart + 4))
+                blockAlign = Int(readUInt16LE(data, at: chunkDataStart + 12))
+                bitsPerSample = Int(readUInt16LE(data, at: chunkDataStart + 14))
+            } else if chunkID == "data" {
+                let availableSize = max(0, data.count - chunkDataStart)
+                let payloadSize = min(chunkSize, availableSize)
+                payloadRange = chunkDataStart..<(chunkDataStart + payloadSize)
+                if let sampleRate, let channels, let bitsPerSample, let blockAlign {
+                    return WAVDescription(
+                        sampleRate: sampleRate,
+                        channels: channels,
+                        bitsPerSample: bitsPerSample,
+                        blockAlign: blockAlign,
+                        payloadRange: payloadRange!
+                    )
+                }
+            }
+
+            guard chunkDataStart + chunkSize <= data.count else { break }
+            offset = chunkDataStart + chunkSize + (chunkSize % 2)
+        }
+
+        guard let sampleRate, let channels, let bitsPerSample, let blockAlign, let payloadRange else {
+            return nil
+        }
+        return WAVDescription(
+            sampleRate: sampleRate,
+            channels: channels,
+            bitsPerSample: bitsPerSample,
+            blockAlign: blockAlign,
+            payloadRange: payloadRange
+        )
     }
 
     nonisolated private static func fourCC(_ data: Data, at offset: Int) -> String? {
@@ -542,6 +880,12 @@ final class SpeechService {
             | (UInt32(data[offset + 1]) << 8)
             | (UInt32(data[offset + 2]) << 16)
             | (UInt32(data[offset + 3]) << 24)
+    }
+
+    nonisolated private static func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
+        guard offset + 2 <= data.count else { return 0 }
+        return UInt16(data[offset])
+            | (UInt16(data[offset + 1]) << 8)
     }
 
     nonisolated private static func writeUInt32LE(_ value: UInt32, to data: inout Data, at offset: Int) {
