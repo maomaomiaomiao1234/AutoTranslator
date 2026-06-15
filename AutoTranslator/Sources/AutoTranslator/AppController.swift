@@ -165,6 +165,7 @@ final class AppController: NSObject {
             do {
                 self.window.hideImmediately()
                 let capture = try await ScreenCaptureService.captureInteractively()
+                defer { ScreenCaptureService.removeCapturedImage(at: capture.imageURL) }
                 self.window.show(srcText: "正在识别截图文字...", destText: nil)
                 let recognizedText = try await self.ocrService.recognizeText(
                     inFileAt: capture.imageURL,

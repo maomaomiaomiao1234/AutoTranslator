@@ -35,10 +35,6 @@ enum ScreenCaptureService {
                 let fileURL = FileManager.default.temporaryDirectory
                     .appendingPathComponent("AutoTranslator-OCR-\(UUID().uuidString).png")
 
-                defer {
-                    try? FileManager.default.removeItem(at: fileURL)
-                }
-
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
                 process.arguments = ["-i", "-s", "-x", fileURL.path]
@@ -47,34 +43,34 @@ enum ScreenCaptureService {
                     try process.run()
                     process.waitUntilExit()
                 } catch {
+                    removeCapturedImage(at: fileURL)
                     continuation.resume(throwing: error)
                     return
                 }
 
                 guard !Task.isCancelled else {
+                    removeCapturedImage(at: fileURL)
                     continuation.resume(throwing: CancellationError())
                     return
                 }
 
                 guard process.terminationStatus == 0,
                       FileManager.default.fileExists(atPath: fileURL.path) else {
+                    removeCapturedImage(at: fileURL)
                     continuation.resume(throwing: ScreenCaptureError.cancelled)
                     return
                 }
 
-                guard let debugURL = saveDebugCapture(from: fileURL) else {
-                    continuation.resume(throwing: ScreenCaptureError.failed("无法保存截图图像"))
-                    return
-                }
-
-                guard let properties = imageProperties(at: debugURL) else {
+                guard let properties = imageProperties(at: fileURL) else {
+                    removeCapturedImage(at: fileURL)
                     continuation.resume(throwing: ScreenCaptureError.failed("无法读取截图图像"))
                     return
                 }
 
-                AppLog.debug("原始截图已保存 image=\(properties.width)x\(properties.height) debugImage=\(debugURL.path)")
+                // 临时文件交由调用方在 OCR 用完后通过 removeCapturedImage 清理。
+                AppLog.debug("截图已捕获 image=\(properties.width)x\(properties.height)")
                 continuation.resume(returning: ScreenCaptureResult(
-                    imageURL: debugURL,
+                    imageURL: fileURL,
                     width: properties.width,
                     height: properties.height
                 ))
@@ -92,18 +88,8 @@ enum ScreenCaptureService {
         return (width, height)
     }
 
-    private nonisolated static func saveDebugCapture(from sourceURL: URL) -> URL? {
-        let debugURL = URL(fileURLWithPath: "/tmp/AutoTranslator-last-capture.png")
-        let fileManager = FileManager.default
-        do {
-            if fileManager.fileExists(atPath: debugURL.path) {
-                try fileManager.removeItem(at: debugURL)
-            }
-            try fileManager.copyItem(at: sourceURL, to: debugURL)
-            return debugURL
-        } catch {
-            AppLog.error("保存原始截图失败: \(error.localizedDescription)")
-            return nil
-        }
+    /// 删除截图临时文件。调用方在 OCR 用完截图后应调用此方法清理。
+    nonisolated static func removeCapturedImage(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
     }
 }
