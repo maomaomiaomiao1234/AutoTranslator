@@ -32,6 +32,7 @@ let MAX_WINDOW_HEIGHT: CGFloat = 760
 let LANG_BAR_HEIGHT: CGFloat = 44
 let SOURCE_FONT_SIZE: CGFloat = 13   // = AppUI.FontSize.base；与 measureTextHeight 测量耦合，二者须一致
 let BODY_FONT_SIZE: CGFloat = 16     // = AppUI.FontSize.body；同上
+let DICTIONARY_BODY_FONT_SIZE: CGFloat = 14
 let STREAM_RENDER_INTERVAL: TimeInterval = 0.05
 let STREAM_RENDER_TIMER_TOLERANCE: TimeInterval = 0.015
 

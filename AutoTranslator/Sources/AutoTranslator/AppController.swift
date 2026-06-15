@@ -2,12 +2,26 @@ import Cocoa
 import CoreGraphics
 
 final class AppController: NSObject {
+    private enum TranslationMode {
+        case translation
+        case dictionary(word: String)
+
+        var floatingPresentation: FloatingPresentation {
+            switch self {
+            case .translation:
+                return .translation
+            case .dictionary:
+                return .dictionary
+            }
+        }
+    }
 
     // MARK: - State
 
     private var srcLang = Languages.defaultSourceCode
     private var destLang = Languages.defaultTargetCode
     private var lastText = ""
+    private var lastTranslationMode: TranslationMode = .translation
 
     private var translatorBackend: String
     private var translator: TranslatorProtocol!
@@ -154,8 +168,9 @@ final class AppController: NSObject {
                 }
 
                 self.lastText = text
+                self.lastTranslationMode = .translation
                 self.window.show(srcText: text, destText: nil)
-                self.dispatchTranslate(text)
+                self.dispatchTranslate(text, mode: .translation)
             } catch ScreenCaptureError.cancelled {
                 return
             } catch is CancellationError {
@@ -286,8 +301,8 @@ final class AppController: NSObject {
 
     private func retranslateLast() {
         guard !lastText.isEmpty else { return }
-        window.show(srcText: lastText, destText: nil)
-        dispatchTranslate(lastText)
+        window.show(srcText: lastText, destText: nil, presentation: lastTranslationMode.floatingPresentation)
+        dispatchTranslate(lastText, mode: lastTranslationMode)
     }
 
     private func shouldIgnoreSelectionSequence(startingAt point: CGPoint) -> Bool {
@@ -318,23 +333,83 @@ final class AppController: NSObject {
         return ignoredSelectionBundleIdentifiers.contains(bundleIdentifier)
     }
 
+    private func translator(for mode: TranslationMode) -> TranslatorProtocol? {
+        switch mode {
+        case .translation:
+            return translator
+        case .dictionary:
+            if let llmTranslator = translator as? LLMTranslator {
+                return llmTranslator
+            }
+            if let llmTranslator = try? LLMTranslator(source: srcLang, target: destLang) {
+                return llmTranslator
+            }
+            return translator
+        }
+    }
+
+    private static func translationMode(for text: String) -> TranslationMode {
+        if let word = dictionaryWord(from: text) {
+            return .dictionary(word: word)
+        }
+        return .translation
+    }
+
+    private static func dictionaryWord(from text: String) -> String? {
+        let boundaryPunctuation = CharacterSet(charactersIn: "\"“”‘’()[]{}<>.,;:!?，。？！；：")
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines.union(boundaryPunctuation))
+        guard !trimmed.isEmpty, trimmed.count <= 64 else { return nil }
+        guard trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
+
+        let allowed = CharacterSet.letters
+            .union(.decimalDigits)
+            .union(CharacterSet(charactersIn: "'-’"))
+        guard trimmed.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
+            return nil
+        }
+        guard trimmed.unicodeScalars.contains(where: { CharacterSet.letters.contains($0) }) else {
+            return nil
+        }
+        return trimmed
+    }
+
     // MARK: - Translation dispatch
 
-    private func dispatchTranslate(_ text: String) {
-        guard let requestTranslator = translator else { return }
+    private func dispatchTranslate(_ text: String, mode: TranslationMode) {
         translateVersion += 1
         let version = translateVersion
         translateTask?.cancel()
 
-        translateTask = Task { [weak self, requestTranslator] in
+        translateTask = Task { [weak self, mode] in
             guard let self = self else { return }
 
             do {
+                if case .dictionary(let word) = mode,
+                   let definition = SystemDictionary.definition(for: word) {
+                    await MainActor.run { [weak self] in
+                        if version == self?.translateVersion {
+                            self?.window.show(
+                                srcText: text,
+                                destText: definition,
+                                presentation: .systemDictionary
+                            )
+                        }
+                    }
+                    return
+                }
+
+                guard let requestTranslator = self.translator(for: mode) else { return }
                 if requestTranslator.supportsStreaming {
                     var buffer = ""
                     var pendingDisplayChunk = ""
                     var lastDisplayFlush = ProcessInfo.processInfo.systemUptime
-                    let stream = requestTranslator.translateStream(text)
+                    let stream: AsyncThrowingStream<String, Error>
+                    switch mode {
+                    case .translation:
+                        stream = requestTranslator.translateStream(text)
+                    case .dictionary(let word):
+                        stream = requestTranslator.defineStream(word)
+                    }
                     for try await token in stream {
                         if version != self.translateVersion { return }
                         guard !token.isEmpty else { continue }
@@ -371,7 +446,12 @@ final class AppController: NSObject {
                         await MainActor.run { [weak self] in
                             if version == self?.translateVersion {
                                 if finalBuffer.isEmpty {
-                                    self?.window.showError(srcText: text, message: "翻译结果为空", status: "无结果")
+                                    self?.window.showError(
+                                        srcText: text,
+                                        message: "翻译结果为空",
+                                        status: "无结果",
+                                        presentation: mode.floatingPresentation
+                                    )
                                 } else {
                                     self?.window.streamFinish(finalBuffer)
                                 }
@@ -379,14 +459,29 @@ final class AppController: NSObject {
                         }
                     }
                 } else {
-                    let translated = try await requestTranslator.translate(text)
+                    let result: String
+                    switch mode {
+                    case .translation:
+                        result = try await requestTranslator.translate(text)
+                    case .dictionary(let word):
+                        result = try await requestTranslator.define(word)
+                    }
                     if version == self.translateVersion {
                         await MainActor.run { [weak self] in
                             if version == self?.translateVersion {
-                                if translated.isEmpty {
-                                    self?.window.showError(srcText: text, message: "翻译结果为空", status: "无结果")
+                                if result.isEmpty {
+                                    self?.window.showError(
+                                        srcText: text,
+                                        message: "翻译结果为空",
+                                        status: "无结果",
+                                        presentation: mode.floatingPresentation
+                                    )
                                 } else {
-                                    self?.window.show(srcText: text, destText: translated)
+                                    self?.window.show(
+                                        srcText: text,
+                                        destText: result,
+                                        presentation: mode.floatingPresentation
+                                    )
                                 }
                             }
                         }
@@ -402,7 +497,11 @@ final class AppController: NSObject {
                     )
                     await MainActor.run { [weak self] in
                         if version == self?.translateVersion {
-                            self?.window.showError(srcText: text, message: errMsg)
+                            self?.window.showError(
+                                srcText: text,
+                                message: errMsg,
+                                presentation: mode.floatingPresentation
+                            )
                         }
                     }
                 }
@@ -427,8 +526,10 @@ extension AppController: MouseMonitorDelegate {
             guard allowClipboardFallback || text != self.lastText else { return }
 
             self.lastText = text
-            self.window.show(srcText: text, destText: nil)
-            self.dispatchTranslate(text)
+            let mode = Self.translationMode(for: text)
+            self.lastTranslationMode = mode
+            self.window.show(srcText: text, destText: nil, presentation: mode.floatingPresentation)
+            self.dispatchTranslate(text, mode: mode)
         }
     }
 }

@@ -1,10 +1,26 @@
 import SwiftUI
 import Combine
 
+enum FloatingPresentation {
+    case translation
+    case dictionary
+    case systemDictionary
+
+    var isDictionary: Bool {
+        switch self {
+        case .dictionary, .systemDictionary:
+            return true
+        case .translation:
+            return false
+        }
+    }
+}
+
 final class FloatingWindowViewModel: ObservableObject {
     @Published var sourceText = ""
     @Published var destText = ""
     @Published var backend = "google"
+    @Published var presentation: FloatingPresentation = .translation
     @Published var isPinned = false
     @Published var state: TranslationState = .idle
     @Published var errorStatusText = "翻译失败"
@@ -41,7 +57,14 @@ final class FloatingWindowViewModel: ObservableObject {
     }
 
     var headerSubtitle: String {
-        "\(selectedSource) → \(selectedTarget) · \(backend == "llm" ? "大模型" : "Google")"
+        switch presentation {
+        case .translation:
+            return "\(selectedSource) → \(selectedTarget) · \(backend == "llm" ? "大模型" : "Google")"
+        case .dictionary:
+            return "\(selectedSource) → \(selectedTarget) · 词典解释"
+        case .systemDictionary:
+            return "\(selectedSource) → \(selectedTarget) · 本地词典"
+        }
     }
 
     var sourceMeta: String {
@@ -53,6 +76,37 @@ final class FloatingWindowViewModel: ObservableObject {
     var canCopyDest: Bool { !destText.isEmpty }
     var canRefresh: Bool { !sourceText.isEmpty }
     var canSwap: Bool { selectedSource != "自动检测" }
+    var canToggleBackend: Bool { presentation == .translation }
+    var destinationTitle: String {
+        switch presentation {
+        case .translation:
+            return backendDisplayName
+        case .dictionary:
+            return "词典解释"
+        case .systemDictionary:
+            return "系统词典"
+        }
+    }
+    var destinationTint: Color {
+        switch presentation {
+        case .translation:
+            return backendTint
+        case .dictionary:
+            return AppUI.teal
+        case .systemDictionary:
+            return AppUI.accent
+        }
+    }
+    var destinationBadgeText: String {
+        switch presentation {
+        case .translation:
+            return backendBadgeText
+        case .dictionary:
+            return "Aa"
+        case .systemDictionary:
+            return "辞"
+        }
+    }
     var sourceVisibleLineCount: Int {
         let textHeight = max(SOURCE_TEXT_MIN_HEIGHT, sourceCardHeight - SOURCE_CARD_CHROME_HEIGHT)
         return max(minSourceLineCount, Int((textHeight / SOURCE_TEXT_LINE_HEIGHT).rounded(.down)))
@@ -350,14 +404,14 @@ struct FloatingWindowView: View {
     private var destinationCard: some View {
         VStack(spacing: AppUI.Space.s) {
             HStack(spacing: AppUI.Space.s) {
-                Text(model.backendBadgeText)
+                Text(model.destinationBadgeText)
                     .font(.system(size: AppUI.FontSize.micro, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 24, height: 24)
-                    .background(model.backendTint)
+                    .background(model.destinationTint)
                     .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous))
 
-                Text(model.backendDisplayName)
+                Text(model.destinationTitle)
                     .font(.system(size: AppUI.FontSize.base, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
 
@@ -365,19 +419,17 @@ struct FloatingWindowView: View {
 
                 stateChip
 
-                Button { model.onToggleBackend?() } label: {
-                    Image(systemName: "chevron.down")
+                if model.canToggleBackend {
+                    Button { model.onToggleBackend?() } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 24))
+                    .help("切换翻译后端")
                 }
-                .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 24))
-                .help("切换翻译后端")
             }
 
             ScrollView {
-                Text(model.destText.isEmpty ? "正在翻译..." : model.destText)
-                    .font(.system(size: BODY_FONT_SIZE))
-                    .foregroundStyle(destTextColor)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                destinationContent
             }
             .frame(minHeight: DEST_TEXT_MIN_HEIGHT, maxHeight: .infinity)
 
@@ -407,12 +459,37 @@ struct FloatingWindowView: View {
         .appSurface(background: Color(nsColor: DEST_CARD_BG), shadow: true)
     }
 
+    @ViewBuilder
+    private var destinationContent: some View {
+        if model.presentation.isDictionary,
+           model.state == .done,
+           !model.destText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            DictionaryDefinitionView(word: model.sourceText, definition: model.destText)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        } else {
+            Text(model.destText.isEmpty ? "正在翻译..." : model.destText)
+                .font(.system(size: BODY_FONT_SIZE))
+                .foregroundStyle(destTextColor)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var stateChip: some View {
         switch model.state {
         case .done:
+            if model.presentation == .systemDictionary {
+                return Chip(text: "本地", foreground: AppUI.teal, background: AppUI.chipTeal)
+            }
+            if model.presentation == .dictionary {
+                return Chip(text: "词典", foreground: AppUI.teal, background: AppUI.chipTeal)
+            }
             return Chip(text: "已完成", foreground: AppUI.teal, background: AppUI.chipTeal)
         case .loading:
-            return Chip(text: "翻译中", foreground: AppUI.amber, background: AppUI.chipWarm)
+            return Chip(text: model.presentation.isDictionary ? "查询中" : "翻译中",
+                        foreground: AppUI.amber,
+                        background: AppUI.chipWarm)
         case .idle:
             return Chip(text: "待翻译", foreground: AppUI.textMuted, background: AppUI.surfaceSoft)
         case .error:
@@ -431,4 +508,117 @@ struct FloatingWindowView: View {
 
 enum TranslationState {
     case idle, loading, done, error
+}
+
+private struct DictionaryDefinitionView: View {
+    let entry: DictionaryDisplayEntry
+
+    init(word: String, definition: String) {
+        entry = DictionaryDefinitionFormatter.entry(word: word, definition: definition)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppUI.Space.m) {
+            heading
+
+            VStack(alignment: .leading, spacing: AppUI.Space.s) {
+                ForEach(Array(entry.lines.enumerated()), id: \.offset) { _, line in
+                    lineView(line)
+                }
+            }
+        }
+        .padding(.top, AppUI.Space.xs)
+        .padding(.bottom, AppUI.Space.s)
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: AppUI.Space.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(entry.title)
+                    .font(.system(size: 22, weight: .bold, design: .serif))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let pronunciation = entry.pronunciation {
+                    Text(pronunciation)
+                        .font(.system(size: AppUI.FontSize.base, weight: .medium))
+                        .foregroundStyle(AppUI.textSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Rectangle()
+                .fill(AppUI.cardBorder)
+                .frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func lineView(_ line: DictionaryDisplayEntry.Line) -> some View {
+        switch line.kind {
+        case .section:
+            Text(line.text)
+                .font(.system(size: AppUI.FontSize.base, weight: .semibold))
+                .foregroundStyle(AppUI.accent)
+                .textCase(.none)
+                .padding(.top, AppUI.Space.xs)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .sense:
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(line.marker ?? "")
+                    .font(.system(size: AppUI.FontSize.base, weight: .bold))
+                    .foregroundStyle(AppUI.accent)
+                    .frame(width: 18, alignment: .leading)
+
+                Text(line.value ?? line.text)
+                    .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .regular))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .example:
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(line.marker ?? "▸")
+                    .font(.system(size: AppUI.FontSize.small, weight: .bold))
+                    .foregroundStyle(AppUI.textMuted)
+                    .frame(width: 18, alignment: .leading)
+
+                Text(line.value ?? line.text)
+                    .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .medium))
+                    .foregroundStyle(AppUI.textSecondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .keyValue:
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.m) {
+                Text(line.key ?? "")
+                    .font(.system(size: AppUI.FontSize.small, weight: .semibold))
+                    .foregroundStyle(AppUI.textMuted)
+                    .frame(width: 42, alignment: .leading)
+
+                Text(line.value ?? line.text)
+                    .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .regular))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .body:
+            Text(line.text)
+                .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .regular))
+                .foregroundStyle(AppUI.textPrimary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }

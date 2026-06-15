@@ -41,4 +41,12 @@ final class GoogleTranslator: TranslatorProtocol {
         }
         return result
     }
+
+    func define(_ word: String) async throws -> String {
+        let translated = try await translate(word)
+        return """
+        词条：\(word)
+        释义：\(translated)
+        """
+    }
 }

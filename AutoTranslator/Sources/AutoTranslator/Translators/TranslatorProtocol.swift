@@ -6,6 +6,8 @@ protocol TranslatorProtocol: AnyObject {
     var supportsStreaming: Bool { get }
     func translate(_ text: String) async throws -> String
     func translateStream(_ text: String) -> AsyncThrowingStream<String, Error>
+    func define(_ word: String) async throws -> String
+    func defineStream(_ word: String) -> AsyncThrowingStream<String, Error>
 }
 
 extension TranslatorProtocol {
@@ -16,6 +18,25 @@ extension TranslatorProtocol {
             let task = Task {
                 do {
                     let result = try await self.translate(text)
+                    continuation.yield(result)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    func define(_ word: String) async throws -> String {
+        try await translate(word)
+    }
+
+    func defineStream(_ word: String) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let result = try await self.define(word)
                     continuation.yield(result)
                     continuation.finish()
                 } catch {

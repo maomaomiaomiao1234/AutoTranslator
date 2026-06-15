@@ -210,6 +210,7 @@ final class FloatingWindow: NSObject {
 
     private var srcLang = "auto"
     private var destLang = "zh-CN"
+    private var currentPresentation: FloatingPresentation = .translation
 
     override init() {
         window = BorderlessWindow()
@@ -349,7 +350,11 @@ final class FloatingWindow: NSObject {
         viewModel.selectedTarget = Languages.name(for: target)
     }
 
-    func show(srcText: String, destText: String?) {
+    func show(
+        srcText: String,
+        destText: String?,
+        presentation: FloatingPresentation = .translation
+    ) {
         pendingSinkWorkItem?.cancel()
         pendingSinkWorkItem = nil
         stopStream()
@@ -362,7 +367,9 @@ final class FloatingWindow: NSObject {
 
         currentSourceText = srcText
         currentDestText = destText ?? ""
+        currentPresentation = presentation
         viewModel.sourceText = srcText
+        viewModel.presentation = presentation
 
         if let destText {
             setDestText(destText)
@@ -426,9 +433,14 @@ final class FloatingWindow: NSObject {
 
     /// 以错误态展示。复用 show() 的尺寸自适应、定位与出现动画，
     /// 仅在末尾把状态翻为 .error 并写入状态标签（驱动红色 chip 与珊瑚色文案）。
-    func showError(srcText: String, message: String, status: String = "翻译失败") {
+    func showError(
+        srcText: String,
+        message: String,
+        status: String = "翻译失败",
+        presentation: FloatingPresentation = .translation
+    ) {
         viewModel.errorStatusText = status
-        show(srcText: srcText, destText: message)
+        show(srcText: srcText, destText: message, presentation: presentation)
         setTranslationState(.error)
     }
 
@@ -575,7 +587,10 @@ final class FloatingWindow: NSObject {
     }
 
     private func handleCopyDest() {
-        copyToClipboard(currentDestText)
+        let text = currentPresentation.isDictionary
+            ? DictionaryDefinitionFormatter.measurementText(word: currentSourceText, definition: currentDestText)
+            : currentDestText
+        copyToClipboard(text)
     }
 
     private func handleBackendToggle() {
@@ -679,15 +694,29 @@ final class FloatingWindow: NSObject {
         let sourceCardHeight = preferredSourceCardHeight(for: width)
         let cardInnerWidth = textMeasureWidth(for: width)
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
-        let destTextHeight = measureTextHeight(destDisplayText, width: cardInnerWidth,
-                                               fontSize: BODY_FONT_SIZE, minimum: DEST_TEXT_MIN_HEIGHT)
+        let measuredDestText = destinationMeasurementText(for: destDisplayText)
+        let measuredDestFontSize = currentPresentation.isDictionary
+            ? DICTIONARY_BODY_FONT_SIZE
+            : BODY_FONT_SIZE
+        let destTextHeight = measureTextHeight(measuredDestText, width: cardInnerWidth,
+                                               fontSize: measuredDestFontSize, minimum: DEST_TEXT_MIN_HEIGHT)
 
         let overhead = windowChromeHeight
+        let destChromeHeight: CGFloat = currentPresentation.isDictionary ? 108 : 92
         let baseDestCardHeight = max(DEST_CARD_MIN_HEIGHT, WINDOW_MIN_HEIGHT - overhead - sourceCardHeight)
         let neededDestCardHeight = min(DEST_MAX_CARD_HEIGHT,
-                                       max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + 92))
+                                       max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + destChromeHeight))
         return min(MAX_WINDOW_HEIGHT,
                    max(WINDOW_MIN_HEIGHT, overhead + sourceCardHeight + neededDestCardHeight))
+    }
+
+    private func destinationMeasurementText(for text: String) -> String {
+        guard currentPresentation.isDictionary,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text != "正在翻译..." else {
+            return text
+        }
+        return DictionaryDefinitionFormatter.measurementText(word: currentSourceText, definition: text)
     }
 
     private func desiredSourceCardHeight(for width: CGFloat) -> CGFloat {

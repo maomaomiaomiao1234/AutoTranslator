@@ -90,6 +90,28 @@ final class LLMTranslator: TranslatorProtocol {
         """
     }
 
+    private func buildDictionaryInstruction() -> String {
+        let tgtName = languageName(for: target)
+        return """
+        你是一部简明双语词典。用户只会给出一个词或短词形。\
+        你的任务是用\(tgtName)给出词典式解释，而不是翻译句子、回答问题或扩展话题。\
+        如能判断语言，请给出常见词性、核心释义、常见搭配或变形，并给一个短例句。\
+        内容要简洁准确；不要输出思考过程、免责声明或额外说明。
+        """
+    }
+
+    private func buildDictionaryUserMessage(_ word: String) -> String {
+        """
+        为以下词条生成词典解释：\(word)
+
+        输出格式：
+        词条：...
+        词性：...
+        释义：...
+        例句：...
+        """
+    }
+
     func translate(_ text: String) async throws -> String {
         let url = try completionsURL()
         var request = URLRequest(url: url)
@@ -105,6 +127,39 @@ final class LLMTranslator: TranslatorProtocol {
             ],
             "temperature": 0.3,
             "max_tokens": 4096,
+            "enable_thinking": false,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await Self.sharedSession.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let choices = json?["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw RuntimeError("LLM API 返回格式异常")
+        }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func define(_ word: String) async throws -> String {
+        let url = try completionsURL()
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": buildDictionaryInstruction()],
+                ["role": "user", "content": buildDictionaryUserMessage(word)],
+            ],
+            "temperature": 0.2,
+            "max_tokens": 1024,
             "enable_thinking": false,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -141,6 +196,63 @@ final class LLMTranslator: TranslatorProtocol {
                         ],
                         "temperature": 0.3,
                         "max_tokens": 4096,
+                        "enable_thinking": false,
+                        "stream": true,
+                    ]
+                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+                    let (bytes, response) = try await Self.sharedSession.bytes(for: request)
+                    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                        var bodyData = Data()
+                        for try await byte in bytes {
+                            bodyData.append(byte)
+                            if bodyData.count >= 1024 { break }
+                        }
+                        let body = String(data: bodyData, encoding: .utf8) ?? ""
+                        throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
+                    }
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+                        guard line.hasPrefix("data: "), !line.hasPrefix("data: [DONE]") else { continue }
+                        let jsonStr = String(line.dropFirst(6))
+                        guard let jsonData = jsonStr.data(using: .utf8),
+                              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                              let choices = json["choices"] as? [[String: Any]],
+                              let delta = choices.first?["delta"] as? [String: Any],
+                              let token = delta["content"] as? String else { continue }
+                        continuation.yield(token)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in
+                task.cancel()
+            }
+        }
+    }
+
+    func defineStream(_ word: String) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let url = try completionsURL()
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "POST"
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+                    let body: [String: Any] = [
+                        "model": model,
+                        "messages": [
+                            ["role": "system", "content": buildDictionaryInstruction()],
+                            ["role": "user", "content": buildDictionaryUserMessage(word)],
+                        ],
+                        "temperature": 0.2,
+                        "max_tokens": 1024,
                         "enable_thinking": false,
                         "stream": true,
                     ]
