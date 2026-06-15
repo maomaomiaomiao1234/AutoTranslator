@@ -97,11 +97,12 @@ final class MouseMonitor {
                 return
             }
             let clickCount = event.getIntegerValueField(.mouseEventClickState)
-            let allow = mouseDraggedSinceDown || clickCount > 1
+            let isSelectionGesture = mouseDraggedSinceDown || clickCount > 1
             mouseDownPoint = nil
             mouseDraggedSinceDown = false
             ignoresCurrentMouseSequence = false
-            scheduleSelectionEvent(allowClipboardFallback: allow)
+            guard isSelectionGesture else { return }
+            scheduleSelectionEvent(allowClipboardFallback: true)
         default:
             break
         }

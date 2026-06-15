@@ -27,6 +27,13 @@ final class AppController: NSObject {
 
     var currentBackend: String { translatorBackend }
 
+    private static let ignoredSelectionBundleIdentifiers: Set<String> = [
+        "com.apple.dock",
+        "com.apple.systemuiserver",
+        "com.apple.controlcenter",
+        "com.apple.notificationcenterui",
+    ]
+
     // MARK: - Init
 
     override init() {
@@ -49,8 +56,8 @@ final class AppController: NSObject {
         window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
         window.setBackendLabel(translatorBackend)
         mouseMonitor.delegate = self
-        mouseMonitor.shouldIgnoreMouseSequenceStartingAt = { [weak window] point in
-            window?.containsScreenPoint(point) ?? false
+        mouseMonitor.shouldIgnoreMouseSequenceStartingAt = { [weak self] point in
+            self?.shouldIgnoreSelectionSequence(startingAt: point) ?? false
         }
 
         // 恢复保存的主题（必须在 NSApp 创建之后才有效，此处只是记录；
@@ -283,6 +290,34 @@ final class AppController: NSObject {
         dispatchTranslate(lastText)
     }
 
+    private func shouldIgnoreSelectionSequence(startingAt point: CGPoint) -> Bool {
+        if isMonitoringPaused { return true }
+        if window.containsScreenPoint(point) { return true }
+        if Self.isSystemChromePoint(point) { return true }
+        if Self.isIgnoredFrontmostApplication() { return true }
+        return false
+    }
+
+    private static func isSystemChromePoint(_ point: CGPoint) -> Bool {
+        let nsPoint = NSPoint(x: point.x, y: point.y)
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(nsPoint) }) else {
+            return false
+        }
+        return !screen.visibleFrame.contains(nsPoint)
+    }
+
+    private static func isIgnoredFrontmostApplication() -> Bool {
+        if NSApp.isActive { return true }
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              let bundleIdentifier = app.bundleIdentifier else {
+            return false
+        }
+        if bundleIdentifier == Bundle.main.bundleIdentifier {
+            return true
+        }
+        return ignoredSelectionBundleIdentifiers.contains(bundleIdentifier)
+    }
+
     // MARK: - Translation dispatch
 
     private func dispatchTranslate(_ text: String) {
@@ -383,6 +418,7 @@ extension AppController: MouseMonitorDelegate {
         selectionTask?.cancel()
         selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
+            guard !Self.isIgnoredFrontmostApplication() else { return }
             let text = await self.textSelector.getSelectedText(
                 allowClipboardFallback: allowClipboardFallback
             )

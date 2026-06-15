@@ -6,4 +6,4 @@
 *.xcodeproj/
 Package.resolved
 
-.dist/
+dist/
