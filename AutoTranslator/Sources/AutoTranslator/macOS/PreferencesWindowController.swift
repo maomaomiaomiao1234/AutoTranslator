@@ -17,7 +17,7 @@ final class PreferencesWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 740),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -74,13 +74,35 @@ final class PreferencesWindowController: NSWindowController {
 
     private static func makeSnapshot(prefDelegate: PreferencesWindowControllerDelegate?) -> PreferencesSnapshot {
         let backend = ConfigStore.shared.get(.backend) ?? "llm"
-        let apiKey = ConfigStore.shared.get(.deepseekKey) ?? ConfigStore.shared.get(.llmKey) ?? ""
+        let apiKey = ConfigStore.shared.get(.deepseekKey)
+            ?? ConfigStore.shared.get(.llmKey)
+            ?? ConfigStore.shared.get(.dashscopeKey)
+            ?? ""
         let model = ConfigStore.shared.get(.llmModel)
             ?? ProcessInfo.processInfo.environment["LLM_MODEL"]
             ?? ""
         let baseURL = ConfigStore.shared.get(.llmBaseURL)
             ?? ProcessInfo.processInfo.environment["LLM_BASE_URL"]
             ?? ""
+        let ttsApiKey = ConfigStore.shared.get(.ttsKey)
+            ?? ProcessInfo.processInfo.environment["TTS_API_KEY"]
+            ?? ""
+        let ttsAutoPlay = Self.boolValue(
+            ConfigStore.shared.get(.ttsAutoPlay)
+                ?? ProcessInfo.processInfo.environment["TTS_AUTO_PLAY"]
+        )
+        let ttsModel = SpeechService.normalizedStoredModel(
+            ConfigStore.shared.get(.ttsModel)
+                ?? ProcessInfo.processInfo.environment["TTS_MODEL"]
+        )
+        let ttsVoice = SpeechService.normalizedStoredVoice(
+            ConfigStore.shared.get(.ttsVoice)
+                ?? ProcessInfo.processInfo.environment["TTS_VOICE"]
+        )
+        let ttsBaseURL = SpeechService.normalizedStoredEndpoint(
+            ConfigStore.shared.get(.ttsBaseURL)
+                ?? ProcessInfo.processInfo.environment["TTS_BASE_URL"]
+        )
         let source = prefDelegate?.preferencesCurrentSourceLang()
             ?? ConfigStore.shared.get(.srcLang)
             ?? Languages.defaultSourceCode
@@ -95,10 +117,22 @@ final class PreferencesWindowController: NSWindowController {
             apiKey: apiKey,
             model: model,
             baseURL: baseURL,
+            ttsApiKey: ttsApiKey,
+            ttsAutoPlay: ttsAutoPlay,
+            ttsModel: ttsModel,
+            ttsVoice: ttsVoice,
+            ttsBaseURL: ttsBaseURL,
             sourceLang: Languages.nameByCode[source] == nil ? Languages.defaultSourceCode : source,
             targetLang: (target == "auto" || Languages.nameByCode[target] == nil) ? Languages.defaultTargetCode : target,
             theme: theme
         )
+    }
+
+    private static func boolValue(_ value: String?) -> Bool {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return false
+        }
+        return ["1", "true", "yes", "on"].contains(value)
     }
 
     private static func makeView(
@@ -122,14 +156,21 @@ final class PreferencesWindowController: NSWindowController {
             .theme: payload.theme.rawValue,
             .llmModel: payload.model,
             .llmBaseURL: payload.baseURL,
+            .ttsKey: payload.ttsApiKey,
+            .ttsAutoPlay: payload.ttsAutoPlay ? "true" : nil,
+            .ttsModel: payload.ttsModel,
+            .ttsVoice: payload.ttsVoice,
+            .ttsBaseURL: payload.ttsBaseURL,
         ]
 
         if let apiKey = payload.apiKey {
             updates[.deepseekKey] = apiKey
             updates[.llmKey] = apiKey
+            updates[.dashscopeKey] = apiKey
         } else {
             updates[.deepseekKey] = nil
             updates[.llmKey] = nil
+            updates[.dashscopeKey] = nil
         }
 
         ConfigStore.shared.update(updates)

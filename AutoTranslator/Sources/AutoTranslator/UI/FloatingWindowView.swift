@@ -34,6 +34,7 @@ final class FloatingWindowViewModel: ObservableObject {
     var onPin: (() -> Void)?
     var onCopySource: (() -> Void)?
     var onCopyDest: (() -> Void)?
+    var onSpeakSource: (() -> Void)?
     var onToggleBackend: (() -> Void)?
     var onScreenshotTranslation: (() -> Void)?
     var onHide: (() -> Void)?
@@ -73,6 +74,7 @@ final class FloatingWindowViewModel: ObservableObject {
     }
 
     var canCopySource: Bool { !sourceText.isEmpty }
+    var canSpeakSource: Bool { !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var canCopyDest: Bool { !destText.isEmpty }
     var canRefresh: Bool { !sourceText.isEmpty }
     var canSwap: Bool { selectedSource != "自动检测" }
@@ -255,6 +257,19 @@ struct FloatingWindowView: View {
                 .disabled(!model.canCopySource)
                 .opacity(model.canCopySource ? 1 : 0.36)
                 .help("复制原文")
+
+                Button { model.onSpeakSource?() } label: {
+                    Image(systemName: "speaker.wave.2")
+                }
+                .buttonStyle(IconButtonStyle(
+                    tint: AppUI.accent,
+                    background: AppUI.activeToolbar,
+                    border: AppUI.activeToolbarBorder,
+                    size: 24
+                ))
+                .disabled(!model.canSpeakSource)
+                .opacity(model.canSpeakSource ? 1 : 0.36)
+                .help("播放发音")
             }
 
             ScrollView {

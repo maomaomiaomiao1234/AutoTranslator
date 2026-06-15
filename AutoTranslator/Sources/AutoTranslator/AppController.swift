@@ -14,6 +14,15 @@ final class AppController: NSObject {
                 return .dictionary
             }
         }
+
+        var dictionaryWord: String? {
+            switch self {
+            case .translation:
+                return nil
+            case .dictionary(let word):
+                return word
+            }
+        }
     }
 
     // MARK: - State
@@ -30,11 +39,13 @@ final class AppController: NSObject {
     private let textSelector = TextSelector()
     private let mouseMonitor = MouseMonitor()
     private let ocrService = OCRService()
+    private let speechService = SpeechService()
 
     private var translateVersion = 0
     private var translateTask: Task<Void, Never>?
     private var selectionTask: Task<Void, Never>?
     private var screenshotTask: Task<Void, Never>?
+    private var speechTask: Task<Void, Never>?
 
     private(set) var isMonitoringPaused = false
     private(set) var currentTheme: Theme = .default
@@ -92,6 +103,8 @@ final class AppController: NSObject {
         selectionTask?.cancel()
         translateTask?.cancel()
         screenshotTask?.cancel()
+        speechTask?.cancel()
+        speechService.stop()
     }
 
     // MARK: - Public control surface (供菜单栏/偏好设置调用)
@@ -119,6 +132,7 @@ final class AppController: NSObject {
     func startScreenshotTranslation() {
         selectionTask?.cancel()
         screenshotTask?.cancel()
+        speechTask?.cancel()
 
         screenshotTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
@@ -192,6 +206,7 @@ final class AppController: NSObject {
         guard backend == "llm" || backend == "google" else { return }
         guard backend != translatorBackend else { return }
         translateTask?.cancel()
+        speechTask?.cancel()
         translatorBackend = backend
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
@@ -206,6 +221,7 @@ final class AppController: NSObject {
         ConfigStore.shared.applyToEnvironment()
         let newBackend = ConfigStore.shared.get(.backend) ?? translatorBackend
         translateTask?.cancel()
+        speechTask?.cancel()
         translatorBackend = newBackend
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
@@ -221,6 +237,7 @@ final class AppController: NSObject {
         destLang = validTarget
         window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
         translateTask?.cancel()
+        speechTask?.cancel()
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
         ConfigStore.shared.update([.srcLang: srcLang, .destLang: destLang])
@@ -261,6 +278,7 @@ final class AppController: NSObject {
 
     private func switchTranslatorBackend() {
         translateTask?.cancel()
+        speechTask?.cancel()
         translatorBackend = translatorBackend == "llm" ? "google" : "llm"
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
@@ -282,8 +300,12 @@ final class AppController: NSObject {
         let message: String
         if normalized.contains("llm api http 401") || normalized.contains("llm api http 403") {
             message = "大模型认证失败，请检查 API Key"
+        } else if normalized.contains("tts api http 401") || normalized.contains("tts api http 403") {
+            message = "发音认证失败，请检查 API Key"
         } else if normalized.contains("llm api http") {
             message = "大模型服务返回错误，请检查 API Key、模型或网络"
+        } else if normalized.contains("tts api http") {
+            message = "发音服务返回错误，请检查 TTS 模型、Base URL 或网络"
         } else if normalized.contains("google translate http") {
             message = "Google 翻译服务返回错误，请稍后重试"
         } else if normalized.contains("timed out")
@@ -379,6 +401,10 @@ final class AppController: NSObject {
         translateVersion += 1
         let version = translateVersion
         translateTask?.cancel()
+        if case .dictionary = mode {
+            speechTask?.cancel()
+            speechService.stop()
+        }
 
         translateTask = Task { [weak self, mode] in
             guard let self = self else { return }
@@ -393,6 +419,7 @@ final class AppController: NSObject {
                                 destText: definition,
                                 presentation: .systemDictionary
                             )
+                            self?.playPronunciationIfNeeded(for: text, mode: mode)
                         }
                     }
                     return
@@ -454,6 +481,7 @@ final class AppController: NSObject {
                                     )
                                 } else {
                                     self?.window.streamFinish(finalBuffer)
+                                    self?.playPronunciationIfNeeded(for: text, mode: mode)
                                 }
                             }
                         }
@@ -482,6 +510,7 @@ final class AppController: NSObject {
                                         destText: result,
                                         presentation: mode.floatingPresentation
                                     )
+                                    self?.playPronunciationIfNeeded(for: text, mode: mode)
                                 }
                             }
                         }
@@ -507,6 +536,51 @@ final class AppController: NSObject {
                 }
             }
         }
+    }
+
+    private func playPronunciationIfNeeded(for text: String, mode: TranslationMode) {
+        guard case .dictionary = mode else { return }
+        guard Self.isAutoSpeakEnabled() else { return }
+        playPronunciation(for: mode.dictionaryWord ?? text, isAutomatic: true)
+    }
+
+    private func playPronunciation(for text: String, isAutomatic: Bool) {
+        let input = Self.pronunciationInput(from: text)
+        guard !input.isEmpty else { return }
+
+        speechTask?.cancel()
+        speechTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await speechService.speak(input, languageHint: srcLang)
+            } catch is CancellationError {
+                return
+            } catch {
+                let message = Self.userFacingErrorMessage(
+                    from: error,
+                    fallback: "发音生成失败，请检查 TTS 配置",
+                    maxLength: 80
+                )
+                if isAutomatic {
+                    AppLog.error("自动发音失败: \(message)")
+                } else {
+                    NotificationManager.shared.post(title: "发音失败", body: message)
+                }
+            }
+        }
+    }
+
+    private static func pronunciationInput(from text: String) -> String {
+        text
+            .replacingOccurrences(of: "\u{00a0}", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isAutoSpeakEnabled() -> Bool {
+        let value = ConfigStore.shared.get(.ttsAutoPlay)
+            ?? ProcessInfo.processInfo.environment["TTS_AUTO_PLAY"]
+            ?? ""
+        return ["1", "true", "yes", "on"].contains(value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 }
 
@@ -565,6 +639,10 @@ extension AppController: FloatingWindowDelegate {
 
     func toggleTranslator() {
         switchTranslatorBackend()
+    }
+
+    func speakCurrentSource() {
+        playPronunciation(for: window.currentSourceText, isAutomatic: false)
     }
 
     func screenshotTranslation() {

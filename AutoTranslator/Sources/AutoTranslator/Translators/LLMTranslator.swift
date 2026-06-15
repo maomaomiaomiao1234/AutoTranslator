@@ -13,8 +13,8 @@ final class LLMTranslator: TranslatorProtocol {
     let baseURL: String
     private let apiKey: String
 
-    static let defaultModel = "deepseek-v3.2"
-    static let defaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    nonisolated static let defaultModel = "deepseek-v3.2"
+    nonisolated static let defaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     private static let sharedSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -29,8 +29,9 @@ final class LLMTranslator: TranslatorProtocol {
         let resolvedKey = apiKey
             ?? ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
             ?? ProcessInfo.processInfo.environment["LLM_API_KEY"]
+            ?? ProcessInfo.processInfo.environment["DASHSCOPE_API_KEY"]
         guard let key = resolvedKey, !key.isEmpty else {
-            throw RuntimeError("未设置 API Key。请设置环境变量 DEEPSEEK_API_KEY 或 LLM_API_KEY")
+            throw RuntimeError("未设置 API Key。请设置环境变量 DEEPSEEK_API_KEY、LLM_API_KEY 或 DASHSCOPE_API_KEY")
         }
 
         self.source = source

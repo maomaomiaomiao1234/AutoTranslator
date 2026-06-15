@@ -218,6 +218,7 @@ func main() {
     if backend == "llm" {
         let apiKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
             ?? ProcessInfo.processInfo.environment["LLM_API_KEY"]
+            ?? ProcessInfo.processInfo.environment["DASHSCOPE_API_KEY"]
         if apiKey == nil || apiKey!.isEmpty {
             AppLog.error("未设置 API Key，回退到谷歌翻译。可在菜单栏 → 偏好设置中配置。")
             setenv("TRANSLATOR_BACKEND", "google", 1)
