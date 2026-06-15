@@ -74,6 +74,12 @@ final class MouseMonitor {
 
     private func handleEvent(type: CGEventType, event: CGEvent) {
         switch type {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            // 系统在高负载或用户输入抢占时会主动禁用 listen-only tap，
+            // 必须重新启用，否则划词会静默失效直到 App 重启。
+            guard let tap = eventTap else { return }
+            CGEvent.tapEnable(tap: tap, enable: true)
+            AppLog.error("EventTap 被系统禁用 (type=\(type.rawValue))，已重新启用")
         case .leftMouseDown:
             pendingSelectionWorkItem?.cancel()
             pendingSelectionWorkItem = nil
