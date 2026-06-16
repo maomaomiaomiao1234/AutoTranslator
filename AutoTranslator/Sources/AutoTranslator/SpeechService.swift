@@ -19,7 +19,11 @@ final class SpeechService {
     }()
 
     private var player: AVAudioPlayer?
-    private var streamingPlayer: StreamingAudioPlayer?
+    /// 复用同一个 AVAudioEngine 实例，避免每次发音都销毁并立即重建引擎。
+    /// 销毁与重建之间若无间隔（命中音频缓存即时重放时尤为明显），CoreAudio
+    /// 尚未异步释放上一个引擎的输出节点，新引擎会静默无声——表现为“第二次划词不发音、
+    /// 等十几秒后又正常”。保持引擎常驻可彻底规避该竞态。
+    private let streamingPlayer = StreamingAudioPlayer()
 
     /// 缓存最近合成的音频：避免对同一文本（如词典自动朗读高频词）重复请求 TTS。
     /// 存储实时播放时入队的原始音频块，命中时按序重放，行为与现网一致。
@@ -36,17 +40,16 @@ final class SpeechService {
         let cacheKey = Self.audioCacheKey(input: input, format: format)
 
         if format == "wav" {
-            let nextStreamingPlayer = StreamingAudioPlayer()
-            streamingPlayer = nextStreamingPlayer
+            // stop() 之上已清空上一段排队缓冲并保留常驻引擎，可直接复用。
             do {
                 if let cached = audioCache.value(forKey: cacheKey) {
                     for chunk in cached {
                         try Task.checkCancellation()
-                        try nextStreamingPlayer.enqueue(chunk)
+                        try streamingPlayer.enqueue(chunk)
                     }
                 } else {
                     capturedChunks = []
-                    try await streamSpeechAudio(input: input, player: nextStreamingPlayer)
+                    try await streamSpeechAudio(input: input, player: streamingPlayer)
                     try Task.checkCancellation()
                     storeCapturedAudio(forKey: cacheKey)
                 }
@@ -83,8 +86,7 @@ final class SpeechService {
 
     func stop() {
         capturedChunks = []
-        streamingPlayer?.stop()
-        streamingPlayer = nil
+        streamingPlayer.stopPlayback()
         player?.stop()
         player = nil
     }
@@ -260,9 +262,7 @@ final class SpeechService {
 
             let payload: Data
             if let description = SpeechService.wavDescription(data) {
-                if pcmFormat == nil {
-                    try configure(description: description)
-                }
+                try configure(description: description)
                 payload = data.subdata(in: description.payloadRange)
             } else {
                 if pcmFormat == nil {
@@ -279,12 +279,11 @@ final class SpeechService {
             try enqueuePCM(payload)
         }
 
-        func stop() {
+        /// 结束当前发音并清空排队的缓冲，但保持引擎常驻运行，
+        /// 以便下一段发音即时复用、规避引擎重建竞态。
+        func stopPlayback() {
             playerNode.stop()
-            if engine.isRunning {
-                engine.stop()
-            }
-            engine.reset()
+            scheduledFrameCount = 0
             hasStarted = false
         }
 
@@ -304,6 +303,13 @@ final class SpeechService {
             guard channels > 0, channels <= 2, sampleRate > 0, blockAlign > 0 else {
                 throw RuntimeError("TTS 流式音频格式无效")
             }
+            // 引擎常驻复用：若新内容格式与已配置的一致则无需重连。
+            if let existing = pcmFormat,
+               existing.sampleRate == sampleRate,
+               Int(existing.channelCount) == channels,
+               bytesPerFrame == blockAlign {
+                return
+            }
             guard let format = AVAudioFormat(
                 commonFormat: .pcmFormatFloat32,
                 sampleRate: sampleRate,
@@ -313,6 +319,10 @@ final class SpeechService {
                 throw RuntimeError("无法创建 TTS 流式音频格式")
             }
 
+            // 切换格式需在节点停止状态下重连。
+            if engine.isRunning {
+                playerNode.stop()
+            }
             pcmFormat = format
             bytesPerFrame = blockAlign
             channelCount = channels

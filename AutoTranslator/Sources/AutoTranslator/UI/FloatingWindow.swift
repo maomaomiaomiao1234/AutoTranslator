@@ -422,7 +422,10 @@ final class FloatingWindow: NSObject {
 
             window.setFrame(NSRect(x: x, y: y, width: window.frame.width, height: newHeight), display: true)
             window.alphaValue = 0
-            window.makeKeyAndOrderFront(nil)
+            // 不调用 makeKeyAndOrderFront：让浮窗以“非激活”方式出现，避免抢走源程序的 key 焦点、
+            // 把本应用置为 active。否则紧接着的划词会在鼠标按下时被 isIgnoredFrontmostApplication()
+            // （NSApp.isActive 仍为 true）当成“在自己应用内操作”而整段忽略——表现为结果出来后
+            // 马上划词没有任何反应、必须先点一下别处才恢复。窗口仍可在用户点击时按需成为 key。
             window.orderFrontRegardless()
 
             NSAnimationContext.runAnimationGroup { ctx in
@@ -556,7 +559,7 @@ final class FloatingWindow: NSObject {
     func hide() {
         stopStream()
         setSourceResizeInteractionActive(false)
-        if !isPinned { savedOrigin = window.frame.origin }
+        if window.isVisible, !isPinned { savedOrigin = window.frame.origin }
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
@@ -572,7 +575,7 @@ final class FloatingWindow: NSObject {
     func hideImmediately() {
         stopStream()
         setSourceResizeInteractionActive(false)
-        if !isPinned { savedOrigin = window.frame.origin }
+        if window.isVisible, !isPinned { savedOrigin = window.frame.origin }
         window.alphaValue = 1
         window.orderOut(nil)
         removeGlobalClickMonitor()
