@@ -75,11 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller: AppController
     let statusBar: StatusBarController
     let preferences: PreferencesWindowController
+    let globalHotKeys: GlobalHotKeyManager
 
     override init() {
         controller = AppController()
         statusBar = StatusBarController()
         preferences = PreferencesWindowController()
+        globalHotKeys = GlobalHotKeyManager()
         super.init()
         statusBar.delegate = self
         preferences.prefDelegate = self
@@ -87,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
+        configureGlobalHotKeys()
         controller.start()
         statusBar.refresh()
         NotificationManager.shared.requestAuthorization()
@@ -96,7 +99,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        globalHotKeys.stop()
         controller.stop()
+    }
+
+    private func configureGlobalHotKeys() {
+        globalHotKeys.onToggleMonitoring = { [weak self] in
+            DispatchQueue.main.async {
+                self?.controller.toggleMonitoring()
+                self?.statusBar.refresh()
+            }
+        }
+        globalHotKeys.start()
     }
 
     private func configureMainMenu() {

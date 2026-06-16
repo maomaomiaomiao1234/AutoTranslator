@@ -714,16 +714,21 @@ final class FloatingWindow: NSObject {
         let measuredDestFontSize = currentPresentation.isDictionary
             ? DICTIONARY_BODY_FONT_SIZE
             : BODY_FONT_SIZE
+        let destTextMinHeight = currentPresentation.isDictionary
+            ? DICTIONARY_TEXT_MIN_HEIGHT
+            : DEST_TEXT_MIN_HEIGHT
         let destTextHeight = measureTextHeight(measuredDestText, width: cardInnerWidth,
-                                               fontSize: measuredDestFontSize, minimum: DEST_TEXT_MIN_HEIGHT)
+                                               fontSize: measuredDestFontSize, minimum: destTextMinHeight)
 
         let overhead = windowChromeHeight
-        let destChromeHeight: CGFloat = currentPresentation.isDictionary ? 108 : 92
-        let baseDestCardHeight = max(DEST_CARD_MIN_HEIGHT, WINDOW_MIN_HEIGHT - overhead - sourceCardHeight)
+        let destChromeHeight = currentPresentation.isDictionary
+            ? DICTIONARY_DEST_CARD_CHROME_HEIGHT
+            : DEST_CARD_CHROME_HEIGHT
+        let baseDestCardHeight = max(destinationMinimumCardHeight, minimumWindowHeight - overhead - sourceCardHeight)
         let neededDestCardHeight = min(DEST_MAX_CARD_HEIGHT,
                                        max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + destChromeHeight))
         return min(MAX_WINDOW_HEIGHT,
-                   max(WINDOW_MIN_HEIGHT, overhead + sourceCardHeight + neededDestCardHeight))
+                   max(minimumWindowHeight, overhead + sourceCardHeight + neededDestCardHeight))
     }
 
     private func destinationMeasurementText(for text: String) -> String {
@@ -770,7 +775,15 @@ final class FloatingWindow: NSObject {
     }
 
     private var minimumNonSourceHeight: CGFloat {
-        windowChromeHeight + DEST_CARD_MIN_HEIGHT
+        windowChromeHeight + destinationMinimumCardHeight
+    }
+
+    private var destinationMinimumCardHeight: CGFloat {
+        currentPresentation.isDictionary ? DICTIONARY_DEST_CARD_MIN_HEIGHT : DEST_CARD_MIN_HEIGHT
+    }
+
+    private var minimumWindowHeight: CGFloat {
+        max(WINDOW_MIN_HEIGHT, windowChromeHeight + SOURCE_CARD_MIN_HEIGHT + destinationMinimumCardHeight)
     }
 
     private func growWindowForStreamingIfNeeded() {
@@ -838,7 +851,7 @@ final class FloatingWindow: NSObject {
     }
 
     private func clampedWindowHeight(_ height: CGFloat) -> CGFloat {
-        max(WINDOW_MIN_HEIGHT, min(MAX_WINDOW_HEIGHT, height))
+        max(minimumWindowHeight, min(MAX_WINDOW_HEIGHT, height))
     }
 
     // MARK: - Private Helpers

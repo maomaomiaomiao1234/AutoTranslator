@@ -23,7 +23,11 @@ final class StatusBarController: NSObject {
     private let backendLLMItem = NSMenuItem(title: "大模型 (DeepSeek)", action: #selector(switchToLLM), keyEquivalent: "")
     private let backendGoogleItem = NSMenuItem(title: "谷歌翻译", action: #selector(switchToGoogle), keyEquivalent: "")
     private let screenshotItem = NSMenuItem(title: "截图翻译", action: #selector(startScreenshotTranslation), keyEquivalent: "")
-    private let pauseItem = NSMenuItem(title: "暂停监听", action: #selector(togglePause), keyEquivalent: "p")
+    private let pauseItem = NSMenuItem(
+        title: "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))",
+        action: #selector(togglePause),
+        keyEquivalent: ""
+    )
     private let prefsItem = NSMenuItem(title: "偏好设置…", action: #selector(openPreferences), keyEquivalent: ",")
     private let quitItem = NSMenuItem(title: "退出 AutoTranslator", action: #selector(quitApp), keyEquivalent: "q")
     private let statusItemMenuItem = NSMenuItem(title: "AutoTranslator", action: nil, keyEquivalent: "")
@@ -117,7 +121,9 @@ final class StatusBarController: NSObject {
         themeMenuItem.title = "主题外观（\(currentTheme.displayName)）"
 
         let paused = delegate.isMonitoringPaused
-        pauseItem.title = paused ? "恢复监听" : "暂停监听"
+        pauseItem.title = paused
+            ? "恢复监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
+            : "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
         statusItemMenuItem.title = paused
             ? "AutoTranslator · 已暂停"
             : "AutoTranslator · \(backend == "llm" ? "大模型" : "谷歌")"

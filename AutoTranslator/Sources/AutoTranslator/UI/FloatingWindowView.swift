@@ -500,7 +500,7 @@ struct FloatingWindowView: View {
             ScrollView {
                 destinationContent
             }
-            .frame(minHeight: DEST_TEXT_MIN_HEIGHT, maxHeight: .infinity)
+            .frame(minHeight: destinationTextMinHeight, maxHeight: .infinity)
 
             HStack(spacing: AppUI.Space.s) {
                 Button { model.onCopyDest?() } label: {
@@ -524,8 +524,16 @@ struct FloatingWindowView: View {
         }
         .padding(.horizontal, AppUI.Space.l)
         .padding(.vertical, AppUI.Space.m)
-        .frame(minHeight: DEST_CARD_MIN_HEIGHT, maxHeight: .infinity, alignment: .top)
+        .frame(minHeight: destinationCardMinHeight, maxHeight: .infinity, alignment: .top)
         .appSurface(background: Color(nsColor: DEST_CARD_BG), shadow: true)
+    }
+
+    private var destinationTextMinHeight: CGFloat {
+        model.presentation.isDictionary ? DICTIONARY_TEXT_MIN_HEIGHT : DEST_TEXT_MIN_HEIGHT
+    }
+
+    private var destinationCardMinHeight: CGFloat {
+        model.presentation.isDictionary ? DICTIONARY_DEST_CARD_MIN_HEIGHT : DEST_CARD_MIN_HEIGHT
     }
 
     @ViewBuilder
@@ -704,21 +712,23 @@ private struct DictionaryDefinitionView: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: AppUI.Space.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.xs) {
                 Text(entry.title)
-                    .font(.system(size: 22, weight: .bold, design: .serif))
+                    .font(.system(size: DICTIONARY_TITLE_FONT_SIZE, weight: .bold, design: .serif))
                     .foregroundStyle(AppUI.textPrimary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
 
                 if let pronunciation = entry.pronunciation {
                     Text(pronunciation)
-                        .font(.system(size: AppUI.FontSize.base, weight: .medium))
+                        .font(.system(size: DICTIONARY_PRONUNCIATION_FONT_SIZE, weight: .medium))
                         .foregroundStyle(AppUI.textSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Rectangle()
                 .fill(AppUI.cardBorder)
