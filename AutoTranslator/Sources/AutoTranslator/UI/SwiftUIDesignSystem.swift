@@ -4,6 +4,11 @@ enum AppUI {
     static var panelTop: Color { Color(nsColor: PANEL_TOP) }
     static var panelBottom: Color { Color(nsColor: PANEL_BOTTOM) }
     static var panelBorder: Color { Color(nsColor: PANEL_BORDER) }
+    static var minimalPanel: Color { Color(nsColor: MINIMAL_PANEL_BG) }
+    static var minimalPanelTop: Color { Color(nsColor: MINIMAL_PANEL_TOP) }
+    static var minimalPanelBottom: Color { Color(nsColor: MINIMAL_PANEL_BOTTOM) }
+    static var minimalPanelBorder: Color { Color(nsColor: MINIMAL_PANEL_BORDER) }
+    static var minimalPanelHighlight: Color { Color(nsColor: MINIMAL_PANEL_HIGHLIGHT) }
     static var surface: Color { Color(nsColor: SURFACE_BG) }
     static var surfaceSoft: Color { Color(nsColor: SURFACE_BG_SOFT) }
     static var toolbarGhost: Color { Color(nsColor: TOOLBAR_GHOST_BG) }

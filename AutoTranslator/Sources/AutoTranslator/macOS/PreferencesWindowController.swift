@@ -2,10 +2,18 @@ import Cocoa
 import SwiftUI
 
 protocol PreferencesWindowControllerDelegate: AnyObject {
-    func preferencesDidSave(backend: String, apiKey: String?, srcLang: String, destLang: String, theme: Theme)
+    func preferencesDidSave(
+        backend: String,
+        apiKey: String?,
+        srcLang: String,
+        destLang: String,
+        theme: Theme,
+        floatingWindowMode: FloatingWindowMode
+    )
     func preferencesCurrentSourceLang() -> String
     func preferencesCurrentDestLang() -> String
     func preferencesCurrentTheme() -> Theme
+    func preferencesCurrentFloatingWindowMode() -> FloatingWindowMode
 }
 
 final class PreferencesWindowController: NSWindowController {
@@ -111,6 +119,8 @@ final class PreferencesWindowController: NSWindowController {
             ?? Languages.defaultTargetCode
         let theme = prefDelegate?.preferencesCurrentTheme()
             ?? Theme.from(rawValue: ConfigStore.shared.get(.theme))
+        let floatingWindowMode = prefDelegate?.preferencesCurrentFloatingWindowMode()
+            ?? FloatingWindowMode.from(rawValue: ConfigStore.shared.get(.floatingWindowMode))
 
         return PreferencesSnapshot(
             backend: backend == "google" ? "google" : "llm",
@@ -124,7 +134,8 @@ final class PreferencesWindowController: NSWindowController {
             ttsBaseURL: ttsBaseURL,
             sourceLang: Languages.nameByCode[source] == nil ? Languages.defaultSourceCode : source,
             targetLang: (target == "auto" || Languages.nameByCode[target] == nil) ? Languages.defaultTargetCode : target,
-            theme: theme
+            theme: theme,
+            floatingWindowMode: floatingWindowMode
         )
     }
 
@@ -161,6 +172,7 @@ final class PreferencesWindowController: NSWindowController {
             .ttsModel: payload.ttsModel,
             .ttsVoice: payload.ttsVoice,
             .ttsBaseURL: payload.ttsBaseURL,
+            .floatingWindowMode: payload.floatingWindowMode.rawValue,
         ]
 
         if let apiKey = payload.apiKey {
@@ -179,7 +191,8 @@ final class PreferencesWindowController: NSWindowController {
             apiKey: payload.apiKey,
             srcLang: payload.sourceLang,
             destLang: payload.targetLang,
-            theme: payload.theme
+            theme: payload.theme,
+            floatingWindowMode: payload.floatingWindowMode
         )
         isRootViewLoaded = false
     }

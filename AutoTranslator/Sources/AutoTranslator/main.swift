@@ -197,20 +197,29 @@ extension AppDelegate: StatusBarControllerDelegate {
 }
 
 extension AppDelegate: PreferencesWindowControllerDelegate {
-    func preferencesDidSave(backend: String, apiKey: String?, srcLang: String, destLang: String, theme: Theme) {
+    func preferencesDidSave(
+        backend: String,
+        apiKey: String?,
+        srcLang: String,
+        destLang: String,
+        theme: Theme,
+        floatingWindowMode: FloatingWindowMode
+    ) {
         controller.reloadFromConfig()
         controller.setLanguages(source: srcLang, target: destLang)
         controller.setTheme(theme)
+        controller.setFloatingWindowMode(floatingWindowMode)
         statusBar.refresh()
         NotificationManager.shared.post(
             title: "偏好设置已保存",
-            body: "后端：\(backend == "llm" ? "大模型" : "谷歌翻译")  \(Languages.name(for: srcLang)) → \(Languages.name(for: destLang))  主题：\(theme.displayName)"
+            body: "后端：\(backend == "llm" ? "大模型" : "谷歌翻译")  \(Languages.name(for: srcLang)) → \(Languages.name(for: destLang))  外观：\(theme.displayName) · \(floatingWindowMode.displayName)"
         )
     }
 
     func preferencesCurrentSourceLang() -> String { controller.currentSourceLang }
     func preferencesCurrentDestLang() -> String { controller.currentDestLang }
     func preferencesCurrentTheme() -> Theme { controller.currentTheme }
+    func preferencesCurrentFloatingWindowMode() -> FloatingWindowMode { controller.currentFloatingWindowMode }
 }
 
 // MARK: - Entry Point

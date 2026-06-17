@@ -13,6 +13,7 @@ struct PreferencesSnapshot {
     var sourceLang: String
     var targetLang: String
     var theme: Theme
+    var floatingWindowMode: FloatingWindowMode
 }
 
 struct PreferencesSavePayload {
@@ -28,6 +29,7 @@ struct PreferencesSavePayload {
     let sourceLang: String
     let targetLang: String
     let theme: Theme
+    let floatingWindowMode: FloatingWindowMode
 }
 
 struct PreferencesView: View {
@@ -43,6 +45,7 @@ struct PreferencesView: View {
     @State private var sourceLang: String
     @State private var targetLang: String
     @State private var theme: Theme
+    @State private var floatingWindowMode: FloatingWindowMode
     @State private var statusText = ""
 
     let configPath: String
@@ -65,6 +68,7 @@ struct PreferencesView: View {
         _sourceLang = State(initialValue: snapshot.sourceLang)
         _targetLang = State(initialValue: snapshot.targetLang)
         _theme = State(initialValue: snapshot.theme)
+        _floatingWindowMode = State(initialValue: snapshot.floatingWindowMode)
         self.configPath = configPath
         self.onSave = onSave
         self.onClose = onClose
@@ -117,7 +121,7 @@ struct PreferencesView: View {
             SummaryItem(icon: "bolt.horizontal", title: "引擎", value: backend == "google" ? "Google" : "大模型")
             SummaryItem(icon: "speaker.wave.2", title: "语音", value: speechSummary)
             SummaryItem(icon: "arrow.left.arrow.right", title: "语言", value: "\(Languages.name(for: sourceLang)) → \(Languages.name(for: targetLang))")
-            SummaryItem(icon: "circle.lefthalf.filled", title: "主题", value: theme.displayName)
+            SummaryItem(icon: "circle.lefthalf.filled", title: "外观", value: "\(theme.displayName) · \(floatingWindowMode.displayName)")
         }
         .padding(AppUI.Space.l)
         .appSurface(shadow: true)
@@ -253,6 +257,16 @@ struct PreferencesView: View {
                 .pickerStyle(.menu)
                 .frame(width: 252)
             }
+            SettingDivider()
+            SettingRow(icon: "rectangle", title: "极简浮窗", detail: "只显示划词后的译文内容，隐藏原文、语言和工具按钮。") {
+                Toggle("", isOn: Binding(
+                    get: { floatingWindowMode == .minimal },
+                    set: { floatingWindowMode = $0 ? .minimal : .standard }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .frame(width: 252, alignment: .trailing)
+            }
         }
     }
 
@@ -310,7 +324,8 @@ struct PreferencesView: View {
             ttsBaseURL: trimmedTTSBaseURL.isEmpty ? nil : trimmedTTSBaseURL,
             sourceLang: sourceLang,
             targetLang: target,
-            theme: theme
+            theme: theme,
+            floatingWindowMode: floatingWindowMode
         ))
         statusText = "已保存 \(timestamp())"
     }

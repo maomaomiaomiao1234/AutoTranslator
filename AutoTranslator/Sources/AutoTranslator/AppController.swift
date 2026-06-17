@@ -55,6 +55,7 @@ final class AppController: NSObject {
 
     private(set) var isMonitoringPaused = false
     private(set) var currentTheme: Theme = .default
+    private(set) var currentFloatingWindowMode: FloatingWindowMode = .standard
 
     var currentBackend: String { translatorBackend }
 
@@ -78,6 +79,7 @@ final class AppController: NSObject {
         if let savedDest, Languages.nameByCode[savedDest] != nil, savedDest != "auto" {
             destLang = savedDest
         }
+        currentFloatingWindowMode = FloatingWindowMode.from(rawValue: ConfigStore.shared.get(.floatingWindowMode))
         window = FloatingWindow()
 
         super.init()
@@ -86,6 +88,7 @@ final class AppController: NSObject {
         window.delegate = self
         window.setLanguages(Languages.codeByName, source: srcLang, target: destLang)
         window.setBackendLabel(translatorBackend)
+        window.setWindowMode(currentFloatingWindowMode)
         mouseMonitor.delegate = self
         mouseMonitor.shouldIgnoreMouseSequenceStartingAt = { [weak self] point in
             self?.shouldIgnoreSelectionSequence(startingAt: point) ?? false
@@ -227,12 +230,15 @@ final class AppController: NSObject {
         ConfigStore.shared.reload()
         ConfigStore.shared.applyToEnvironment()
         let newBackend = ConfigStore.shared.get(.backend) ?? translatorBackend
+        let newFloatingWindowMode = FloatingWindowMode.from(rawValue: ConfigStore.shared.get(.floatingWindowMode))
         translateTask?.cancel()
         speechTask?.cancel()
         translationCache.removeAll()
         translatorBackend = newBackend
+        currentFloatingWindowMode = newFloatingWindowMode
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
+        window.setWindowMode(currentFloatingWindowMode)
         retranslateLast()
     }
 
@@ -261,6 +267,13 @@ final class AppController: NSObject {
         currentTheme = theme
         theme.apply()
         ConfigStore.shared.update([.theme: theme.rawValue])
+    }
+
+    func setFloatingWindowMode(_ mode: FloatingWindowMode) {
+        guard mode != currentFloatingWindowMode else { return }
+        currentFloatingWindowMode = mode
+        window.setWindowMode(mode)
+        ConfigStore.shared.update([.floatingWindowMode: mode.rawValue])
     }
 
     // MARK: - Translator management

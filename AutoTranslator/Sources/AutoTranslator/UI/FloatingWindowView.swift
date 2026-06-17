@@ -31,6 +31,7 @@ final class FloatingWindowViewModel: ObservableObject {
     @Published var appearanceVersion = 0
     @Published var sourceCardHeight: CGFloat = SOURCE_CARD_MIN_HEIGHT
     @Published var speechState: SpeechPlaybackState = .idle
+    @Published var windowMode: FloatingWindowMode = .standard
 
     var onPin: (() -> Void)?
     var onCopySource: (() -> Void)?
@@ -142,6 +143,16 @@ struct FloatingWindowView: View {
 
     var body: some View {
         let _ = model.appearanceVersion
+        Group {
+            if model.windowMode == .minimal {
+                minimalBody
+            } else {
+                standardBody
+            }
+        }
+    }
+
+    private var standardBody: some View {
         VStack(spacing: AppUI.sectionGap) {
             header
             sourceCard
@@ -167,6 +178,82 @@ struct FloatingWindowView: View {
             ResizeGrip()
                 .padding(.trailing, AppUI.Space.s)
                 .padding(.bottom, AppUI.Space.s)
+        }
+    }
+
+    private var minimalBody: some View {
+        ScrollView {
+            minimalDestinationContent
+                .padding(.top, AppUI.Space.xxs)
+                .padding(.bottom, AppUI.Space.xs)
+        }
+        .scrollIndicators(.hidden)
+        .frame(minHeight: MINIMAL_TEXT_MIN_HEIGHT, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, MINIMAL_WINDOW_PADDING_X)
+        .padding(.vertical, MINIMAL_WINDOW_PADDING_Y)
+        .frame(
+            minWidth: MINIMAL_WINDOW_MIN_WIDTH,
+            maxWidth: MINIMAL_WINDOW_MAX_WIDTH,
+            minHeight: MINIMAL_WINDOW_MIN_HEIGHT,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .background(minimalPanelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
+                .stroke(AppUI.minimalPanelBorder, lineWidth: 1)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [AppUI.minimalPanelHighlight, .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+                .blendMode(.plusLighter)
+        }
+    }
+
+    private var minimalDestinationContent: some View {
+        Group {
+            if model.presentation.isDictionary,
+               model.state == .done,
+               !model.destText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                MinimalDictionaryDefinitionView(word: model.sourceText, definition: model.destText)
+                    .textSelection(.enabled)
+            } else {
+                Text(model.destText.isEmpty ? "正在翻译..." : model.destText)
+                    .font(.system(size: BODY_FONT_SIZE, weight: .regular))
+                    .foregroundStyle(destTextColor)
+                    .lineSpacing(4)
+                    .multilineTextAlignment(.leading)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var minimalPanelBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
+                .fill(.ultraThinMaterial)
+
+            RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
+                .fill(AppUI.minimalPanel)
+
+            RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [AppUI.minimalPanelTop, AppUI.minimalPanelBottom],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
         }
     }
 
@@ -685,6 +772,146 @@ private struct SpeechStatusChip: View {
             return AppUI.chipTeal
         case .failed:
             return AppUI.chipWarm
+        }
+    }
+}
+
+private struct MinimalDictionaryDefinitionView: View {
+    let entry: DictionaryDisplayEntry
+
+    init(word: String, definition: String) {
+        entry = DictionaryDefinitionFormatter.entry(word: word, definition: definition)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppUI.Space.m) {
+            heading
+
+            VStack(alignment: .leading, spacing: AppUI.Space.s) {
+                ForEach(Array(displayLines.enumerated()), id: \.offset) { _, line in
+                    lineView(line)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: AppUI.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(entry.title)
+                    .font(.system(size: 19, weight: .bold, design: .serif))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+
+                if let partOfSpeech {
+                    Text(partOfSpeech)
+                        .font(.system(size: AppUI.FontSize.micro, weight: .bold))
+                        .foregroundStyle(AppUI.accent)
+                        .padding(.horizontal, AppUI.Space.s)
+                        .frame(height: 20)
+                        .background(AppUI.activeToolbar)
+                        .clipShape(Capsule())
+                }
+            }
+
+            if let pronunciation = entry.pronunciation {
+                Text(pronunciation)
+                    .font(.system(size: AppUI.FontSize.small, weight: .medium))
+                    .foregroundStyle(AppUI.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Rectangle()
+                .fill(AppUI.minimalPanelBorder)
+                .frame(height: 1)
+        }
+    }
+
+    private var partOfSpeech: String? {
+        guard let first = entry.lines.first,
+              case .body = first.kind else {
+            return nil
+        }
+        let text = first.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count <= 24,
+              text.rangeOfCharacter(from: CharacterSet(charactersIn: "①②③④⑤⑥⑦⑧⑨⑩▸,，.;；:：")) == nil else {
+            return nil
+        }
+        return text
+    }
+
+    private var displayLines: [DictionaryDisplayEntry.Line] {
+        if partOfSpeech != nil {
+            return Array(entry.lines.dropFirst())
+        }
+        return entry.lines
+    }
+
+    @ViewBuilder
+    private func lineView(_ line: DictionaryDisplayEntry.Line) -> some View {
+        switch line.kind {
+        case .section:
+            Text(line.text)
+                .font(.system(size: AppUI.FontSize.small, weight: .bold))
+                .foregroundStyle(AppUI.accent)
+                .padding(.top, AppUI.Space.xxs)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .sense:
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(line.marker ?? "")
+                    .font(.system(size: AppUI.FontSize.base, weight: .bold))
+                    .foregroundStyle(AppUI.accent)
+                    .frame(width: 20, alignment: .leading)
+
+                Text(line.value ?? line.text)
+                    .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .regular))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .example:
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(line.marker ?? "▸")
+                    .font(.system(size: AppUI.FontSize.small, weight: .bold))
+                    .foregroundStyle(AppUI.textMuted)
+                    .frame(width: 20, alignment: .leading)
+
+                Text(line.value ?? line.text)
+                    .font(.system(size: AppUI.FontSize.base, weight: .medium))
+                    .foregroundStyle(AppUI.textSecondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .keyValue:
+            HStack(alignment: .firstTextBaseline, spacing: AppUI.Space.s) {
+                Text(line.key ?? "")
+                    .font(.system(size: AppUI.FontSize.small, weight: .bold))
+                    .foregroundStyle(AppUI.textMuted)
+                    .frame(width: 34, alignment: .leading)
+
+                Text(line.value ?? line.text)
+                    .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .regular))
+                    .foregroundStyle(AppUI.textPrimary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .body:
+            Text(line.text)
+                .font(.system(size: DICTIONARY_BODY_FONT_SIZE, weight: .regular))
+                .foregroundStyle(AppUI.textPrimary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

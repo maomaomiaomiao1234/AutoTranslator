@@ -333,8 +333,30 @@ final class FloatingWindow: NSObject {
         viewModel.backend = backend
     }
 
+    func setWindowMode(_ mode: FloatingWindowMode) {
+        guard viewModel.windowMode != mode else { return }
+        viewModel.windowMode = mode
+        hasManualHeight = false
+        activeResizeEdges = []
+        setSourceResizeInteractionActive(false)
+        updateMouseEventPolicy()
+        layoutWindow()
+
+        let frame = window.frame
+        let targetHeight = rootView.frame.height
+        let targetFrame = NSRect(
+            x: frame.origin.x,
+            y: window.isVisible ? frame.maxY - targetHeight : frame.origin.y,
+            width: rootView.frame.width,
+            height: targetHeight
+        )
+        suppressAutoPin = true
+        window.setFrame(targetFrame, display: window.isVisible)
+        suppressAutoPin = false
+    }
+
     func containsScreenPoint(_ point: CGPoint) -> Bool {
-        guard window.isVisible else { return false }
+        guard window.isVisible, !window.ignoresMouseEvents else { return false }
         return window.frame.contains(NSPoint(x: point.x, y: point.y))
     }
 
@@ -392,16 +414,17 @@ final class FloatingWindow: NSObject {
         }
         layoutWindow(forcedHeight: targetHeight)
 
+        let newWidth = rootView.frame.width
         let newHeight = rootView.frame.height
         suppressAutoPin = true
         defer { suppressAutoPin = false }
 
         if wasVisible {
             let frame = window.frame
-            if abs(frame.height - newHeight) > 0.5 {
+            if abs(frame.width - newWidth) > 0.5 || abs(frame.height - newHeight) > 0.5 {
                 window.setFrame(
                     NSRect(x: frame.origin.x, y: frame.maxY - newHeight,
-                           width: frame.width, height: newHeight),
+                           width: newWidth, height: newHeight),
                     display: true
                 )
             } else {
@@ -416,11 +439,11 @@ final class FloatingWindow: NSObject {
                 y = saved.y
             } else {
                 let screen = NSScreen.main?.frame ?? .zero
-                x = (screen.width - window.frame.width) / 2 + screen.origin.x
+                x = (screen.width - newWidth) / 2 + screen.origin.x
                 y = (screen.height - newHeight) / 2 + screen.origin.y
             }
 
-            window.setFrame(NSRect(x: x, y: y, width: window.frame.width, height: newHeight), display: true)
+            window.setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
             window.alphaValue = 0
             // 不调用 makeKeyAndOrderFront：让浮窗以“非激活”方式出现，避免抢走源程序的 key 焦点、
             // 把本应用置为 active。否则紧接着的划词会在鼠标按下时被 isIgnoredFrontmostApplication()
@@ -546,11 +569,12 @@ final class FloatingWindow: NSObject {
         layoutWindow(forcedHeight: desiredHeight)
 
         guard window.isVisible else { return }
+        let newWidth = rootView.frame.width
         let newHeight = rootView.frame.height
-        guard abs(frame.height - newHeight) > 0.5 else { return }
+        guard abs(frame.width - newWidth) > 0.5 || abs(frame.height - newHeight) > 0.5 else { return }
         suppressAutoPin = true
         window.setFrame(
-            NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: frame.width, height: newHeight),
+            NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: newWidth, height: newHeight),
             display: true
         )
         suppressAutoPin = false
@@ -665,7 +689,7 @@ final class FloatingWindow: NSObject {
     private func setSourceResizeInteractionActive(_ active: Bool) {
         guard active != isSourceResizeInteractionActive else { return }
         isSourceResizeInteractionActive = active
-        window.isMovableByWindowBackground = !active
+        updateMouseEventPolicy()
     }
 
     @objc private func windowDidMove(_ notification: Notification) {
@@ -682,7 +706,6 @@ final class FloatingWindow: NSObject {
 
     private func layoutWindow(forcedHeight: CGFloat? = nil) {
         let windowWidth = clampedWindowWidth(window.frame.width)
-        let preferredSourceHeight = preferredSourceCardHeight(for: windowWidth)
         let totalHeight: CGFloat
         if let forcedHeight {
             totalHeight = clampedWindowHeight(forcedHeight)
@@ -692,14 +715,19 @@ final class FloatingWindow: NSObject {
             totalHeight = desiredAutomaticWindowHeight(for: windowWidth)
         }
 
-        let displayedSourceHeight = min(
-            preferredSourceHeight,
-            max(SOURCE_CARD_MIN_HEIGHT, totalHeight - minimumNonSourceHeight)
-        )
-        if abs(viewModel.sourceCardHeight - displayedSourceHeight) > 0.5 {
-            viewModel.sourceCardHeight = displayedSourceHeight
+        if !isMinimalWindowMode {
+            let preferredSourceHeight = preferredSourceCardHeight(for: windowWidth)
+            let displayedSourceHeight = min(
+                preferredSourceHeight,
+                max(SOURCE_CARD_MIN_HEIGHT, totalHeight - minimumNonSourceHeight)
+            )
+            if abs(viewModel.sourceCardHeight - displayedSourceHeight) > 0.5 {
+                viewModel.sourceCardHeight = displayedSourceHeight
+            }
         }
 
+        updateMouseEventPolicy()
+        rootView.layer?.cornerRadius = isMinimalWindowMode ? MINIMAL_PANEL_RADIUS : PANEL_RADIUS
         rootView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         hostingView.frame = rootView.bounds
         resizeView.frame = rootView.bounds
@@ -707,6 +735,10 @@ final class FloatingWindow: NSObject {
     }
 
     private func desiredAutomaticWindowHeight(for width: CGFloat) -> CGFloat {
+        if isMinimalWindowMode {
+            return desiredMinimalWindowHeight(for: width)
+        }
+
         let sourceCardHeight = preferredSourceCardHeight(for: width)
         let cardInnerWidth = textMeasureWidth(for: width)
         let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
@@ -729,6 +761,23 @@ final class FloatingWindow: NSObject {
                                        max(baseDestCardHeight, min(destTextHeight, MAX_CARD_TEXT_HEIGHT) + destChromeHeight))
         return min(MAX_WINDOW_HEIGHT,
                    max(minimumWindowHeight, overhead + sourceCardHeight + neededDestCardHeight))
+    }
+
+    private func desiredMinimalWindowHeight(for width: CGFloat) -> CGFloat {
+        let destDisplayText = currentDestText.isEmpty ? "正在翻译..." : currentDestText
+        let measuredText = isMinimalDictionaryResult
+            ? DictionaryDefinitionFormatter.measurementText(word: currentSourceText, definition: destDisplayText)
+            : destDisplayText
+        let measuredFontSize = isMinimalDictionaryResult ? DICTIONARY_BODY_FONT_SIZE : BODY_FONT_SIZE
+        let extraHeight = isMinimalDictionaryResult ? MINIMAL_DICTIONARY_EXTRA_HEIGHT : 0
+        let destTextHeight = measureTextHeight(
+            measuredText,
+            width: minimalTextMeasureWidth(for: width),
+            fontSize: measuredFontSize,
+            minimum: MINIMAL_TEXT_MIN_HEIGHT
+        )
+        let contentHeight = min(destTextHeight + extraHeight, MINIMAL_WINDOW_MAX_HEIGHT - minimalWindowChromeHeight)
+        return min(maximumWindowHeight, max(minimumWindowHeight, contentHeight + minimalWindowChromeHeight))
     }
 
     private func destinationMeasurementText(for text: String) -> String {
@@ -769,6 +818,10 @@ final class FloatingWindow: NSObject {
         return max(120, contentWidth - (CARD_INSET_X * 2))
     }
 
+    private func minimalTextMeasureWidth(for width: CGFloat) -> CGFloat {
+        max(120, width - (MINIMAL_WINDOW_PADDING_X * 2))
+    }
+
     private var windowChromeHeight: CGFloat {
         OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
             + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
@@ -783,7 +836,18 @@ final class FloatingWindow: NSObject {
     }
 
     private var minimumWindowHeight: CGFloat {
-        max(WINDOW_MIN_HEIGHT, windowChromeHeight + SOURCE_CARD_MIN_HEIGHT + destinationMinimumCardHeight)
+        if isMinimalWindowMode {
+            return MINIMAL_WINDOW_MIN_HEIGHT
+        }
+        return max(WINDOW_MIN_HEIGHT, windowChromeHeight + SOURCE_CARD_MIN_HEIGHT + destinationMinimumCardHeight)
+    }
+
+    private var maximumWindowHeight: CGFloat {
+        isMinimalWindowMode ? MINIMAL_WINDOW_MAX_HEIGHT : MAX_WINDOW_HEIGHT
+    }
+
+    private var minimalWindowChromeHeight: CGFloat {
+        MINIMAL_WINDOW_PADDING_Y * 2
     }
 
     private func growWindowForStreamingIfNeeded() {
@@ -796,9 +860,11 @@ final class FloatingWindow: NSObject {
 
         layoutWindow(forcedHeight: targetHeight)
         let top = frame.maxY
+        let newWidth = rootView.frame.width
+        let newHeight = rootView.frame.height
         suppressAutoPin = true
         window.setFrame(
-            NSRect(x: frame.origin.x, y: top - targetHeight, width: frame.width, height: targetHeight),
+            NSRect(x: frame.origin.x, y: top - newHeight, width: newWidth, height: newHeight),
             display: true
         )
         suppressAutoPin = false
@@ -847,14 +913,38 @@ final class FloatingWindow: NSObject {
     }
 
     private func clampedWindowWidth(_ width: CGFloat) -> CGFloat {
-        max(MIN_WINDOW_WIDTH, min(MAX_WINDOW_WIDTH, width))
+        if isMinimalWindowMode {
+            return max(MINIMAL_WINDOW_MIN_WIDTH, min(MINIMAL_WINDOW_MAX_WIDTH, width))
+        }
+        return max(MIN_WINDOW_WIDTH, min(MAX_WINDOW_WIDTH, width))
     }
 
     private func clampedWindowHeight(_ height: CGFloat) -> CGFloat {
-        max(minimumWindowHeight, min(MAX_WINDOW_HEIGHT, height))
+        max(minimumWindowHeight, min(maximumWindowHeight, height))
+    }
+
+    private var isMinimalWindowMode: Bool {
+        viewModel.windowMode == .minimal
+    }
+
+    private var isMinimalDictionaryResult: Bool {
+        currentPresentation.isDictionary
+            && currentState == .done
+            && !currentDestText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && currentDestText != "正在翻译..."
     }
 
     // MARK: - Private Helpers
+
+    private func updateMouseEventPolicy() {
+        // 极简模式是展示层，鼠标应穿透到下面的网页，否则小窗覆盖区域会吞掉下一次划词。
+        window.ignoresMouseEvents = isMinimalWindowMode
+        if isMinimalWindowMode {
+            window.isMovableByWindowBackground = false
+        } else {
+            window.isMovableByWindowBackground = !isSourceResizeInteractionActive
+        }
+    }
 
     private func wireViewModel() {
         viewModel.onPin = { [weak self] in self?.handlePin() }

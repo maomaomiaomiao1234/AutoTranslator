@@ -21,6 +21,7 @@ final class ConfigStore {
         case srcLang = "SRC_LANG"
         case destLang = "DEST_LANG"
         case theme = "THEME"
+        case floatingWindowMode = "FLOATING_WINDOW_MODE"
     }
 
     private let fileURL: URL

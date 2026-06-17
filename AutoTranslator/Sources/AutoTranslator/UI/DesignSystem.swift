@@ -6,6 +6,15 @@ let WINDOW_WIDTH: CGFloat = 464
 let WINDOW_MIN_HEIGHT: CGFloat = 424
 let MIN_WINDOW_WIDTH: CGFloat = 360
 let MAX_WINDOW_WIDTH: CGFloat = 720
+let MINIMAL_WINDOW_MIN_WIDTH: CGFloat = 280
+let MINIMAL_WINDOW_MAX_WIDTH: CGFloat = 420
+let MINIMAL_WINDOW_MIN_HEIGHT: CGFloat = 88
+let MINIMAL_WINDOW_MAX_HEIGHT: CGFloat = 320
+let MINIMAL_WINDOW_PADDING_X: CGFloat = 20
+let MINIMAL_WINDOW_PADDING_Y: CGFloat = 16
+let MINIMAL_TEXT_MIN_HEIGHT: CGFloat = 48
+let MINIMAL_PANEL_RADIUS: CGFloat = 16
+let MINIMAL_DICTIONARY_EXTRA_HEIGHT: CGFloat = 44
 let RESIZE_GRIP_SIZE: CGFloat = 14
 let RESIZE_EDGE_THICKNESS: CGFloat = 8
 let RESIZE_CORNER_HIT_SIZE: CGFloat = 22
@@ -91,6 +100,21 @@ var PANEL_BOTTOM: NSColor {
 }
 var PANEL_BORDER: NSColor {
     isDarkMode ? rgb(255, 255, 255, 0.13) : rgb(86, 70, 58, 0.14)
+}
+var MINIMAL_PANEL_BG: NSColor {
+    isDarkMode ? rgb(30, 29, 27, 0.80) : rgb(255, 253, 249, 0.78)
+}
+var MINIMAL_PANEL_TOP: NSColor {
+    isDarkMode ? rgb(42, 39, 35, 0.34) : rgb(255, 255, 255, 0.42)
+}
+var MINIMAL_PANEL_BOTTOM: NSColor {
+    isDarkMode ? rgb(19, 18, 17, 0.22) : rgb(232, 225, 215, 0.18)
+}
+var MINIMAL_PANEL_BORDER: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.18) : rgb(86, 70, 58, 0.18)
+}
+var MINIMAL_PANEL_HIGHLIGHT: NSColor {
+    isDarkMode ? rgb(255, 255, 255, 0.16) : rgb(255, 255, 255, 0.68)
 }
 var SOURCE_CARD_BG: NSColor {
     isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.70)
