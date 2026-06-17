@@ -45,8 +45,20 @@ final class BorderlessWindow: NSPanel {
 
 private final class ThemeAwareView: NSView {
     var onAppearanceChanged: (() -> Void)?
+    var allowsScrollOnlyMouseInteraction = false
 
     override var isOpaque: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard allowsScrollOnlyMouseInteraction else {
+            return super.hitTest(point)
+        }
+        guard bounds.contains(point) else { return nil }
+
+        let eventType = window?.currentEvent?.type ?? NSApp.currentEvent?.type
+        guard eventType == .scrollWheel else { return nil }
+        return super.hitTest(point)
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -197,6 +209,8 @@ final class FloatingWindow: NSObject {
     private var sourceCardHeightOverride: CGFloat?
     private var isSourceResizeInteractionActive = false
     private var currentState: TranslationState = .idle
+    private var minimalAnchorPoint: NSPoint?
+    private var dismissedMinimalSourceText: String?
 
     private var streamTimer: Timer?
     private var streamBuffer = ""
@@ -294,14 +308,19 @@ final class FloatingWindow: NSObject {
     }
 
     private func installGlobalClickMonitorIfNeeded() {
-        guard globalClickMonitor == nil, !isPinned else { return }
+        guard globalClickMonitor == nil else { return }
+        guard isMinimalWindowMode || !isPinned else { return }
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
             guard let self,
                   self.window.isVisible,
-                  !self.isPinned,
                   self.window.level == .floating else { return }
+            if self.isMinimalWindowMode {
+                self.hide()
+                return
+            }
+            guard !self.isPinned else { return }
             let work = DispatchWorkItem { [weak self] in self?.sinkBelowOtherWindows() }
             self.pendingSinkWorkItem?.cancel()
             self.pendingSinkWorkItem = work
@@ -336,27 +355,46 @@ final class FloatingWindow: NSObject {
     func setWindowMode(_ mode: FloatingWindowMode) {
         guard viewModel.windowMode != mode else { return }
         viewModel.windowMode = mode
+        if mode == .minimal, isPinned {
+            isPinned = false
+            viewModel.isPinned = false
+        }
         hasManualHeight = false
         activeResizeEdges = []
         setSourceResizeInteractionActive(false)
         updateMouseEventPolicy()
         layoutWindow()
+        if mode == .minimal {
+            minimalAnchorPoint = NSEvent.mouseLocation
+        } else {
+            minimalAnchorPoint = nil
+            dismissedMinimalSourceText = nil
+        }
 
         let frame = window.frame
         let targetHeight = rootView.frame.height
-        let targetFrame = NSRect(
-            x: frame.origin.x,
-            y: window.isVisible ? frame.maxY - targetHeight : frame.origin.y,
-            width: rootView.frame.width,
-            height: targetHeight
-        )
+        let targetFrame: NSRect
+        if mode == .minimal, let point = minimalAnchorPoint {
+            targetFrame = minimalWindowFrame(near: point, width: rootView.frame.width, height: targetHeight)
+        } else {
+            targetFrame = NSRect(
+                x: frame.origin.x,
+                y: window.isVisible ? frame.maxY - targetHeight : frame.origin.y,
+                width: rootView.frame.width,
+                height: targetHeight
+            )
+        }
         suppressAutoPin = true
         window.setFrame(targetFrame, display: window.isVisible)
         suppressAutoPin = false
+        removeGlobalClickMonitor()
+        if window.isVisible {
+            installGlobalClickMonitorIfNeeded()
+        }
     }
 
     func containsScreenPoint(_ point: CGPoint) -> Bool {
-        guard window.isVisible, !window.ignoresMouseEvents else { return false }
+        guard window.isVisible, !isMinimalWindowMode, !window.ignoresMouseEvents else { return false }
         return window.frame.contains(NSPoint(x: point.x, y: point.y))
     }
 
@@ -383,6 +421,19 @@ final class FloatingWindow: NSObject {
         stopStream()
         let wasVisible = window.isVisible
         let isNewSourceText = srcText != currentSourceText
+
+        if isMinimalWindowMode,
+           destText != nil,
+           !wasVisible,
+           !isNewSourceText,
+           dismissedMinimalSourceText == srcText {
+            return
+        }
+
+        if isMinimalWindowMode, destText == nil || isNewSourceText || minimalAnchorPoint == nil {
+            dismissedMinimalSourceText = nil
+            minimalAnchorPoint = NSEvent.mouseLocation
+        }
 
         if isNewSourceText, !isSourceResizeInteractionActive {
             sourceCardHeightOverride = nil
@@ -419,7 +470,25 @@ final class FloatingWindow: NSObject {
         suppressAutoPin = true
         defer { suppressAutoPin = false }
 
-        if wasVisible {
+        if isMinimalWindowMode {
+            let point = minimalAnchorPoint ?? NSEvent.mouseLocation
+            minimalAnchorPoint = point
+            let targetFrame = minimalWindowFrame(near: point, width: newWidth, height: newHeight)
+            if wasVisible {
+                window.setFrame(targetFrame, display: true)
+                window.level = .floating
+                window.orderFrontRegardless()
+            } else {
+                window.setFrame(targetFrame, display: true)
+                window.alphaValue = 0
+                window.orderFrontRegardless()
+
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.16
+                    window.animator().alphaValue = 1
+                }
+            }
+        } else if wasVisible {
             let frame = window.frame
             if abs(frame.width - newWidth) > 0.5 || abs(frame.height - newHeight) > 0.5 {
                 window.setFrame(
@@ -573,17 +642,29 @@ final class FloatingWindow: NSObject {
         let newHeight = rootView.frame.height
         guard abs(frame.width - newWidth) > 0.5 || abs(frame.height - newHeight) > 0.5 else { return }
         suppressAutoPin = true
-        window.setFrame(
-            NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: newWidth, height: newHeight),
-            display: true
-        )
+        if isMinimalWindowMode, let point = minimalAnchorPoint {
+            window.setFrame(
+                minimalWindowFrame(near: point, width: newWidth, height: newHeight),
+                display: true
+            )
+        } else {
+            window.setFrame(
+                NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: newWidth, height: newHeight),
+                display: true
+            )
+        }
         suppressAutoPin = false
     }
 
     func hide() {
         stopStream()
         setSourceResizeInteractionActive(false)
-        if window.isVisible, !isPinned { savedOrigin = window.frame.origin }
+        if isMinimalWindowMode {
+            dismissedMinimalSourceText = currentSourceText
+            minimalAnchorPoint = nil
+        } else if window.isVisible, !isPinned {
+            savedOrigin = window.frame.origin
+        }
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
@@ -599,7 +680,12 @@ final class FloatingWindow: NSObject {
     func hideImmediately() {
         stopStream()
         setSourceResizeInteractionActive(false)
-        if window.isVisible, !isPinned { savedOrigin = window.frame.origin }
+        if isMinimalWindowMode {
+            dismissedMinimalSourceText = currentSourceText
+            minimalAnchorPoint = nil
+        } else if window.isVisible, !isPinned {
+            savedOrigin = window.frame.origin
+        }
         window.alphaValue = 1
         window.orderOut(nil)
         removeGlobalClickMonitor()
@@ -728,6 +814,7 @@ final class FloatingWindow: NSObject {
 
         updateMouseEventPolicy()
         rootView.layer?.cornerRadius = isMinimalWindowMode ? MINIMAL_PANEL_RADIUS : PANEL_RADIUS
+        resizeView.isHidden = isMinimalWindowMode
         rootView.frame = NSRect(x: 0, y: 0, width: windowWidth, height: totalHeight)
         hostingView.frame = rootView.bounds
         resizeView.frame = rootView.bounds
@@ -863,10 +950,17 @@ final class FloatingWindow: NSObject {
         let newWidth = rootView.frame.width
         let newHeight = rootView.frame.height
         suppressAutoPin = true
-        window.setFrame(
-            NSRect(x: frame.origin.x, y: top - newHeight, width: newWidth, height: newHeight),
-            display: true
-        )
+        if isMinimalWindowMode, let point = minimalAnchorPoint {
+            window.setFrame(
+                minimalWindowFrame(near: point, width: newWidth, height: newHeight),
+                display: true
+            )
+        } else {
+            window.setFrame(
+                NSRect(x: frame.origin.x, y: top - newHeight, width: newWidth, height: newHeight),
+                display: true
+            )
+        }
         suppressAutoPin = false
     }
 
@@ -923,6 +1017,47 @@ final class FloatingWindow: NSObject {
         max(minimumWindowHeight, min(maximumWindowHeight, height))
     }
 
+    private func minimalWindowFrame(near point: NSPoint, width: CGFloat, height: CGFloat) -> NSRect {
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main
+        let fallbackFrame = NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: width, height: height)
+        let visibleFrame = (screen?.visibleFrame ?? fallbackFrame).insetBy(
+            dx: MINIMAL_WINDOW_SCREEN_MARGIN,
+            dy: MINIMAL_WINDOW_SCREEN_MARGIN
+        )
+
+        let minX = visibleFrame.minX
+        let maxX = max(minX, visibleFrame.maxX - width)
+        let preferredRightX = point.x + MINIMAL_WINDOW_CURSOR_OFFSET_X
+        let preferredLeftX = point.x - width - MINIMAL_WINDOW_CURSOR_OFFSET_X
+        let x: CGFloat
+        if preferredRightX <= maxX {
+            x = min(max(preferredRightX, minX), maxX)
+        } else if preferredLeftX >= minX {
+            x = min(max(preferredLeftX, minX), maxX)
+        } else {
+            x = min(max(preferredRightX, minX), maxX)
+        }
+
+        let minY = visibleFrame.minY
+        let maxY = max(minY, visibleFrame.maxY - height)
+        let preferredBelowY = point.y - height - MINIMAL_WINDOW_CURSOR_OFFSET_Y
+        let preferredAboveY = point.y + MINIMAL_WINDOW_CURSOR_OFFSET_Y
+        let y: CGFloat
+        if preferredBelowY >= minY {
+            y = min(max(preferredBelowY, minY), maxY)
+        } else if preferredAboveY <= maxY {
+            y = min(max(preferredAboveY, minY), maxY)
+        } else {
+            let availableBelow = point.y - MINIMAL_WINDOW_CURSOR_OFFSET_Y - minY
+            let availableAbove = visibleFrame.maxY - point.y - MINIMAL_WINDOW_CURSOR_OFFSET_Y
+            let preferredY = availableBelow >= availableAbove ? preferredBelowY : preferredAboveY
+            y = min(max(preferredY, minY), maxY)
+        }
+
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+
     private var isMinimalWindowMode: Bool {
         viewModel.windowMode == .minimal
     }
@@ -937,8 +1072,9 @@ final class FloatingWindow: NSObject {
     // MARK: - Private Helpers
 
     private func updateMouseEventPolicy() {
-        // 极简模式是展示层，鼠标应穿透到下面的网页，否则小窗覆盖区域会吞掉下一次划词。
-        window.ignoresMouseEvents = isMinimalWindowMode
+        // 极简模式只接收滚轮，让内容可滚动；点击和拖拽继续穿透到下面的网页。
+        window.ignoresMouseEvents = false
+        rootView.allowsScrollOnlyMouseInteraction = isMinimalWindowMode
         if isMinimalWindowMode {
             window.isMovableByWindowBackground = false
         } else {
@@ -1012,7 +1148,7 @@ final class FloatingWindow: NSObject {
     }
 
     private func autoPin() {
-        guard !isPinned else { return }
+        guard !isPinned, !isMinimalWindowMode else { return }
         isPinned = true
         viewModel.isPinned = true
     }
