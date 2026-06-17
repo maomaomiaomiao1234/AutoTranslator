@@ -336,11 +336,18 @@ final class AppController: NSObject {
     }
 
     private func shouldIgnoreSelectionSequence(startingAt point: CGPoint) -> Bool {
-        if isMonitoringPaused { return true }
-        if window.containsScreenPoint(point) { return true }
-        if Self.isSystemChromePoint(point) { return true }
-        if Self.isIgnoredFrontmostApplication() { return true }
+        if let reason = selectionIgnoreReason(startingAt: point) {
+            AppLog.debug("Selection sequence ignored: reason=\(reason) point=\(Self.pointDescription(point))")
+            return true
+        }
         return false
+    }
+
+    private func selectionIgnoreReason(startingAt point: CGPoint) -> String? {
+        if isMonitoringPaused { return "monitoringPaused" }
+        if window.containsScreenPoint(point) { return "insideFloatingWindow" }
+        if Self.isSystemChromePoint(point) { return "systemChrome" }
+        return Self.ignoredFrontmostApplicationReason()
     }
 
     private static func isSystemChromePoint(_ point: CGPoint) -> Bool {
@@ -352,15 +359,26 @@ final class AppController: NSObject {
     }
 
     private static func isIgnoredFrontmostApplication() -> Bool {
-        if NSApp.isActive { return true }
+        ignoredFrontmostApplicationReason() != nil
+    }
+
+    private static func ignoredFrontmostApplicationReason() -> String? {
+        if NSApp.isActive { return "appActive" }
         guard let app = NSWorkspace.shared.frontmostApplication,
               let bundleIdentifier = app.bundleIdentifier else {
-            return false
+            return nil
         }
         if bundleIdentifier == Bundle.main.bundleIdentifier {
-            return true
+            return "frontmostSelf bundle=\(bundleIdentifier)"
         }
-        return ignoredSelectionBundleIdentifiers.contains(bundleIdentifier)
+        if ignoredSelectionBundleIdentifiers.contains(bundleIdentifier) {
+            return "ignoredBundle bundle=\(bundleIdentifier)"
+        }
+        return nil
+    }
+
+    private static func pointDescription(_ point: CGPoint) -> String {
+        "(\(String(format: "%.1f", point.x)),\(String(format: "%.1f", point.y)))"
     }
 
     private func translator(for mode: TranslationMode) -> TranslatorProtocol? {
@@ -421,11 +439,18 @@ final class AppController: NSObject {
     private func dispatchTranslate(_ text: String, mode: TranslationMode) {
         translateVersion += 1
         let version = translateVersion
+        if translateTask != nil {
+            AppLog.debug("Translate cancel previous task before version=\(version)")
+        }
         translateTask?.cancel()
         if case .dictionary = mode {
             speechTask?.cancel()
             speechService.stop()
         }
+
+        AppLog.debug(
+            "Translate dispatch version=\(version) mode=\(Self.modeDescription(mode)) length=\(text.count) backend=\(translatorBackend)"
+        )
 
         let cacheKey = Self.translationCacheKey(
             backend: translatorBackend,
@@ -441,6 +466,7 @@ final class AppController: NSObject {
             do {
                 if case .dictionary(let word) = mode,
                    let definition = SystemDictionary.definition(for: word) {
+                    AppLog.debug("Translate version=\(version) resolved by system dictionary wordLength=\(word.count)")
                     await MainActor.run { [weak self] in
                         if version == self?.translateVersion {
                             self?.window.show(
@@ -455,6 +481,7 @@ final class AppController: NSObject {
                 }
 
                 if let cached = self.translationCache.value(forKey: cacheKey) {
+                    AppLog.debug("Translate version=\(version) cache hit")
                     await MainActor.run { [weak self] in
                         if version == self?.translateVersion {
                             self?.window.show(
@@ -470,6 +497,7 @@ final class AppController: NSObject {
 
                 guard let requestTranslator = self.translator(for: mode) else { return }
                 if requestTranslator.supportsStreaming {
+                    AppLog.debug("Translate version=\(version) request started streaming=true")
                     var buffer = ""
                     var pendingDisplayChunk = ""
                     var lastDisplayFlush = ProcessInfo.processInfo.systemUptime
@@ -533,6 +561,7 @@ final class AppController: NSObject {
                         }
                     }
                 } else {
+                    AppLog.debug("Translate version=\(version) request started streaming=false")
                     let result: String
                     switch mode {
                     case .translation:
@@ -568,6 +597,7 @@ final class AppController: NSObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 if version == self.translateVersion {
+                    AppLog.debug("Translate version=\(version) failed error=\(Self.userFacingErrorMessage(from: error, fallback: "翻译服务暂时不可用", maxLength: 80))")
                     let errMsg = Self.userFacingErrorMessage(
                         from: error,
                         fallback: "翻译服务暂时不可用",
@@ -584,6 +614,15 @@ final class AppController: NSObject {
                     }
                 }
             }
+        }
+    }
+
+    private static func modeDescription(_ mode: TranslationMode) -> String {
+        switch mode {
+        case .translation:
+            return "translation"
+        case .dictionary:
+            return "dictionary"
         }
     }
 
@@ -665,20 +704,37 @@ final class AppController: NSObject {
 
 extension AppController: MouseMonitorDelegate {
     func onSelectionEvent(allowClipboardFallback: Bool) {
+        if selectionTask != nil {
+            AppLog.debug("Selection event cancels previous selectionTask")
+        }
         selectionTask?.cancel()
         selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            guard !Self.isIgnoredFrontmostApplication() else { return }
+            AppLog.debug("Selection event handling begin allowClipboardFallback=\(allowClipboardFallback)")
+            if let reason = Self.ignoredFrontmostApplicationReason() {
+                AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
+                return
+            }
             let text = await self.textSelector.getSelectedText(
                 allowClipboardFallback: allowClipboardFallback
             )
-            guard !Task.isCancelled else { return }
-            guard let text = text, !text.isEmpty else { return }
-            guard allowClipboardFallback || text != self.lastText else { return }
+            guard !Task.isCancelled else {
+                AppLog.debug("Selection event cancelled after text lookup")
+                return
+            }
+            guard let text = text, !text.isEmpty else {
+                AppLog.debug("Selection event dropped: no selected text")
+                return
+            }
+            guard allowClipboardFallback || text != self.lastText else {
+                AppLog.debug("Selection event dropped: duplicate text length=\(text.count)")
+                return
+            }
 
             self.lastText = text
             let mode = Self.translationMode(for: text)
             self.lastTranslationMode = mode
+            AppLog.debug("Selection event accepted length=\(text.count) mode=\(Self.modeDescription(mode))")
             self.window.show(srcText: text, destText: nil, presentation: mode.floatingPresentation)
             self.dispatchTranslate(text, mode: mode)
         }

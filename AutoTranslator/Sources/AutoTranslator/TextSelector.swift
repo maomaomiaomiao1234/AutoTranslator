@@ -3,6 +3,18 @@ import ApplicationServices
 import CoreGraphics
 
 final class TextSelector {
+    private static let axChildAttributeNames: [CFString] = [
+        "AXChildren" as CFString,
+        "AXVisibleChildren" as CFString,
+        "AXContents" as CFString,
+        "AXRows" as CFString,
+        "AXVisibleRows" as CFString,
+        "AXColumns" as CFString,
+        "AXVisibleColumns" as CFString,
+        "AXCells" as CFString,
+        "AXVisibleCells" as CFString,
+    ]
+
     private struct PasteboardItemSnapshot {
         let dataByType: [NSPasteboard.PasteboardType: Data]
     }
@@ -16,49 +28,196 @@ final class TextSelector {
     private let copyInterval: TimeInterval
     private let copyPollIntervalNs: UInt64
     private let maxCopyPollCount: Int
+    private let maxAXDescendantSearchCount: Int
     private var lastCopyTime: TimeInterval = 0
 
     init(copyInterval: TimeInterval = 0.12,
          copyPollInterval: TimeInterval = 0.01,
-         maxCopyPollCount: Int = 20) {
+         maxCopyPollCount: Int = 20,
+         maxAXDescendantSearchCount: Int = 180) {
         self.copyInterval = copyInterval
         self.copyPollIntervalNs = UInt64(copyPollInterval * 1_000_000_000)
         self.maxCopyPollCount = maxCopyPollCount
+        self.maxAXDescendantSearchCount = maxAXDescendantSearchCount
     }
 
     @MainActor
     func getSelectedText(allowClipboardFallback: Bool = false) async -> String? {
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            AppLog.debug("TextSelector failed: no frontmost application")
+            return nil
+        }
         let pid = frontApp.processIdentifier
+        let bundleID = frontApp.bundleIdentifier ?? "<unknown>"
+        AppLog.debug("TextSelector begin app=\(bundleID) pid=\(pid) allowClipboardFallback=\(allowClipboardFallback)")
 
         // 尝试 Accessibility API
         if let text = getSelectedTextViaAccessibility(pid: pid) {
+            AppLog.debug("TextSelector success via AX length=\(text.count) app=\(bundleID)")
             return text
         }
 
-        guard allowClipboardFallback else { return nil }
-        return await getByClipboard()
+        guard allowClipboardFallback else {
+            AppLog.debug("TextSelector failed: AX unavailable and clipboard fallback disabled app=\(bundleID)")
+            return nil
+        }
+        let text = await getByClipboard()
+        if let text {
+            AppLog.debug("TextSelector success via clipboard length=\(text.count) app=\(bundleID)")
+        } else {
+            AppLog.debug("TextSelector failed: clipboard fallback returned nil app=\(bundleID)")
+        }
+        return text
     }
 
     private func getSelectedTextViaAccessibility(pid: pid_t) -> String? {
         let appRef = AXUIElementCreateApplication(pid)
-        var focused: CFTypeRef?
-        let err = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
-        guard err == .success, let focused = focused else { return nil }
+        let focusedResult = copyAXElementAttribute(appRef, kAXFocusedUIElementAttribute as CFString)
+        guard let focused = focusedResult.element else {
+            AppLog.debug("TextSelector AX focused element unavailable err=\(focusedResult.error.rawValue)")
+            return getSelectedTextViaAccessibilityWindowSearch(appRef: appRef)
+        }
 
-        var selected: CFTypeRef?
-        let selErr = AXUIElementCopyAttributeValue(
-            focused as! AXUIElement, kAXSelectedTextAttribute as CFString, &selected
+        if let text = selectedText(from: focused) {
+            return text
+        }
+        AppLog.debug("TextSelector AX focused selected text unavailable")
+
+        if let text = findSelectedTextInAXDescendants(
+            startingAt: [focused],
+            context: "focusedElement"
+        ) {
+            return text
+        }
+
+        return getSelectedTextViaAccessibilityWindowSearch(appRef: appRef)
+    }
+
+    private func getSelectedTextViaAccessibilityWindowSearch(appRef: AXUIElement) -> String? {
+        let windowResult = copyAXElementAttribute(appRef, kAXFocusedWindowAttribute as CFString)
+        if let focusedWindow = windowResult.element {
+            if let text = selectedText(from: focusedWindow) {
+                return text
+            }
+            if let text = findSelectedTextInAXDescendants(
+                startingAt: [focusedWindow],
+                context: "focusedWindow"
+            ) {
+                return text
+            }
+        } else {
+            AppLog.debug("TextSelector AX focused window unavailable err=\(windowResult.error.rawValue)")
+        }
+
+        let windows = copyAXChildElements(from: appRef, attribute: kAXWindowsAttribute as CFString)
+        guard !windows.isEmpty else {
+            AppLog.debug("TextSelector AX windows unavailable")
+            return nil
+        }
+
+        return findSelectedTextInAXDescendants(
+            startingAt: windows,
+            context: "windows"
         )
-        guard selErr == .success, let text = selected as? String else { return nil }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func selectedText(from element: AXUIElement) -> String? {
+        var selected: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            &selected
+        )
+        guard error == .success, let selected else {
+            return nil
+        }
+
+        let text: String?
+        if let string = selected as? String {
+            text = string
+        } else if let attributedString = selected as? NSAttributedString {
+            text = attributedString.string
+        } else {
+            text = nil
+        }
+
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func findSelectedTextInAXDescendants(startingAt roots: [AXUIElement],
+                                                context: String) -> String? {
+        var queue = roots
+        var index = 0
+        var inspectedCount = 0
+        var visited = Set<CFHashCode>()
+
+        while index < queue.count, inspectedCount < maxAXDescendantSearchCount {
+            let element = queue[index]
+            index += 1
+
+            let identity = CFHash(element)
+            guard visited.insert(identity).inserted else { continue }
+
+            inspectedCount += 1
+            if let text = selectedText(from: element) {
+                AppLog.debug(
+                    "TextSelector AX selected text found context=\(context) inspected=\(inspectedCount) length=\(text.count)"
+                )
+                return text
+            }
+
+            for attribute in Self.axChildAttributeNames {
+                queue.append(contentsOf: copyAXChildElements(from: element, attribute: attribute))
+            }
+        }
+
+        AppLog.debug(
+            "TextSelector AX descendant search exhausted context=\(context) inspected=\(inspectedCount)"
+        )
+        return nil
+    }
+
+    private func copyAXElementAttribute(_ element: AXUIElement,
+                                        _ attribute: CFString) -> (error: AXError, element: AXUIElement?) {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard error == .success, let value else {
+            return (error, nil)
+        }
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return (error, nil)
+        }
+        return (error, (value as! AXUIElement))
+    }
+
+    private func copyAXChildElements(from element: AXUIElement,
+                                     attribute: CFString) -> [AXUIElement] {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard error == .success, let value else {
+            return []
+        }
+        if let array = value as? [AXUIElement] {
+            return array
+        }
+        guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return []
+        }
+        return [value as! AXUIElement]
     }
 
     @MainActor
     private func getByClipboard() async -> String? {
         let now = ProcessInfo.processInfo.systemUptime
-        if now - lastCopyTime < copyInterval { return nil }
+        let elapsed = now - lastCopyTime
+        if elapsed < copyInterval {
+            AppLog.debug("TextSelector clipboard skipped: rate limited elapsed=\(Self.seconds(elapsed))s")
+            return nil
+        }
         lastCopyTime = now
 
         let pb = NSPasteboard.general
@@ -66,20 +225,30 @@ final class TextSelector {
         let oldCount = pb.changeCount
         defer { restorePasteboardSnapshot(snapshot, to: pb) }
 
+        AppLog.debug("TextSelector clipboard copy requested oldChangeCount=\(oldCount) hadContents=\(snapshot.hadContents)")
         simulateCmdC()
 
         var newText: String? = nil
-        for _ in 0..<maxCopyPollCount {
-            if Task.isCancelled { return nil }
+        var pollIndex = 0
+        for index in 0..<maxCopyPollCount {
+            pollIndex = index + 1
+            if Task.isCancelled {
+                AppLog.debug("TextSelector clipboard cancelled while polling")
+                return nil
+            }
             try? await Task.sleep(nanoseconds: copyPollIntervalNs)
             if pb.changeCount != oldCount {
                 newText = pb.string(forType: .string)
+                AppLog.debug("TextSelector clipboard changed after polls=\(pollIndex) newChangeCount=\(pb.changeCount)")
                 break
             }
         }
 
         guard let text = newText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty else { return nil }
+              !text.isEmpty else {
+            AppLog.debug("TextSelector clipboard failed: no text after polls=\(pollIndex)")
+            return nil
+        }
         return text
     }
 
@@ -136,5 +305,9 @@ final class TextSelector {
 
         let up = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: false)
         up?.post(tap: .cghidEventTap)
+    }
+
+    private static func seconds(_ value: TimeInterval) -> String {
+        String(format: "%.3f", value)
     }
 }

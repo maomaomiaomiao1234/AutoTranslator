@@ -7,8 +7,6 @@ enum AppLog {
 #else
         let environment = ProcessInfo.processInfo.environment
         return isEnabled(environment["DEBUG_LOG"])
-            || isEnabled(environment["AUTOTRANSLATOR_DEBUG_LOG"])
-            || isEnabled(environment["AUTO_TRANSLATOR_DEBUG_LOG"])
 #endif
     }()
 
