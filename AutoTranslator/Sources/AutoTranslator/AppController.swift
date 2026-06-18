@@ -456,10 +456,11 @@ final class AppController: NSObject {
             AppLog.debug("Translate cancel previous task before version=\(version)")
         }
         translateTask?.cancel()
-        if case .dictionary = mode {
-            speechTask?.cancel()
-            speechService.stop()
-        }
+        // 任何新的（重）翻译开始前，先停止仍在播放的上一段朗读。
+        // speak() 返回后音频仍在缓冲区播放、朗读 Task 已结束，单纯 cancel Task 不会停声，
+        // 必须显式停止播放。新划词、切换后端/语言、刷新配置等入口都经 dispatchTranslate，
+        // 故在此一处覆盖（原先仅词典模式停，翻译模式下划新词时旧音频会继续播放）。
+        stopSpeech()
 
         AppLog.debug(
             "Translate dispatch version=\(version) mode=\(Self.modeDescription(mode)) length=\(text.count) backend=\(translatorBackend)"

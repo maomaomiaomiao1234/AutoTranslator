@@ -31,6 +31,14 @@ final class SpeechService {
     private let audioCache = LRUCache<String, [Data]>(capacity: 32)
     nonisolated private static let maxCacheableAudioBytes = 8 * 1024 * 1024
 
+    /// DashScope CosyVoice 按「字符数」限制单次合成（v3 系列：SDK/Android 2000、WebSocket 20000，
+    /// 累计约 20 万）。本 app 走 HTTP+SSE，介于两档之间、官方未明示，故按最保守的 2000 设计。
+    /// 关键：汉字（含简繁、日韩汉字）按 2 个字符计，其余按 1 个；故按此规则计数后再分段，
+    /// 段上限留足余量低于 2000，避免中文文本因「汉字×2」实际超限。
+    nonisolated private static let maxTotalInputLength = 10000
+    nonisolated private static let speechSegmentSoftLimit = 1000
+    nonisolated private static let speechSegmentHardLimit = 1800
+
     func speak(_ text: String, languageHint _: String) async throws {
         let input = Self.normalizedInput(text)
         guard !input.isEmpty else { return }
@@ -49,7 +57,10 @@ final class SpeechService {
                     }
                 } else {
                     capturedChunks = []
-                    try await streamSpeechAudio(input: input, player: streamingPlayer)
+                    for segment in Self.splitIntoSpeechSegments(input) {
+                        try Task.checkCancellation()
+                        try await streamSpeechAudio(input: segment, player: streamingPlayer)
+                    }
                     try Task.checkCancellation()
                     storeCapturedAudio(forKey: cacheKey)
                 }
@@ -65,7 +76,10 @@ final class SpeechService {
             if let cached = audioCache.value(forKey: cacheKey)?.first {
                 data = cached
             } else {
-                let fetched = try await Self.requestSpeechAudio(input: input)
+                // 非 wav（如 mp3）走单次合成 + AVAudioPlayer 整段播放，无法无缝拼接多段；
+                // 故取首个安全分段（已按接口字符上限切分）请求，避免超长文本报 InvalidParameter。
+                let requestInput = Self.splitIntoSpeechSegments(input).first ?? input
+                let fetched = try await Self.requestSpeechAudio(input: requestInput)
                 try Task.checkCancellation()
                 if fetched.count <= Self.maxCacheableAudioBytes {
                     audioCache.setValue([fetched], forKey: cacheKey)
@@ -403,8 +417,54 @@ final class SpeechService {
         let trimmed = text
             .replacingOccurrences(of: "\u{00a0}", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 4096 else { return trimmed }
-        return String(trimmed.prefix(4096))
+        guard trimmed.count > maxTotalInputLength else { return trimmed }
+        return String(trimmed.prefix(maxTotalInputLength))
+    }
+
+    /// 将长文本切分为若干不超过接口单次上限的小段，尽量在断句标点处切，
+    /// 以保证每段都是较完整的语句、合成韵律更自然；无标点的超长文本按硬上限强制切。
+    /// 短/中等长度（≤硬上限）的文本原样返回单段，保持既有单请求行为与缓存命中不变。
+    nonisolated private static func splitIntoSpeechSegments(_ text: String) -> [String] {
+        guard text.count > speechSegmentHardLimit else { return [text] }
+
+        let terminators: Set<Character> = ["。", "！", "？", "；", "…", ".", "!", "?", ";", "\n"]
+        var segments: [String] = []
+        var current = ""
+        var length = 0
+
+        func flush() {
+            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { segments.append(trimmed) }
+            current = ""
+            length = 0
+        }
+
+        for char in text {
+            current.append(char)
+            length += Self.dashScopeCharCount(char)
+            if length >= speechSegmentHardLimit {
+                flush()
+            } else if length >= speechSegmentSoftLimit, terminators.contains(char) {
+                flush()
+            }
+        }
+        flush()
+        return segments.isEmpty ? [text] : segments
+    }
+
+    /// 按 DashScope 计数规则估算单个字符占用的「字符数」：汉字（含简繁、日韩汉字）计 2，其余计 1。
+    nonisolated private static func dashScopeCharCount(_ char: Character) -> Int {
+        for scalar in char.unicodeScalars {
+            let value = scalar.value
+            if (0x4E00...0x9FFF).contains(value)      // CJK 统一表意文字
+                || (0x3400...0x4DBF).contains(value)  // 扩展 A
+                || (0xF900...0xFAFF).contains(value)  // 兼容表意文字
+                || (0x20000...0x2A6DF).contains(value) // 扩展 B
+                || (0x2A700...0x2EBEF).contains(value) { // 扩展 C–F
+                return 2
+            }
+        }
+        return 1
     }
 
     nonisolated private static func resolvedConfigValue(_ envKey: String, fallback: String) -> String {
