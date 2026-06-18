@@ -655,13 +655,21 @@ final class AppController: NSObject {
         speechStatusResetTask?.cancel()
         speechTask?.cancel()
         window.setSpeechState(.preparing)
+        // 音频真正开始播放时即翻为「播放中」，使长句在整段播放期间都显示播放态。
+        speechService.onPlaybackStarted = { [weak self] in
+            guard let self, self.speechGeneration == generation else { return }
+            self.window.setSpeechState(.playing)
+        }
         speechTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 try await speechService.speak(input, languageHint: srcLang)
                 guard !Task.isCancelled, self.speechGeneration == generation else { return }
                 self.window.setSpeechState(.playing)
-                self.scheduleSpeechStatusReset(for: generation, after: Self.estimatedPlaybackStatusDuration(for: input))
+                // 按真实剩余播放时长安排回到空闲态；取不到时退回粗略估时。
+                let remaining = self.speechService.currentPlaybackRemainingDuration()
+                    ?? Self.estimatedPlaybackStatusDuration(for: input)
+                self.scheduleSpeechStatusReset(for: generation, after: remaining + 0.3)
             } catch is CancellationError {
                 guard self.speechGeneration == generation else { return }
                 self.window.setSpeechState(.idle)

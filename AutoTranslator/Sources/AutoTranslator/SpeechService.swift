@@ -25,6 +25,16 @@ final class SpeechService {
     /// 等十几秒后又正常”。保持引擎常驻可彻底规避该竞态。
     private let streamingPlayer = StreamingAudioPlayer()
 
+    /// 当音频真正开始播放时回调（主线程）。供上层把朗读状态从「准备中」翻为「播放中」，
+    /// 不再依赖固定估时——长句也能在真实播放期间持续显示播放态。
+    var onPlaybackStarted: (() -> Void)?
+
+    init() {
+        streamingPlayer.onPlaybackStarted = { [weak self] in
+            self?.onPlaybackStarted?()
+        }
+    }
+
     /// 缓存最近合成的音频：避免对同一文本（如词典自动朗读高频词）重复请求 TTS。
     /// 存储实时播放时入队的原始音频块，命中时按序重放，行为与现网一致。
     private var capturedChunks: [Data] = []
@@ -92,6 +102,7 @@ final class SpeechService {
             nextPlayer.prepareToPlay()
             nextPlayer.play()
             player = nextPlayer
+            onPlaybackStarted?()
         } catch {
             stop()
             throw error
@@ -103,6 +114,17 @@ final class SpeechService {
         streamingPlayer.stopPlayback()
         player?.stop()
         player = nil
+    }
+
+    /// 当前正在播放音频的剩余时长（秒）；无播放时返回 nil。
+    /// 流式 PCM 按已排队帧数/采样率精确推算，AVAudioPlayer 直接用 duration-currentTime。
+    /// 供上层据此精确安排「播放结束」回到空闲态，避免固定估时把长句过早判为结束。
+    func currentPlaybackRemainingDuration() -> TimeInterval? {
+        if let player, player.isPlaying {
+            let remaining = player.duration - player.currentTime
+            return remaining > 0 ? remaining : nil
+        }
+        return streamingPlayer.remainingPlaybackDuration
     }
 
     /// 入队播放并同时记录音频块，供合成成功后写入缓存。
@@ -267,8 +289,21 @@ final class SpeechService {
         private var scheduledFrameCount = 0
         private(set) var hasStarted = false
 
+        /// 首个音频缓冲开始播放时回调（同步在调用 enqueue 的主线程上）。
+        var onPlaybackStarted: (() -> Void)?
+        /// 播放真正开始的时刻（systemUptime），用于推算剩余时长。
+        private var playbackStartUptime: TimeInterval = 0
+
         init() {
             engine.attach(playerNode)
+        }
+
+        /// 已排队音频的剩余播放时长：总帧数/采样率 - 已播放时间；未开始播放返回 nil。
+        var remainingPlaybackDuration: TimeInterval? {
+            guard hasStarted, let pcmFormat, pcmFormat.sampleRate > 0 else { return nil }
+            let total = Double(scheduledFrameCount) / pcmFormat.sampleRate
+            let elapsed = ProcessInfo.processInfo.systemUptime - playbackStartUptime
+            return max(0, total - elapsed)
         }
 
         func enqueue(_ data: Data) throws {
@@ -388,7 +423,11 @@ final class SpeechService {
             playerNode.scheduleBuffer(buffer, completionHandler: nil)
             scheduledFrameCount += frameCount
             AppLog.debug("TTS 流式播放器排队 frames=\(frameCount) totalFrames=\(scheduledFrameCount)")
-            hasStarted = true
+            if !hasStarted {
+                playbackStartUptime = ProcessInfo.processInfo.systemUptime
+                hasStarted = true
+                onPlaybackStarted?()
+            }
         }
     }
 
