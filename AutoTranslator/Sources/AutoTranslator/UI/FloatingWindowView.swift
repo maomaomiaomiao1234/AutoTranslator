@@ -112,6 +112,21 @@ final class FloatingWindowViewModel: ObservableObject {
             return "辞"
         }
     }
+
+    /// 极简模式：词典结果是否就绪（切换到词典排版而非纯译文展示）。
+    var isDictionaryResult: Bool {
+        presentation.isDictionary
+            && state == .done
+            && !destText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// 极简模式：是否仍在等待首批译文（占位符阶段，尚无流式内容）。
+    var isAwaitingTranslation: Bool {
+        guard state == .loading else { return false }
+        let trimmed = destText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == "正在翻译..."
+    }
+
     var sourceVisibleLineCount: Int {
         let textHeight = max(SOURCE_TEXT_MIN_HEIGHT, sourceCardHeight - SOURCE_CARD_CHROME_HEIGHT)
         return max(minSourceLineCount, Int((textHeight / SOURCE_TEXT_LINE_HEIGHT).rounded(.down)))
@@ -216,19 +231,26 @@ struct FloatingWindowView: View {
                 )
                 .blendMode(.plusLighter)
         }
+        .overlay(alignment: .bottomTrailing) {
+            if !model.isAwaitingTranslation {
+                MinimalEngineDot(tint: model.destinationTint)
+                    .padding(.trailing, AppUI.Space.m)
+                    .padding(.bottom, AppUI.Space.m)
+            }
+        }
     }
 
     private var minimalDestinationContent: some View {
         Group {
-            if model.presentation.isDictionary,
-               model.state == .done,
-               !model.destText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if model.isDictionaryResult {
                 MinimalDictionaryDefinitionView(word: model.sourceText, definition: model.destText)
                     .textSelection(.enabled)
+            } else if model.isAwaitingTranslation {
+                MinimalLoadingIndicator(tint: model.destinationTint)
             } else {
-                Text(model.destText.isEmpty ? "正在翻译..." : model.destText)
+                Text(model.destText)
                     .font(.system(size: BODY_FONT_SIZE, weight: .regular))
-                    .foregroundStyle(destTextColor)
+                    .foregroundStyle(minimalDestTextColor)
                     .lineSpacing(4)
                     .multilineTextAlignment(.leading)
                     .textSelection(.enabled)
@@ -238,10 +260,14 @@ struct FloatingWindowView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
+    private var minimalDestTextColor: Color {
+        model.state == .error ? AppUI.accent : AppUI.textPrimary
+    }
+
     private var minimalPanelBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(.regularMaterial)
 
             RoundedRectangle(cornerRadius: MINIMAL_PANEL_RADIUS, style: .continuous)
                 .fill(AppUI.minimalPanel)
@@ -773,6 +799,52 @@ private struct SpeechStatusChip: View {
         case .failed:
             return AppUI.chipWarm
         }
+    }
+}
+
+private struct MinimalLoadingIndicator: View {
+    var tint: Color
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: AppUI.Space.s) {
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(tint)
+                        .frame(width: 6, height: 6)
+                        .opacity(animating ? 1 : 0.28)
+                        .scaleEffect(animating ? 1 : 0.7)
+                        .animation(
+                            .easeInOut(duration: 0.6)
+                                .repeatForever()
+                                .delay(Double(index) * 0.18),
+                            value: animating
+                        )
+                }
+            }
+
+            Text("正在翻译")
+                .font(.system(size: AppUI.FontSize.small, weight: .medium))
+                .foregroundStyle(AppUI.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { animating = true }
+    }
+}
+
+private struct MinimalEngineDot: View {
+    var tint: Color
+
+    var body: some View {
+        Circle()
+            .fill(tint)
+            .frame(width: 7, height: 7)
+            .overlay {
+                Circle().stroke(tint.opacity(0.26), lineWidth: 3)
+            }
+            .opacity(0.9)
+            .accessibilityHidden(true)
     }
 }
 

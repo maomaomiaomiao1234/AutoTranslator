@@ -488,6 +488,7 @@ final class FloatingWindow: NSObject {
                     window.animator().alphaValue = 1
                 }
             }
+            window.invalidateShadow()
         } else if wasVisible {
             let frame = window.frame
             if abs(frame.width - newWidth) > 0.5 || abs(frame.height - newHeight) > 0.5 {
@@ -654,6 +655,7 @@ final class FloatingWindow: NSObject {
             )
         }
         suppressAutoPin = false
+        window.invalidateShadow()
     }
 
     func hide() {
@@ -962,6 +964,7 @@ final class FloatingWindow: NSObject {
             )
         }
         suppressAutoPin = false
+        window.invalidateShadow()
     }
 
     private var usesManualHeightForLayout: Bool {

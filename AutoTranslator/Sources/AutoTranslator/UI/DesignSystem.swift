@@ -105,7 +105,9 @@ var PANEL_BORDER: NSColor {
     isDarkMode ? rgb(255, 255, 255, 0.13) : rgb(86, 70, 58, 0.14)
 }
 var MINIMAL_PANEL_BG: NSColor {
-    isDarkMode ? rgb(30, 29, 27, 0.80) : rgb(255, 253, 249, 0.78)
+    // 低不透明度的暖色薄膜，叠在 .regularMaterial 之上：让磨砂玻璃透出背景模糊，
+    // 同时保留品牌暖调。过去的 ~0.8 会盖住材质，导致面板看起来是实心暖卡而非毛玻璃。
+    isDarkMode ? rgb(30, 29, 27, 0.36) : rgb(255, 253, 249, 0.34)
 }
 var MINIMAL_PANEL_TOP: NSColor {
     isDarkMode ? rgb(42, 39, 35, 0.34) : rgb(255, 255, 255, 0.42)
@@ -114,7 +116,7 @@ var MINIMAL_PANEL_BOTTOM: NSColor {
     isDarkMode ? rgb(19, 18, 17, 0.22) : rgb(232, 225, 215, 0.18)
 }
 var MINIMAL_PANEL_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.18) : rgb(86, 70, 58, 0.18)
+    isDarkMode ? rgb(255, 255, 255, 0.22) : rgb(86, 70, 58, 0.22)
 }
 var MINIMAL_PANEL_HIGHLIGHT: NSColor {
     isDarkMode ? rgb(255, 255, 255, 0.16) : rgb(255, 255, 255, 0.68)
