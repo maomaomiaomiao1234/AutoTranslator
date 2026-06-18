@@ -804,4 +804,16 @@ extension AppController: FloatingWindowDelegate {
     func hideWindow() {
         window.hide()
     }
+
+    func stopSpeech() {
+        // 让所有在途的朗读任务/状态重置失效：自增 generation 后，已排队的 speak 续延
+        // 与状态重置都会因 generation 不匹配而成为 no-op，不会再把状态翻回 .playing。
+        speechGeneration += 1
+        speechStatusResetTask?.cancel()
+        speechStatusResetTask = nil
+        speechTask?.cancel()
+        speechTask = nil
+        speechService.stop()
+        window.setSpeechState(.idle)
+    }
 }

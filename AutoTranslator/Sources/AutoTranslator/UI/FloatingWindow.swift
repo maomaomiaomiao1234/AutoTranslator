@@ -184,6 +184,7 @@ protocol FloatingWindowDelegate: AnyObject {
     func screenshotTranslation()
     func retranslateCurrent()
     func hideWindow()
+    func stopSpeech()
 }
 
 // MARK: - Floating Window Controller
@@ -660,6 +661,7 @@ final class FloatingWindow: NSObject {
 
     func hide() {
         stopStream()
+        delegate?.stopSpeech()
         setSourceResizeInteractionActive(false)
         if isMinimalWindowMode {
             dismissedMinimalSourceText = currentSourceText
@@ -681,6 +683,7 @@ final class FloatingWindow: NSObject {
 
     func hideImmediately() {
         stopStream()
+        delegate?.stopSpeech()
         setSourceResizeInteractionActive(false)
         if isMinimalWindowMode {
             dismissedMinimalSourceText = currentSourceText
