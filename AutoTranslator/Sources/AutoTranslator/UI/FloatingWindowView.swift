@@ -32,6 +32,10 @@ final class FloatingWindowViewModel: ObservableObject {
     @Published var sourceCardHeight: CGFloat = SOURCE_CARD_MIN_HEIGHT
     @Published var speechState: SpeechPlaybackState = .idle
     @Published var windowMode: FloatingWindowMode = .standard
+    @Published var isFavorite = false
+    @Published var canFavorite = false
+    /// 自增以请求把焦点切到原文编辑框（菜单「翻译输入」唤出空白浮窗时使用）。
+    @Published var sourceFocusRequest = 0
 
     var onPin: (() -> Void)?
     var onCopySource: (() -> Void)?
@@ -41,11 +45,16 @@ final class FloatingWindowViewModel: ObservableObject {
     var onScreenshotTranslation: (() -> Void)?
     var onHide: (() -> Void)?
     var onRefresh: (() -> Void)?
+    var onToggleFavorite: (() -> Void)?
     var onSwapLanguages: (() -> Void)?
     var onSourceLineCountChanged: ((Int) -> Void)?
     var onSourceResizeEnded: (() -> Void)?
     var onSourceResizeInteractionChanged: ((Bool) -> Void)?
     var onLanguageChanged: ((String, String) -> Void)?
+    /// 用户提交（编辑后的）原文以发起翻译。
+    var onSubmitSource: (() -> Void)?
+    /// 用户在原文框内编辑文本时同步到窗口侧（保持复制/朗读读到最新文本）。
+    var onSourceEdited: ((String) -> Void)?
 
     var backendDisplayName: String {
         backend == "llm" ? "大模型翻译" : "Google 翻译"
@@ -72,11 +81,12 @@ final class FloatingWindowViewModel: ObservableObject {
 
     var sourceMeta: String {
         let count = sourceText.trimmingCharacters(in: .whitespacesAndNewlines).count
-        return count > 0 ? "\(count) 字符" : "等待选中"
+        return count > 0 ? "\(count) 字符" : "等待输入"
     }
 
     var canCopySource: Bool { !sourceText.isEmpty }
     var canSpeakSource: Bool { !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSubmitSource: Bool { !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var isSpeechBusy: Bool { speechState == .preparing }
     var canCopyDest: Bool { !destText.isEmpty }
     var canRefresh: Bool { !sourceText.isEmpty }
@@ -151,6 +161,7 @@ final class FloatingWindowViewModel: ObservableObject {
 
 struct FloatingWindowView: View {
     @ObservedObject var model: FloatingWindowViewModel
+    @FocusState private var isSourceFocused: Bool
     @State private var sourceResizeStartHeight: CGFloat?
     @State private var sourceResizeLastLineCount: Int?
     @State private var isHoveringSourceResizeHandle = false
@@ -390,19 +401,49 @@ struct FloatingWindowView: View {
                 .disabled(!model.canSpeakSource || model.isSpeechBusy)
                 .opacity(model.canSpeakSource ? 1 : 0.36)
                 .help(model.speechState.helpText)
+
+                Button { model.onSubmitSource?() } label: {
+                    Image(systemName: "paperplane.fill")
+                }
+                .buttonStyle(IconButtonStyle(
+                    tint: AppUI.accent,
+                    background: AppUI.activeToolbar,
+                    border: AppUI.activeToolbarBorder,
+                    size: 24
+                ))
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!model.canSubmitSource)
+                .opacity(model.canSubmitSource ? 1 : 0.36)
+                .help("翻译输入的原文（⌘↩）")
             }
             .animation(.easeInOut(duration: 0.16), value: model.speechState)
 
-            ScrollView {
-                Text(model.sourceText.isEmpty ? " " : model.sourceText)
-                    .font(.system(size: SOURCE_FONT_SIZE, weight: .regular))
-                    .foregroundStyle(AppUI.textPrimary)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.top, AppUI.Space.xxs)
+            ZStack(alignment: .topLeading) {
+                if model.sourceText.isEmpty {
+                    Text("选中文字，或在此输入要翻译的原文…")
+                        .font(.system(size: SOURCE_FONT_SIZE, weight: .regular))
+                        .foregroundStyle(AppUI.textMuted)
+                        .padding(.top, AppUI.Space.xxs)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: Binding(
+                    get: { model.sourceText },
+                    set: { newValue in
+                        model.sourceText = newValue
+                        model.onSourceEdited?(newValue)
+                    }
+                ))
+                .font(.system(size: SOURCE_FONT_SIZE, weight: .regular))
+                .foregroundStyle(AppUI.textPrimary)
+                .lineSpacing(3)
+                .scrollContentBackground(.hidden)
+                .focused($isSourceFocused)
             }
             .frame(height: sourceTextAreaHeight)
+            .onChange(of: model.sourceFocusRequest) { _ in
+                DispatchQueue.main.async { isSourceFocused = true }
+            }
 
             sourceResizeHandle
         }
@@ -632,6 +673,18 @@ struct FloatingWindowView: View {
                 .opacity(model.canRefresh ? 1 : 0.36)
                 .help("重新翻译")
 
+                Button { model.onToggleFavorite?() } label: {
+                    Image(systemName: model.isFavorite ? "star.fill" : "star")
+                }
+                .buttonStyle(IconButtonStyle(
+                    tint: model.isFavorite ? AppUI.amber : AppUI.textPrimary,
+                    background: model.isFavorite ? AppUI.chipWarm : AppUI.toolbarGhost,
+                    size: 24
+                ))
+                .disabled(!model.canFavorite)
+                .opacity(model.canFavorite ? 1 : 0.36)
+                .help(model.isFavorite ? "取消收藏" : "收藏当前结果")
+
                 Spacer()
             }
         }
@@ -658,12 +711,16 @@ struct FloatingWindowView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         } else {
-            Text(model.destText.isEmpty ? "正在翻译..." : model.destText)
+            Text(model.destText.isEmpty ? destinationPlaceholder : model.destText)
                 .font(.system(size: BODY_FONT_SIZE))
                 .foregroundStyle(destTextColor)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var destinationPlaceholder: String {
+        model.state == .idle ? "输入原文后按 ⌘↩ 翻译" : "正在翻译..."
     }
 
     private var stateChip: some View {

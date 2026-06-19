@@ -14,6 +14,7 @@
 - **语音朗读 (TTS)** —— 流式合成并播放发音，可设置单词释义完成后自动朗读。基于 DashScope CosyVoice。
 - **流式输出** —— 大模型后端逐字显示译文，浮窗高度随内容自适应增长。
 - **结果缓存** —— 对相同文本/语言/后端的请求做 LRU 缓存，重复划词不重复请求。
+- **翻译历史** —— 成功结果自动保存在本地，支持即时搜索、收藏、复制、单条删除及清空非收藏记录；重复翻译会合并并更新到最前。
 - **外观主题** —— 跟随系统 / 浅色 / 深色。
 - **极简浮窗** —— 可切换为只显示译文、隐藏原文与工具栏的紧凑窗口。
 
@@ -71,6 +72,8 @@ xcodebuild -project AutoTranslator.xcodeproj -scheme AutoTranslator -configurati
 ~/Library/Application Support/AutoTranslator/config.json
 ```
 
+翻译历史独立保存在 `~/Library/Application Support/AutoTranslator/history.json`。默认最多保留 500 条非收藏记录，收藏项不会被自动清理。
+
 配置项也可通过**环境变量**提供（启动时读取，不覆盖已存在的同名变量；JSON 文件中的键名与环境变量名一致）：
 
 | 键 | 说明 | 默认值 |
@@ -95,6 +98,7 @@ xcodebuild -project AutoTranslator.xcodeproj -scheme AutoTranslator -configurati
 
 - 切换翻译后端（大模型 / 谷歌翻译）
 - 发起**截图翻译**
+- 打开**翻译历史**，搜索、收藏或管理已完成的结果
 - 暂停 / 恢复划词监听（全局快捷键 **⌥E**）
 - 切换主题外观
 - 打开偏好设置（**⌘,**）、退出
@@ -103,6 +107,7 @@ xcodebuild -project AutoTranslator.xcodeproj -scheme AutoTranslator -configurati
 
 - **划词**：在任意应用中拖拽选中文字，松手后浮窗自动出现译文；选中单个单词时显示词典释义。
 - **截图**：菜单栏选择「截图翻译」，框选包含文字的区域。
+- **收藏**：翻译完成后点击译文卡片底部的星标；也可在历史窗口中收藏或取消收藏。
 - **朗读**：在浮窗中点击发音按钮，或开启自动朗读让单词释义完成后自动发音。
 
 ## 项目结构
@@ -123,15 +128,18 @@ AutoTranslator/Sources/AutoTranslator/
 ├── SystemDictionary.swift        系统词典查询
 ├── Languages.swift / Theme.swift 语言与主题枚举
 ├── LRUCache.swift / Logger.swift / Errors.swift
+├── TranslationHistoryStore.swift  历史记录模型、去重、容量控制与 JSON 持久化
 ├── UI/
 │   ├── FloatingWindow.swift      浮窗 NSWindow：定位、自适应尺寸、缩放
 │   ├── FloatingWindowView.swift  浮窗 SwiftUI 内容（标准 / 极简两种布局）
 │   ├── FloatingWindowMode.swift  浮窗模式枚举
 │   ├── PreferencesView.swift     偏好设置界面
+│   ├── TranslationHistoryView.swift  历史搜索、收藏与详情界面
 │   ├── DesignSystem.swift / SwiftUIDesignSystem.swift  颜色与尺寸常量
 └── macOS/
     ├── StatusBarController.swift     菜单栏图标与下拉菜单
     ├── PreferencesWindowController.swift  偏好设置窗口控制器
+    ├── HistoryWindowController.swift      翻译历史窗口控制器
     ├── ConfigStore.swift             config.json 读写
     └── NotificationManager.swift     系统通知
 ```

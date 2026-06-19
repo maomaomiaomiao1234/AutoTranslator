@@ -183,6 +183,8 @@ protocol FloatingWindowDelegate: AnyObject {
     func speakCurrentSource()
     func screenshotTranslation()
     func retranslateCurrent()
+    func toggleFavoriteCurrentResult()
+    func submitEditedSource(_ text: String)
     func hideWindow()
     func stopSpeech()
 }
@@ -452,6 +454,10 @@ final class FloatingWindow: NSObject {
         if let destText {
             setDestText(destText)
             setTranslationState(.done)
+        } else if srcText.isEmpty {
+            // 空原文（菜单唤出的输入态）：保持空闲占位，不显示「正在翻译」。
+            setDestText("")
+            setTranslationState(.idle)
         } else {
             setDestText("正在翻译...")
             setTranslationState(.loading)
@@ -548,6 +554,23 @@ final class FloatingWindow: NSObject {
     func setSpeechState(_ state: SpeechPlaybackState) {
         guard viewModel.speechState != state else { return }
         viewModel.speechState = state
+    }
+
+    func setHistoryFavorite(_ isFavorite: Bool, available: Bool) {
+        viewModel.isFavorite = isFavorite
+        viewModel.canFavorite = available
+    }
+
+    /// 由菜单「翻译输入」唤出：展示一个空白浮窗、置为 key 并把焦点切到原文编辑框，
+    /// 让用户直接输入原文后按 ⌘↩ 翻译。极简模式下没有原文卡片，先切回标准模式。
+    func presentForManualInput() {
+        if isMinimalWindowMode {
+            setWindowMode(.standard)
+        }
+        show(srcText: "", destText: nil, presentation: .translation)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        viewModel.sourceFocusRequest += 1
     }
 
     // MARK: - Stream
@@ -738,6 +761,12 @@ final class FloatingWindow: NSObject {
 
     private func handleRefresh() {
         delegate?.retranslateCurrent()
+    }
+
+    private func handleSubmitSource() {
+        let text = viewModel.sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        delegate?.submitEditedSource(text)
     }
 
     private func handleLangChange(srcName: String, destName: String) {
@@ -1097,6 +1126,9 @@ final class FloatingWindow: NSObject {
         viewModel.onScreenshotTranslation = { [weak self] in self?.handleScreenshotTranslation() }
         viewModel.onHide = { [weak self] in self?.handleHide() }
         viewModel.onRefresh = { [weak self] in self?.handleRefresh() }
+        viewModel.onToggleFavorite = { [weak self] in
+            self?.delegate?.toggleFavoriteCurrentResult()
+        }
         viewModel.onSwapLanguages = { [weak self] in self?.handleSwapLanguages() }
         viewModel.onSourceLineCountChanged = { [weak self] lineCount in
             self?.handleSourceLineCountChange(lineCount)
@@ -1109,6 +1141,11 @@ final class FloatingWindow: NSObject {
         }
         viewModel.onLanguageChanged = { [weak self] src, dest in
             self?.handleLangChange(srcName: src, destName: dest)
+        }
+        viewModel.onSubmitSource = { [weak self] in self?.handleSubmitSource() }
+        viewModel.onSourceEdited = { [weak self] text in
+            // 同步到窗口侧，使复制原文/朗读读到最新编辑内容。
+            self?.currentSourceText = text
         }
     }
 

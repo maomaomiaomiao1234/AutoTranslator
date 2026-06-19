@@ -4,7 +4,9 @@ protocol StatusBarControllerDelegate: AnyObject {
     var currentBackend: String { get }
     var isMonitoringPaused: Bool { get }
     var currentTheme: Theme { get }
+    func statusBarRequestedManualTranslation()
     func statusBarRequestedScreenshotTranslation()
+    func statusBarRequestedOpenHistory()
     func statusBarRequestedSwitchBackend(to backend: String)
     func statusBarRequestedTogglePause()
     func statusBarRequestedOpenPreferences()
@@ -22,7 +24,9 @@ final class StatusBarController: NSObject {
 
     private let backendLLMItem = NSMenuItem(title: "大模型 (DeepSeek)", action: #selector(switchToLLM), keyEquivalent: "")
     private let backendGoogleItem = NSMenuItem(title: "谷歌翻译", action: #selector(switchToGoogle), keyEquivalent: "")
+    private let manualInputItem = NSMenuItem(title: "翻译输入…", action: #selector(startManualTranslation), keyEquivalent: "")
     private let screenshotItem = NSMenuItem(title: "截图翻译", action: #selector(startScreenshotTranslation), keyEquivalent: "")
+    private let historyItem = NSMenuItem(title: "翻译历史…", action: #selector(openHistory), keyEquivalent: "")
     private let pauseItem = NSMenuItem(
         title: "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))",
         action: #selector(togglePause),
@@ -73,8 +77,14 @@ final class StatusBarController: NSObject {
         menu.addItem(backendGoogleItem)
         menu.addItem(.separator())
 
+        manualInputItem.target = self
+        menu.addItem(manualInputItem)
+
         screenshotItem.target = self
         menu.addItem(screenshotItem)
+
+        historyItem.target = self
+        menu.addItem(historyItem)
 
         pauseItem.target = self
         menu.addItem(pauseItem)
@@ -147,8 +157,16 @@ final class StatusBarController: NSObject {
         delegate?.statusBarRequestedTogglePause()
     }
 
+    @objc private func startManualTranslation() {
+        delegate?.statusBarRequestedManualTranslation()
+    }
+
     @objc private func startScreenshotTranslation() {
         delegate?.statusBarRequestedScreenshotTranslation()
+    }
+
+    @objc private func openHistory() {
+        delegate?.statusBarRequestedOpenHistory()
     }
 
     @objc private func openPreferences() {

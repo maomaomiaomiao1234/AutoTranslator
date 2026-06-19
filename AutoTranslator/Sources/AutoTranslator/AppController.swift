@@ -1,4 +1,5 @@
 import Cocoa
+import Combine
 import CoreGraphics
 
 final class AppController: NSObject {
@@ -59,6 +60,8 @@ final class AppController: NSObject {
     private var speechTask: Task<Void, Never>?
     private var speechStatusResetTask: Task<Void, Never>?
     private var speechGeneration = 0
+    private var currentHistoryEntryID: UUID?
+    private var historyObservation: AnyCancellable?
 
     /// 翻译/词典结果缓存：避免重复划选同一文本时重复请求后端。
     /// key 含后端与源/目标语言，故切换它们天然命中不同条目；模型/BaseURL 变更时由 reloadFromConfig 清空。
@@ -103,6 +106,15 @@ final class AppController: NSObject {
         mouseMonitor.delegate = self
         mouseMonitor.shouldIgnoreMouseSequenceStartingAt = { [weak self] point in
             self?.shouldIgnoreSelectionSequence(startingAt: point) ?? false
+        }
+        historyObservation = TranslationHistoryStore.shared.$entries.sink { [weak self] entries in
+            guard let self, let id = self.currentHistoryEntryID else { return }
+            if let entry = entries.first(where: { $0.id == id }) {
+                self.window.setHistoryFavorite(entry.isFavorite, available: true)
+            } else {
+                self.currentHistoryEntryID = nil
+                self.window.setHistoryFavorite(false, available: false)
+            }
         }
 
         // 恢复保存的主题（必须在 NSApp 创建之后才有效，此处只是记录；
@@ -220,6 +232,25 @@ final class AppController: NSObject {
                 NotificationManager.shared.post(title: "截图翻译失败", body: errMsg)
             }
         }
+    }
+
+    /// 来自「翻译输入」入口：对手动输入/编辑的文本发起翻译。
+    /// 复用划词的同一套流水线（单词→词典、整句→翻译，含缓存/流式/历史/朗读/错误处理），
+    /// 仅把"取到文本"的来源从划词换成手动输入。
+    func translateText(_ rawText: String) {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        selectionTask?.cancel()
+        lastText = text
+        let mode = Self.translationMode(for: text)
+        lastTranslationMode = mode
+        window.show(srcText: text, destText: nil, presentation: mode.floatingPresentation)
+        dispatchTranslate(text, mode: mode)
+    }
+
+    /// 来自菜单「翻译输入…」：弹出空白浮窗并聚焦原文框，供用户直接输入翻译。
+    func presentManualInput() {
+        window.presentForManualInput()
     }
 
     /// 切换到指定后端；若与当前一致则无操作。
@@ -472,6 +503,8 @@ final class AppController: NSObject {
         // 必须显式停止播放。新划词、切换后端/语言、刷新配置等入口都经 dispatchTranslate，
         // 故在此一处覆盖（原先仅词典模式停，翻译模式下划新词时旧音频会继续播放）。
         stopSpeech()
+        currentHistoryEntryID = nil
+        window.setHistoryFavorite(false, available: false)
 
         let request = makeTranslationRequest(version: version, text: text, mode: mode)
         AppLog.debug(
@@ -539,6 +572,11 @@ final class AppController: NSObject {
         AppLog.debug("Translate version=\(request.version) resolved by system dictionary wordLength=\(word.count)")
         await MainActor.run { [weak self] in
             guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.recordHistory(
+                definition,
+                for: request,
+                kind: .systemDictionary
+            )
             self.window.show(
                 srcText: request.text,
                 destText: definition,
@@ -557,6 +595,11 @@ final class AppController: NSObject {
         AppLog.debug("Translate version=\(request.version) cache hit")
         await MainActor.run { [weak self] in
             guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.recordHistory(
+                cached,
+                for: request,
+                kind: Self.historyKind(for: request.mode)
+            )
             self.window.show(
                 srcText: request.text,
                 destText: cached,
@@ -638,9 +681,19 @@ final class AppController: NSObject {
                     presentation: request.mode.floatingPresentation
                 )
             } else if request.translator?.supportsStreaming == true {
+                self.recordHistory(
+                    result,
+                    for: request,
+                    kind: Self.historyKind(for: request.mode)
+                )
                 self.window.streamFinish(result)
                 self.playPronunciationIfNeeded(for: request.text, mode: request.mode)
             } else {
+                self.recordHistory(
+                    result,
+                    for: request,
+                    kind: Self.historyKind(for: request.mode)
+                )
                 self.window.show(
                     srcText: request.text,
                     destText: result,
@@ -648,6 +701,35 @@ final class AppController: NSObject {
                 )
                 self.playPronunciationIfNeeded(for: request.text, mode: request.mode)
             }
+        }
+    }
+
+    @MainActor
+    private func recordHistory(_ translatedText: String,
+                               for request: TranslationRequest,
+                               kind: TranslationHistoryKind) {
+        currentHistoryEntryID = TranslationHistoryStore.shared.record(
+            sourceText: request.text,
+            translatedText: translatedText,
+            sourceLanguage: request.sourceLanguage,
+            targetLanguage: request.targetLanguage,
+            backend: request.backend,
+            kind: kind
+        )
+        if let currentHistoryEntryID,
+           let entry = TranslationHistoryStore.shared.entry(id: currentHistoryEntryID) {
+            window.setHistoryFavorite(entry.isFavorite, available: true)
+        } else {
+            window.setHistoryFavorite(false, available: false)
+        }
+    }
+
+    private static func historyKind(for mode: TranslationMode) -> TranslationHistoryKind {
+        switch mode {
+        case .translation:
+            return .translation
+        case .dictionary:
+            return .dictionary
         }
     }
 
@@ -852,6 +934,21 @@ extension AppController: FloatingWindowDelegate {
 
     func retranslateCurrent() {
         retranslateLast()
+    }
+
+    func submitEditedSource(_ text: String) {
+        translateText(text)
+    }
+
+    func toggleFavoriteCurrentResult() {
+        guard let currentHistoryEntryID,
+              TranslationHistoryStore.shared.entry(id: currentHistoryEntryID) != nil else {
+            window.setHistoryFavorite(false, available: false)
+            return
+        }
+        TranslationHistoryStore.shared.toggleFavorite(id: currentHistoryEntryID)
+        let isFavorite = TranslationHistoryStore.shared.entry(id: currentHistoryEntryID)?.isFavorite ?? false
+        window.setHistoryFavorite(isFavorite, available: true)
     }
 
     func hideWindow() {

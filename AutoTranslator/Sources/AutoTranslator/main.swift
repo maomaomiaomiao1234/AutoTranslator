@@ -68,6 +68,12 @@ func ensureAccessibilityPermission() -> Bool {
     return false
 }
 
+func isRunningUnderTests() -> Bool {
+    let environment = ProcessInfo.processInfo.environment
+    return environment["XCTestConfigurationFilePath"] != nil
+        || environment["XCInjectBundleInto"] != nil
+}
+
 // MARK: - AppDelegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -75,12 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller: AppController
     let statusBar: StatusBarController
     let preferences: PreferencesWindowController
+    let history: HistoryWindowController
     let globalHotKeys: GlobalHotKeyManager
 
     override init() {
         controller = AppController()
         statusBar = StatusBarController()
         preferences = PreferencesWindowController()
+        history = HistoryWindowController(store: TranslationHistoryStore.shared)
         globalHotKeys = GlobalHotKeyManager()
         super.init()
         statusBar.delegate = self
@@ -89,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
+        guard !isRunningUnderTests() else { return }
         configureGlobalHotKeys()
         controller.start()
         statusBar.refresh()
@@ -166,10 +175,18 @@ extension AppDelegate: StatusBarControllerDelegate {
     var isMonitoringPaused: Bool { controller.isMonitoringPaused }
     var currentTheme: Theme { controller.currentTheme }
 
+    func statusBarRequestedManualTranslation() {
+        controller.presentManualInput()
+    }
+
     func statusBarRequestedScreenshotTranslation() {
         Task { @MainActor [controller] in
             controller.startScreenshotTranslation()
         }
+    }
+
+    func statusBarRequestedOpenHistory() {
+        history.showAndFocus()
     }
 
     func statusBarRequestedSwitchBackend(to backend: String) {
@@ -232,8 +249,10 @@ func main() {
     // 加载持久化配置 → 同步到环境变量（不覆盖已有变量）
     ConfigStore.shared.applyToEnvironment()
 
-    guard ensureAccessibilityPermission() else {
-        exit(1)
+    if !isRunningUnderTests() {
+        guard ensureAccessibilityPermission() else {
+            exit(1)
+        }
     }
 
     // 如果选择大模型但没有 API Key，自动回退到谷歌
