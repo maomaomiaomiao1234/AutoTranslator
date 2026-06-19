@@ -40,7 +40,7 @@ struct TranslationHistoryEntry: Identifiable, Codable, Equatable {
         case .dictionary:
             return backend == "llm" ? "大模型词典" : "词典"
         case .translation:
-            return backend == "llm" ? "大模型" : "Google"
+            return TranslationBackend.shortName(backend)
         }
     }
 }

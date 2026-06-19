@@ -57,21 +57,33 @@ final class FloatingWindowViewModel: ObservableObject {
     var onSourceEdited: ((String) -> Void)?
 
     var backendDisplayName: String {
-        backend == "llm" ? "大模型翻译" : "Google 翻译"
+        switch backend {
+        case "llm": return "大模型翻译"
+        case "apple": return "系统翻译"
+        default: return "Google 翻译"
+        }
     }
 
     var backendBadgeText: String {
-        backend == "llm" ? "AI" : "G"
+        switch backend {
+        case "llm": return "AI"
+        case "apple": return "译"
+        default: return "G"
+        }
     }
 
     var backendTint: Color {
-        backend == "llm" ? AppUI.teal : AppUI.blue
+        switch backend {
+        case "llm": return AppUI.teal
+        case "apple": return AppUI.accent
+        default: return AppUI.blue
+        }
     }
 
     var headerSubtitle: String {
         switch presentation {
         case .translation:
-            return "\(selectedSource) → \(selectedTarget) · \(backend == "llm" ? "大模型" : "Google")"
+            return "\(selectedSource) → \(selectedTarget) · \(TranslationBackend.shortName(backend))"
         case .dictionary:
             return "\(selectedSource) → \(selectedTarget) · 词典解释"
         case .systemDictionary:

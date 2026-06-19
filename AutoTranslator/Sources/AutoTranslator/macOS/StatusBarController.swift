@@ -24,6 +24,7 @@ final class StatusBarController: NSObject {
 
     private let backendLLMItem = NSMenuItem(title: "大模型 (DeepSeek)", action: #selector(switchToLLM), keyEquivalent: "")
     private let backendGoogleItem = NSMenuItem(title: "谷歌翻译", action: #selector(switchToGoogle), keyEquivalent: "")
+    private let backendAppleItem = NSMenuItem(title: "系统翻译（离线）", action: #selector(switchToApple), keyEquivalent: "")
     private let manualInputItem = NSMenuItem(title: "翻译输入…", action: #selector(startManualTranslation), keyEquivalent: "")
     private let screenshotItem = NSMenuItem(title: "截图翻译", action: #selector(startScreenshotTranslation), keyEquivalent: "")
     private let historyItem = NSMenuItem(title: "翻译历史…", action: #selector(openHistory), keyEquivalent: "")
@@ -73,8 +74,12 @@ final class StatusBarController: NSObject {
 
         backendLLMItem.target = self
         backendGoogleItem.target = self
+        backendAppleItem.target = self
         menu.addItem(backendLLMItem)
         menu.addItem(backendGoogleItem)
+        if TranslationBackend.isAppleAvailable {
+            menu.addItem(backendAppleItem)
+        }
         menu.addItem(.separator())
 
         manualInputItem.target = self
@@ -123,6 +128,7 @@ final class StatusBarController: NSObject {
         let backend = delegate.currentBackend
         backendLLMItem.state = backend == "llm" ? .on : .off
         backendGoogleItem.state = backend == "google" ? .on : .off
+        backendAppleItem.state = backend == "apple" ? .on : .off
 
         let currentTheme = delegate.currentTheme
         for (theme, item) in themeItems {
@@ -136,7 +142,7 @@ final class StatusBarController: NSObject {
             : "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
         statusItemMenuItem.title = paused
             ? "AutoTranslator · 已暂停"
-            : "AutoTranslator · \(backend == "llm" ? "大模型" : "谷歌")"
+            : "AutoTranslator · \(TranslationBackend.shortName(backend))"
 
         if let button = statusItem.button {
             button.appearsDisabled = paused
@@ -151,6 +157,10 @@ final class StatusBarController: NSObject {
 
     @objc private func switchToGoogle() {
         delegate?.statusBarRequestedSwitchBackend(to: "google")
+    }
+
+    @objc private func switchToApple() {
+        delegate?.statusBarRequestedSwitchBackend(to: "apple")
     }
 
     @objc private func togglePause() {

@@ -123,7 +123,7 @@ final class PreferencesWindowController: NSWindowController {
             ?? FloatingWindowMode.from(rawValue: ConfigStore.shared.get(.floatingWindowMode))
 
         return PreferencesSnapshot(
-            backend: backend == "google" ? "google" : "llm",
+            backend: TranslationBackend.isValid(backend) ? backend : "llm",
             apiKey: apiKey,
             model: model,
             baseURL: baseURL,

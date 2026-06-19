@@ -255,14 +255,14 @@ final class AppController: NSObject {
 
     /// 切换到指定后端；若与当前一致则无操作。
     func setBackend(_ backend: String) {
-        guard backend == "llm" || backend == "google" else { return }
+        guard TranslationBackend.isValid(backend) else { return }
         guard backend != translatorBackend else { return }
         translateTask?.cancel()
         speechTask?.cancel()
         translatorBackend = backend
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
-        let label = translatorBackend == "llm" ? "大模型" : "谷歌翻译"
+        let label = TranslationBackend.displayName(translatorBackend)
         NotificationManager.shared.post(title: "翻译后端已切换", body: "当前使用：\(label)")
         retranslateLast()
     }
@@ -334,6 +334,19 @@ final class AppController: NSObject {
                 translatorBackend = "google"
                 window.setBackendLabel("google")
             }
+        } else if translatorBackend == "apple" {
+            if #available(macOS 15.0, *) {
+                AppLog.debug("使用系统翻译 (Apple Translation)")
+                return AppleTranslator(source: srcLang, target: destLang)
+            } else {
+                AppLog.error("系统翻译需要 macOS 15 及以上，回退到谷歌翻译")
+                NotificationManager.shared.post(
+                    title: "系统翻译不可用，已回退到谷歌翻译",
+                    body: "系统翻译需要 macOS 15 及以上版本。"
+                )
+                translatorBackend = "google"
+                window.setBackendLabel("google")
+            }
         }
         AppLog.debug("使用谷歌翻译 (Google)")
         return GoogleTranslator(source: srcLang, target: destLang)
@@ -342,11 +355,22 @@ final class AppController: NSObject {
     private func switchTranslatorBackend() {
         translateTask?.cancel()
         speechTask?.cancel()
-        translatorBackend = translatorBackend == "llm" ? "google" : "llm"
+        translatorBackend = Self.nextBackend(after: translatorBackend)
         translator = createTranslator()
         window.setBackendLabel(translatorBackend)
         AppLog.debug("翻译后端切换为: \(translatorBackend)")
         retranslateLast()
+    }
+
+    /// 浮窗 chevron 循环切换后端：llm → google → apple →（回到 llm）。
+    /// 低于 macOS 15 时跳过 apple。
+    private static func nextBackend(after current: String) -> String {
+        var order = ["llm", "google", "apple"]
+        if !TranslationBackend.isAppleAvailable {
+            order.removeAll { $0 == "apple" }
+        }
+        guard let index = order.firstIndex(of: current) else { return order.first ?? "google" }
+        return order[(index + 1) % order.count]
     }
 
     private static func userFacingErrorMessage(from error: Error,

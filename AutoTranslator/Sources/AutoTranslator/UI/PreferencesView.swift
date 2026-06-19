@@ -118,7 +118,7 @@ struct PreferencesView: View {
 
     private var summaryPanel: some View {
         HStack(spacing: AppUI.Space.m) {
-            SummaryItem(icon: "bolt.horizontal", title: "引擎", value: backend == "google" ? "Google" : "大模型")
+            SummaryItem(icon: "bolt.horizontal", title: "引擎", value: TranslationBackend.shortName(backend))
             SummaryItem(icon: "speaker.wave.2", title: "语音", value: speechSummary)
             SummaryItem(icon: "arrow.left.arrow.right", title: "语言", value: "\(Languages.name(for: sourceLang)) → \(Languages.name(for: targetLang))")
             SummaryItem(icon: "circle.lefthalf.filled", title: "外观", value: "\(theme.displayName) · \(floatingWindowMode.displayName)")
@@ -141,6 +141,9 @@ struct PreferencesView: View {
                 Picker("", selection: $backend) {
                     Text("大模型 (DeepSeek)").tag("llm")
                     Text("谷歌翻译").tag("google")
+                    if TranslationBackend.isAppleAvailable {
+                        Text("系统翻译（离线）").tag("apple")
+                    }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)

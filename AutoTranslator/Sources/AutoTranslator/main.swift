@@ -103,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar.refresh()
         NotificationManager.shared.requestAuthorization()
 
-        let backendName = controller.currentBackend == "google" ? "谷歌翻译" : "大模型"
+        let backendName = TranslationBackend.displayName(controller.currentBackend)
         AppLog.debug("翻译器已启动（\(backendName)），支持语言切换")
     }
 
@@ -229,7 +229,7 @@ extension AppDelegate: PreferencesWindowControllerDelegate {
         statusBar.refresh()
         NotificationManager.shared.post(
             title: "偏好设置已保存",
-            body: "后端：\(backend == "llm" ? "大模型" : "谷歌翻译")  \(Languages.name(for: srcLang)) → \(Languages.name(for: destLang))  外观：\(theme.displayName) · \(floatingWindowMode.displayName)"
+            body: "后端：\(TranslationBackend.displayName(backend))  \(Languages.name(for: srcLang)) → \(Languages.name(for: destLang))  外观：\(theme.displayName) · \(floatingWindowMode.displayName)"
         )
     }
 
