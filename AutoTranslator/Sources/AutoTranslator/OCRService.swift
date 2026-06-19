@@ -2,6 +2,8 @@ import Foundation
 import Vision
 
 final class OCRService {
+    private nonisolated static let subprocessTimeout: TimeInterval = 45
+
     func recognizeText(inFileAt imageURL: URL,
                        imageWidth: Int,
                        imageHeight: Int,
@@ -42,69 +44,38 @@ final class OCRService {
 
     private func recognizeTextOutOfProcess(inFileAt imageURL: URL,
                                            sourceLanguage: String) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    guard let executableURL = Bundle.main.executableURL else {
-                        throw ScreenCaptureError.failed("无法定位 OCR 子进程可执行文件")
-                    }
-
-                    let process = Process()
-                    process.executableURL = executableURL
-                    process.arguments = [
-                        "--autotranslator-ocr",
-                        "--image", imageURL.path,
-                        "--source-language", sourceLanguage,
-                    ]
-
-                    let stdoutPipe = Pipe()
-                    let stderrPipe = Pipe()
-                    process.standardOutput = stdoutPipe
-                    process.standardError = stderrPipe
-
-                    var outputData = Data()
-                    var errorData = Data()
-                    let readGroup = DispatchGroup()
-
-                    readGroup.enter()
-                    DispatchQueue.global(qos: .utility).async {
-                        outputData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                        readGroup.leave()
-                    }
-
-                    readGroup.enter()
-                    DispatchQueue.global(qos: .utility).async {
-                        errorData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                        readGroup.leave()
-                    }
-
-                    try process.run()
-                    process.waitUntilExit()
-                    readGroup.wait()
-
-                    let stderrMessage = Self.logMessage(from: errorData)
-                    if !stderrMessage.isEmpty {
-                        AppLog.debug("OCR 子进程 stderr: \(stderrMessage)")
-                    }
-
-                    guard process.terminationStatus == 0 else {
-                        let message = stderrMessage.isEmpty
-                            ? "OCR 子进程退出码 \(process.terminationStatus)"
-                            : "OCR 子进程退出码 \(process.terminationStatus): \(stderrMessage)"
-                        throw ScreenCaptureError.failed(String(message.prefix(200)))
-                    }
-
-                    let rawOutput = String(data: outputData, encoding: .utf8) ?? ""
-                    let output = Self.sanitizedRecognizedText(rawOutput)
-                    if output != rawOutput {
-                        AppLog.debug("已清理 OCR stdout 中的系统框架日志 rawChars=\(rawOutput.count) cleanChars=\(output.count)")
-                    }
-                    continuation.resume(returning: output)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
+        guard let executableURL = Bundle.main.executableURL else {
+            throw ScreenCaptureError.failed("无法定位 OCR 子进程可执行文件")
         }
+
+        let result = try await ProcessRunner.run(
+            executableURL: executableURL,
+            arguments: [
+                "--autotranslator-ocr",
+                "--image", imageURL.path,
+                "--source-language", sourceLanguage,
+            ],
+            timeout: Self.subprocessTimeout
+        )
+
+        let stderrMessage = Self.logMessage(from: result.stderr)
+        if !stderrMessage.isEmpty {
+            AppLog.debug("OCR 子进程 stderr: \(stderrMessage)")
+        }
+
+        guard result.terminationStatus == 0 else {
+            let message = stderrMessage.isEmpty
+                ? "OCR 子进程退出码 \(result.terminationStatus)"
+                : "OCR 子进程退出码 \(result.terminationStatus): \(stderrMessage)"
+            throw ScreenCaptureError.failed(String(message.prefix(200)))
+        }
+
+        let rawOutput = String(data: result.stdout, encoding: .utf8) ?? ""
+        let output = Self.sanitizedRecognizedText(rawOutput)
+        if output != rawOutput {
+            AppLog.debug("已清理 OCR stdout 中的系统框架日志 rawChars=\(rawOutput.count) cleanChars=\(output.count)")
+        }
+        return output
     }
 
     private func recognizeTextInProcess(inFileAt imageURL: URL,

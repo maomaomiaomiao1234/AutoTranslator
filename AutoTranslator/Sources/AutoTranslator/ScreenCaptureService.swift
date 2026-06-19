@@ -23,6 +23,8 @@ struct ScreenCaptureResult {
 }
 
 enum ScreenCaptureService {
+    private nonisolated static let interactiveCaptureTimeout: TimeInterval = 300
+
     @MainActor
     static func ensurePermission() -> Bool {
         if CGPreflightScreenCaptureAccess() { return true }
@@ -30,51 +32,37 @@ enum ScreenCaptureService {
     }
 
     nonisolated static func captureInteractively() async throws -> ScreenCaptureResult {
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let fileURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("AutoTranslator-OCR-\(UUID().uuidString).png")
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoTranslator-OCR-\(UUID().uuidString).png")
 
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                process.arguments = ["-i", "-s", "-x", fileURL.path]
+        do {
+            let result = try await ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/usr/sbin/screencapture"),
+                arguments: ["-i", "-s", "-x", fileURL.path],
+                timeout: interactiveCaptureTimeout
+            )
 
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                } catch {
-                    removeCapturedImage(at: fileURL)
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                guard !Task.isCancelled else {
-                    removeCapturedImage(at: fileURL)
-                    continuation.resume(throwing: CancellationError())
-                    return
-                }
-
-                guard process.terminationStatus == 0,
-                      FileManager.default.fileExists(atPath: fileURL.path) else {
-                    removeCapturedImage(at: fileURL)
-                    continuation.resume(throwing: ScreenCaptureError.cancelled)
-                    return
-                }
-
-                guard let properties = imageProperties(at: fileURL) else {
-                    removeCapturedImage(at: fileURL)
-                    continuation.resume(throwing: ScreenCaptureError.failed("无法读取截图图像"))
-                    return
-                }
-
-                // 临时文件交由调用方在 OCR 用完后通过 removeCapturedImage 清理。
-                AppLog.debug("截图已捕获 image=\(properties.width)x\(properties.height)")
-                continuation.resume(returning: ScreenCaptureResult(
-                    imageURL: fileURL,
-                    width: properties.width,
-                    height: properties.height
-                ))
+            guard result.terminationStatus == 0,
+                  FileManager.default.fileExists(atPath: fileURL.path) else {
+                removeCapturedImage(at: fileURL)
+                throw ScreenCaptureError.cancelled
             }
+
+            guard let properties = imageProperties(at: fileURL) else {
+                removeCapturedImage(at: fileURL)
+                throw ScreenCaptureError.failed("无法读取截图图像")
+            }
+
+            // 临时文件交由调用方在 OCR 用完后通过 removeCapturedImage 清理。
+            AppLog.debug("截图已捕获 image=\(properties.width)x\(properties.height)")
+            return ScreenCaptureResult(
+                imageURL: fileURL,
+                width: properties.width,
+                height: properties.height
+            )
+        } catch {
+            removeCapturedImage(at: fileURL)
+            throw error
         }
     }
 

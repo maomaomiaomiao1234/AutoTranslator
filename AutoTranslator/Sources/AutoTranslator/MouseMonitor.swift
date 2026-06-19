@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 protocol MouseMonitorDelegate: AnyObject {
-    func onSelectionEvent(allowClipboardFallback: Bool)
+    func onSelectionEvent(allowClipboardFallback: Bool, allowDeepAccessibilitySearch: Bool)
 }
 
 final class MouseMonitor {
@@ -147,6 +147,7 @@ final class MouseMonitor {
                 )
                 scheduleSelectionEvent(
                     allowClipboardFallback: false,
+                    allowDeepAccessibilitySearch: false,
                     delay: selectionProbeDispatchDelay
                 )
                 return
@@ -156,6 +157,7 @@ final class MouseMonitor {
             )
             scheduleSelectionEvent(
                 allowClipboardFallback: true,
+                allowDeepAccessibilitySearch: true,
                 delay: selectionDispatchDelay
             )
         default:
@@ -170,15 +172,20 @@ final class MouseMonitor {
         return dx * dx + dy * dy
     }
 
-    private func scheduleSelectionEvent(allowClipboardFallback: Bool, delay: DispatchTimeInterval) {
+    private func scheduleSelectionEvent(allowClipboardFallback: Bool,
+                                        allowDeepAccessibilitySearch: Bool,
+                                        delay: DispatchTimeInterval) {
         if pendingSelectionWorkItem != nil {
             AppLog.debug("SelectionMonitor replace pending dispatch")
         }
         pendingSelectionWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
-            AppLog.debug("SelectionMonitor dispatch selection event allowClipboardFallback=\(allowClipboardFallback)")
-            self?.delegate?.onSelectionEvent(allowClipboardFallback: allowClipboardFallback)
+            AppLog.debug("SelectionMonitor dispatch selection event allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
+            self?.delegate?.onSelectionEvent(
+                allowClipboardFallback: allowClipboardFallback,
+                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+            )
         }
 
         pendingSelectionWorkItem = workItem

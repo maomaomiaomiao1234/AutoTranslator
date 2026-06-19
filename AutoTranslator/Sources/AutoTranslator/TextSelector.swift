@@ -42,17 +42,21 @@ final class TextSelector {
     }
 
     @MainActor
-    func getSelectedText(allowClipboardFallback: Bool = false) async -> String? {
+    func getSelectedText(allowClipboardFallback: Bool = false,
+                         allowDeepAccessibilitySearch: Bool = true) async -> String? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             AppLog.debug("TextSelector failed: no frontmost application")
             return nil
         }
         let pid = frontApp.processIdentifier
         let bundleID = frontApp.bundleIdentifier ?? "<unknown>"
-        AppLog.debug("TextSelector begin app=\(bundleID) pid=\(pid) allowClipboardFallback=\(allowClipboardFallback)")
+        AppLog.debug("TextSelector begin app=\(bundleID) pid=\(pid) allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
 
         // 尝试 Accessibility API
-        if let text = getSelectedTextViaAccessibility(pid: pid) {
+        if let text = getSelectedTextViaAccessibility(
+            pid: pid,
+            allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+        ) {
             AppLog.debug("TextSelector success via AX length=\(text.count) app=\(bundleID)")
             return text
         }
@@ -70,18 +74,30 @@ final class TextSelector {
         return text
     }
 
-    private func getSelectedTextViaAccessibility(pid: pid_t) -> String? {
+    private func getSelectedTextViaAccessibility(pid: pid_t,
+                                                 allowDeepAccessibilitySearch: Bool) -> String? {
         let appRef = AXUIElementCreateApplication(pid)
         let focusedResult = copyAXElementAttribute(appRef, kAXFocusedUIElementAttribute as CFString)
         guard let focused = focusedResult.element else {
             AppLog.debug("TextSelector AX focused element unavailable err=\(focusedResult.error.rawValue)")
-            return getSelectedTextViaAccessibilityWindowSearch(appRef: appRef)
+            return getSelectedTextViaAccessibilityWindowSearch(
+                appRef: appRef,
+                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+            )
         }
 
         if let text = selectedText(from: focused) {
             return text
         }
         AppLog.debug("TextSelector AX focused selected text unavailable")
+
+        guard allowDeepAccessibilitySearch else {
+            AppLog.debug("TextSelector AX descendant search skipped for lightweight probe")
+            return getSelectedTextViaAccessibilityWindowSearch(
+                appRef: appRef,
+                allowDeepAccessibilitySearch: false
+            )
+        }
 
         if let text = findSelectedTextInAXDescendants(
             startingAt: [focused],
@@ -90,14 +106,22 @@ final class TextSelector {
             return text
         }
 
-        return getSelectedTextViaAccessibilityWindowSearch(appRef: appRef)
+        return getSelectedTextViaAccessibilityWindowSearch(
+            appRef: appRef,
+            allowDeepAccessibilitySearch: true
+        )
     }
 
-    private func getSelectedTextViaAccessibilityWindowSearch(appRef: AXUIElement) -> String? {
+    private func getSelectedTextViaAccessibilityWindowSearch(appRef: AXUIElement,
+                                                            allowDeepAccessibilitySearch: Bool) -> String? {
         let windowResult = copyAXElementAttribute(appRef, kAXFocusedWindowAttribute as CFString)
         if let focusedWindow = windowResult.element {
             if let text = selectedText(from: focusedWindow) {
                 return text
+            }
+            guard allowDeepAccessibilitySearch else {
+                AppLog.debug("TextSelector AX focused window descendant search skipped for lightweight probe")
+                return nil
             }
             if let text = findSelectedTextInAXDescendants(
                 startingAt: [focusedWindow],
@@ -108,6 +132,8 @@ final class TextSelector {
         } else {
             AppLog.debug("TextSelector AX focused window unavailable err=\(windowResult.error.rawValue)")
         }
+
+        guard allowDeepAccessibilitySearch else { return nil }
 
         let windows = copyAXChildElements(from: appRef, attribute: kAXWindowsAttribute as CFString)
         guard !windows.isEmpty else {

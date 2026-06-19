@@ -25,6 +25,17 @@ final class AppController: NSObject {
         }
     }
 
+    private struct TranslationRequest {
+        let version: Int
+        let text: String
+        let mode: TranslationMode
+        let backend: String
+        let sourceLanguage: String
+        let targetLanguage: String
+        let cacheKey: String
+        let translator: TranslatorProtocol?
+    }
+
     // MARK: - State
 
     private var srcLang = Languages.defaultSourceCode
@@ -462,173 +473,205 @@ final class AppController: NSObject {
         // 故在此一处覆盖（原先仅词典模式停，翻译模式下划新词时旧音频会继续播放）。
         stopSpeech()
 
+        let request = makeTranslationRequest(version: version, text: text, mode: mode)
         AppLog.debug(
-            "Translate dispatch version=\(version) mode=\(Self.modeDescription(mode)) length=\(text.count) backend=\(translatorBackend)"
+            "Translate dispatch version=\(request.version) mode=\(Self.modeDescription(request.mode)) length=\(request.text.count) backend=\(request.backend)"
         )
 
+        translateTask = Task { [weak self] in
+            guard let self = self else { return }
+            await self.runTranslation(request)
+        }
+    }
+
+    private func makeTranslationRequest(version: Int, text: String, mode: TranslationMode) -> TranslationRequest {
+        let backend = translatorBackend
+        let sourceLanguage = srcLang
+        let targetLanguage = destLang
         let cacheKey = Self.translationCacheKey(
-            backend: translatorBackend,
-            src: srcLang,
-            dest: destLang,
+            backend: backend,
+            src: sourceLanguage,
+            dest: targetLanguage,
             mode: mode,
             text: text
         )
+        return TranslationRequest(
+            version: version,
+            text: text,
+            mode: mode,
+            backend: backend,
+            sourceLanguage: sourceLanguage,
+            targetLanguage: targetLanguage,
+            cacheKey: cacheKey,
+            translator: translator(for: mode)
+        )
+    }
 
-        translateTask = Task { [weak self, mode] in
-            guard let self = self else { return }
+    private func runTranslation(_ request: TranslationRequest) async {
+        do {
+            if await presentSystemDictionaryResultIfAvailable(for: request) {
+                return
+            }
+            if await presentCachedTranslationIfAvailable(for: request) {
+                return
+            }
 
-            do {
-                if case .dictionary(let word) = mode,
-                   let definition = SystemDictionary.definition(for: word) {
-                    AppLog.debug("Translate version=\(version) resolved by system dictionary wordLength=\(word.count)")
-                    await MainActor.run { [weak self] in
-                        if version == self?.translateVersion {
-                            self?.window.show(
-                                srcText: text,
-                                destText: definition,
-                                presentation: .systemDictionary
-                            )
-                            self?.playPronunciationIfNeeded(for: text, mode: mode)
-                        }
-                    }
-                    return
-                }
+            guard let translator = request.translator else { return }
+            guard let result = try await requestTranslation(for: request, using: translator) else {
+                return
+            }
 
-                if let cached = self.translationCache.value(forKey: cacheKey) {
-                    AppLog.debug("Translate version=\(version) cache hit")
-                    await MainActor.run { [weak self] in
-                        if version == self?.translateVersion {
-                            self?.window.show(
-                                srcText: text,
-                                destText: cached,
-                                presentation: mode.floatingPresentation
-                            )
-                            self?.playPronunciationIfNeeded(for: text, mode: mode)
-                        }
-                    }
-                    return
-                }
+            if !result.isEmpty {
+                translationCache.setValue(result, forKey: request.cacheKey)
+            }
+            await presentFinalTranslation(result, for: request)
+        } catch {
+            await presentTranslationError(error, for: request)
+        }
+    }
 
-                guard let requestTranslator = self.translator(for: mode) else { return }
-                if requestTranslator.supportsStreaming {
-                    AppLog.debug("Translate version=\(version) request started streaming=true")
-                    var buffer = ""
-                    var pendingDisplayChunk = ""
-                    var lastDisplayFlush = ProcessInfo.processInfo.systemUptime
-                    let stream: AsyncThrowingStream<String, Error>
-                    switch mode {
-                    case .translation:
-                        stream = requestTranslator.translateStream(text)
-                    case .dictionary(let word):
-                        stream = requestTranslator.defineStream(word)
-                    }
-                    for try await token in stream {
-                        if version != self.translateVersion { return }
-                        guard !token.isEmpty else { continue }
-                        buffer += token
-                        pendingDisplayChunk += token
+    private func presentSystemDictionaryResultIfAvailable(for request: TranslationRequest) async -> Bool {
+        guard case .dictionary(let word) = request.mode,
+              let definition = SystemDictionary.definition(for: word) else {
+            return false
+        }
 
-                        let now = ProcessInfo.processInfo.systemUptime
-                        guard pendingDisplayChunk.count >= 12 || now - lastDisplayFlush >= 0.05 else {
-                            continue
-                        }
+        AppLog.debug("Translate version=\(request.version) resolved by system dictionary wordLength=\(word.count)")
+        await MainActor.run { [weak self] in
+            guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.window.show(
+                srcText: request.text,
+                destText: definition,
+                presentation: .systemDictionary
+            )
+            self.playPronunciationIfNeeded(for: request.text, mode: request.mode)
+        }
+        return true
+    }
 
-                        let chunk = pendingDisplayChunk
-                        pendingDisplayChunk = ""
-                        lastDisplayFlush = now
+    private func presentCachedTranslationIfAvailable(for request: TranslationRequest) async -> Bool {
+        guard let cached = translationCache.value(forKey: request.cacheKey) else {
+            return false
+        }
 
-                        if version == self.translateVersion {
-                            await MainActor.run { [weak self] in
-                                if version == self?.translateVersion {
-                                    self?.window.streamAppend(chunk)
-                                }
-                            }
-                        }
-                    }
-                    if !pendingDisplayChunk.isEmpty, version == self.translateVersion {
-                        let chunk = pendingDisplayChunk
-                        await MainActor.run { [weak self] in
-                            if version == self?.translateVersion {
-                                self?.window.streamAppend(chunk)
-                            }
-                        }
-                    }
-                    let finalBuffer = buffer
-                    if !finalBuffer.isEmpty {
-                        self.translationCache.setValue(finalBuffer, forKey: cacheKey)
-                    }
-                    if version == self.translateVersion {
-                        await MainActor.run { [weak self] in
-                            if version == self?.translateVersion {
-                                if finalBuffer.isEmpty {
-                                    self?.window.showError(
-                                        srcText: text,
-                                        message: "翻译结果为空",
-                                        status: "无结果",
-                                        presentation: mode.floatingPresentation
-                                    )
-                                } else {
-                                    self?.window.streamFinish(finalBuffer)
-                                    self?.playPronunciationIfNeeded(for: text, mode: mode)
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    AppLog.debug("Translate version=\(version) request started streaming=false")
-                    let result: String
-                    switch mode {
-                    case .translation:
-                        result = try await requestTranslator.translate(text)
-                    case .dictionary(let word):
-                        result = try await requestTranslator.define(word)
-                    }
-                    if !result.isEmpty {
-                        self.translationCache.setValue(result, forKey: cacheKey)
-                    }
-                    if version == self.translateVersion {
-                        await MainActor.run { [weak self] in
-                            if version == self?.translateVersion {
-                                if result.isEmpty {
-                                    self?.window.showError(
-                                        srcText: text,
-                                        message: "翻译结果为空",
-                                        status: "无结果",
-                                        presentation: mode.floatingPresentation
-                                    )
-                                } else {
-                                    self?.window.show(
-                                        srcText: text,
-                                        destText: result,
-                                        presentation: mode.floatingPresentation
-                                    )
-                                    self?.playPronunciationIfNeeded(for: text, mode: mode)
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                if version == self.translateVersion {
-                    AppLog.debug("Translate version=\(version) failed error=\(Self.userFacingErrorMessage(from: error, fallback: "翻译服务暂时不可用", maxLength: 80))")
-                    let errMsg = Self.userFacingErrorMessage(
-                        from: error,
-                        fallback: "翻译服务暂时不可用",
-                        maxLength: 50
-                    )
-                    await MainActor.run { [weak self] in
-                        if version == self?.translateVersion {
-                            self?.window.showError(
-                                srcText: text,
-                                message: errMsg,
-                                presentation: mode.floatingPresentation
-                            )
-                        }
-                    }
-                }
+        AppLog.debug("Translate version=\(request.version) cache hit")
+        await MainActor.run { [weak self] in
+            guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.window.show(
+                srcText: request.text,
+                destText: cached,
+                presentation: request.mode.floatingPresentation
+            )
+            self.playPronunciationIfNeeded(for: request.text, mode: request.mode)
+        }
+        return true
+    }
+
+    private func requestTranslation(for request: TranslationRequest,
+                                    using translator: TranslatorProtocol) async throws -> String? {
+        if translator.supportsStreaming {
+            AppLog.debug("Translate version=\(request.version) request started streaming=true")
+            return try await requestStreamingTranslation(for: request, using: translator)
+        }
+
+        AppLog.debug("Translate version=\(request.version) request started streaming=false")
+        switch request.mode {
+        case .translation:
+            return try await translator.translate(request.text)
+        case .dictionary(let word):
+            return try await translator.define(word)
+        }
+    }
+
+    private func requestStreamingTranslation(for request: TranslationRequest,
+                                             using translator: TranslatorProtocol) async throws -> String? {
+        var buffer = ""
+        var pendingDisplayChunk = ""
+        var lastDisplayFlush = ProcessInfo.processInfo.systemUptime
+        let stream: AsyncThrowingStream<String, Error>
+        switch request.mode {
+        case .translation:
+            stream = translator.translateStream(request.text)
+        case .dictionary(let word):
+            stream = translator.defineStream(word)
+        }
+
+        for try await token in stream {
+            guard isCurrentTranslation(request.version) else { return nil }
+            guard !token.isEmpty else { continue }
+            buffer += token
+            pendingDisplayChunk += token
+
+            let now = ProcessInfo.processInfo.systemUptime
+            guard pendingDisplayChunk.count >= 12 || now - lastDisplayFlush >= 0.05 else {
+                continue
+            }
+
+            let chunk = pendingDisplayChunk
+            pendingDisplayChunk = ""
+            lastDisplayFlush = now
+            await appendTranslationStreamChunk(chunk, for: request)
+        }
+
+        if !pendingDisplayChunk.isEmpty, isCurrentTranslation(request.version) {
+            await appendTranslationStreamChunk(pendingDisplayChunk, for: request)
+        }
+
+        return isCurrentTranslation(request.version) ? buffer : nil
+    }
+
+    private func appendTranslationStreamChunk(_ chunk: String, for request: TranslationRequest) async {
+        await MainActor.run { [weak self] in
+            guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.window.streamAppend(chunk)
+        }
+    }
+
+    private func presentFinalTranslation(_ result: String, for request: TranslationRequest) async {
+        await MainActor.run { [weak self] in
+            guard let self, self.isCurrentTranslation(request.version) else { return }
+            if result.isEmpty {
+                self.window.showError(
+                    srcText: request.text,
+                    message: "翻译结果为空",
+                    status: "无结果",
+                    presentation: request.mode.floatingPresentation
+                )
+            } else if request.translator?.supportsStreaming == true {
+                self.window.streamFinish(result)
+                self.playPronunciationIfNeeded(for: request.text, mode: request.mode)
+            } else {
+                self.window.show(
+                    srcText: request.text,
+                    destText: result,
+                    presentation: request.mode.floatingPresentation
+                )
+                self.playPronunciationIfNeeded(for: request.text, mode: request.mode)
             }
         }
+    }
+
+    private func presentTranslationError(_ error: Error, for request: TranslationRequest) async {
+        guard !Task.isCancelled, isCurrentTranslation(request.version) else { return }
+
+        AppLog.debug("Translate version=\(request.version) failed error=\(Self.userFacingErrorMessage(from: error, fallback: "翻译服务暂时不可用", maxLength: 80))")
+        let errMsg = Self.userFacingErrorMessage(
+            from: error,
+            fallback: "翻译服务暂时不可用",
+            maxLength: 50
+        )
+        await MainActor.run { [weak self] in
+            guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.window.showError(
+                srcText: request.text,
+                message: errMsg,
+                presentation: request.mode.floatingPresentation
+            )
+        }
+    }
+
+    private func isCurrentTranslation(_ version: Int) -> Bool {
+        version == translateVersion
     }
 
     private static func modeDescription(_ mode: TranslationMode) -> String {
@@ -725,20 +768,21 @@ final class AppController: NSObject {
 // MARK: - MouseMonitorDelegate
 
 extension AppController: MouseMonitorDelegate {
-    func onSelectionEvent(allowClipboardFallback: Bool) {
+    func onSelectionEvent(allowClipboardFallback: Bool, allowDeepAccessibilitySearch: Bool) {
         if selectionTask != nil {
             AppLog.debug("Selection event cancels previous selectionTask")
         }
         selectionTask?.cancel()
         selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            AppLog.debug("Selection event handling begin allowClipboardFallback=\(allowClipboardFallback)")
+            AppLog.debug("Selection event handling begin allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
             if let reason = Self.ignoredFrontmostApplicationReason() {
                 AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
                 return
             }
             let text = await self.textSelector.getSelectedText(
-                allowClipboardFallback: allowClipboardFallback
+                allowClipboardFallback: allowClipboardFallback,
+                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
             )
             guard !Task.isCancelled else {
                 AppLog.debug("Selection event cancelled after text lookup")
