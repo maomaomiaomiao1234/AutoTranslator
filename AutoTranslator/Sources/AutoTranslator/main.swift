@@ -110,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         globalHotKeys.stop()
         controller.stop()
+        // 历史写入是去抖的后台异步操作；退出前同步落盘，避免丢失最近记录。
+        TranslationHistoryStore.shared.flush()
     }
 
     private func configureGlobalHotKeys() {

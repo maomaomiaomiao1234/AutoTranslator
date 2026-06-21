@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-enum TranslationHistoryKind: String, Codable, CaseIterable {
+enum TranslationHistoryKind: String, Codable, CaseIterable, Sendable {
     case translation
     case dictionary
     case systemDictionary
@@ -38,7 +38,7 @@ enum TranslationHistoryTransferError: LocalizedError {
     }
 }
 
-struct TranslationHistoryEntry: Identifiable, Codable, Equatable {
+struct TranslationHistoryEntry: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var sourceText: String
     var translatedText: String
@@ -73,11 +73,15 @@ final class TranslationHistoryStore: ObservableObject {
 
     private let fileURL: URL
     private let maxRecentItems: Int
+    private let writer: HistoryFileWriter
+    private let writeDebounceInterval: TimeInterval
 
-    init(fileURL: URL? = nil, maxRecentItems: Int = 500) {
+    init(fileURL: URL? = nil, maxRecentItems: Int = 500, writeDebounceInterval: TimeInterval = 0.5) {
         let resolvedURL = fileURL ?? Self.defaultFileURL()
         self.fileURL = resolvedURL
         self.maxRecentItems = max(1, maxRecentItems)
+        self.writeDebounceInterval = max(0, writeDebounceInterval)
+        self.writer = HistoryFileWriter(fileURL: resolvedURL)
         entries = Self.loadEntries(from: resolvedURL)
     }
 
@@ -244,19 +248,15 @@ final class TranslationHistoryStore: ObservableObject {
         }
     }
 
+    /// 内存中的 entries 立即更新（驱动 UI），磁盘写入交给后台串行 writer，
+    /// 并对突发的连续写入做合并去抖，避免每次划词都在主线程上整文件编码+写盘。
     private func persist() {
-        do {
-            let directory = fileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
+        writer.schedule(entries, debounce: writeDebounceInterval)
+    }
 
-            let data = try Self.makeEncoder().encode(entries)
-            try data.write(to: fileURL, options: [.atomic])
-        } catch {
-            AppLog.error("保存翻译历史失败: \(error.localizedDescription)")
-        }
+    /// 同步刷新待写的历史到磁盘。App 退出前调用以确保不丢最近记录；测试中用于在回读文件前落盘。
+    func flush() {
+        writer.flush()
     }
 
     private nonisolated static func loadEntries(from fileURL: URL) -> [TranslationHistoryEntry] {
@@ -276,7 +276,7 @@ final class TranslationHistoryStore: ObservableObject {
             .appendingPathComponent("history.json")
     }
 
-    private nonisolated static func makeEncoder() -> JSONEncoder {
+    fileprivate nonisolated static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .millisecondsSince1970
@@ -365,4 +365,63 @@ private nonisolated struct HistoryEntryIdentity: Hashable {
     let targetLanguage: String
     let backend: String
     let kind: String
+}
+
+/// 后台串行历史写入器：合并去抖突发写入，把 JSON 编码与磁盘写入移出主线程。
+/// 待写快照在锁内更新，因此连续多次 schedule 只会写出最后一次；flush() 同步落盘。
+private final class HistoryFileWriter: @unchecked Sendable {
+    private let fileURL: URL
+    private let queue = DispatchQueue(label: "com.autotranslator.history-writer", qos: .utility)
+    private let lock = NSLock()
+    private var pendingSnapshot: [TranslationHistoryEntry]?
+    private var isWriteScheduled = false
+
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
+
+    /// 安排一次（去抖动的）写盘。debounce 期间到来的多次调用会合并为一次，只写最后一次快照。
+    func schedule(_ snapshot: [TranslationHistoryEntry], debounce: TimeInterval) {
+        lock.lock()
+        pendingSnapshot = snapshot
+        let needsSchedule = !isWriteScheduled
+        if needsSchedule { isWriteScheduled = true }
+        lock.unlock()
+
+        guard needsSchedule else { return }
+        if debounce <= 0 {
+            queue.async { [weak self] in self?.drain() }
+        } else {
+            queue.asyncAfter(deadline: .now() + debounce) { [weak self] in self?.drain() }
+        }
+    }
+
+    /// 同步写出当前待写快照（若有）。用于 App 退出与测试回读前确保已落盘。
+    func flush() {
+        queue.sync { drain() }
+    }
+
+    private func drain() {
+        lock.lock()
+        let snapshot = pendingSnapshot
+        pendingSnapshot = nil
+        isWriteScheduled = false
+        lock.unlock()
+
+        guard let snapshot else { return }
+        write(snapshot)
+    }
+
+    private func write(_ entries: [TranslationHistoryEntry]) {
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try TranslationHistoryStore.makeEncoder().encode(entries)
+            try data.write(to: fileURL, options: [.atomic])
+        } catch {
+            AppLog.error("保存翻译历史失败: \(error.localizedDescription)")
+        }
+    }
 }

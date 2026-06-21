@@ -523,7 +523,7 @@ final class FloatingWindow: NSObject {
             window.setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
             window.alphaValue = 0
             // 不调用 makeKeyAndOrderFront：让浮窗以“非激活”方式出现，避免抢走源程序的 key 焦点、
-            // 把本应用置为 active。否则紧接着的划词会在鼠标按下时被 isIgnoredFrontmostApplication()
+            // 把本应用置为 active。否则紧接着的划词会在鼠标按下时被 ignoredFrontmostApplicationReason()
             // （NSApp.isActive 仍为 true）当成“在自己应用内操作”而整段忽略——表现为结果出来后
             // 马上划词没有任何反应、必须先点一下别处才恢复。窗口仍可在用户点击时按需成为 key。
             window.orderFrontRegardless()
@@ -580,13 +580,6 @@ final class FloatingWindow: NSObject {
         if streamTimer == nil { startStream() }
         streamBuffer += token
         streamBufferCount += token.count
-    }
-
-    func streamFeed(_ text: String) {
-        if streamTimer == nil { startStream() }
-        guard streamBuffer != text else { return }
-        streamBuffer = text
-        streamBufferCount = text.count
     }
 
     func streamFinish(_ finalText: String) {

@@ -89,6 +89,7 @@ struct TranslationHistoryStoreTests {
         #expect(fixture.store.entries.contains(where: { $0.sourceText == "newest" }))
         #expect(!fixture.store.entries.contains(where: { $0.sourceText == "older" }))
 
+        fixture.store.flush()
         let reloaded = TranslationHistoryStore(fileURL: fixture.fileURL, maxRecentItems: 1)
         #expect(reloaded.entries == fixture.store.entries)
     }
@@ -256,6 +257,8 @@ private struct HistoryStoreFixture {
     let directoryURL: URL
 
     func cleanup() {
+        // 历史写入是后台异步的；先同步落盘，避免去抖写入在目录被删后重建临时目录。
+        store.flush()
         try? FileManager.default.removeItem(at: directoryURL)
     }
 }

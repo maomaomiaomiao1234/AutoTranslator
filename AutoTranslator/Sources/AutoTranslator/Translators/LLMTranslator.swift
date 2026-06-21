@@ -113,58 +113,74 @@ final class LLMTranslator: TranslatorProtocol {
         """
     }
 
+    /// 一次聊天补全请求的可变参数（系统提示、用户消息、采样温度、长度上限）。
+    /// 翻译与词典两种模式仅这些字段不同，请求装配与解析完全共用。
+    private struct ChatRequestSpec {
+        let system: String
+        let user: String
+        let temperature: Double
+        let maxTokens: Int
+    }
+
+    private func translateSpec(_ text: String) -> ChatRequestSpec {
+        ChatRequestSpec(
+            system: buildInstruction(),
+            user: buildUserMessage(text),
+            temperature: 0.3,
+            maxTokens: 4096
+        )
+    }
+
+    private func defineSpec(_ word: String) -> ChatRequestSpec {
+        ChatRequestSpec(
+            system: buildDictionaryInstruction(),
+            user: buildDictionaryUserMessage(word),
+            temperature: 0.2,
+            maxTokens: 1024
+        )
+    }
+
     func translate(_ text: String) async throws -> String {
-        let url = try completionsURL()
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        let body: [String: Any] = [
-            "model": model,
-            "messages": [
-                ["role": "system", "content": buildInstruction()],
-                ["role": "user", "content": buildUserMessage(text)],
-            ],
-            "temperature": 0.3,
-            "max_tokens": 4096,
-            "enable_thinking": false,
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await Self.sharedSession.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
-        }
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let choices = json?["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw RuntimeError("LLM API 返回格式异常")
-        }
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await complete(translateSpec(text))
     }
 
     func define(_ word: String) async throws -> String {
-        let url = try completionsURL()
-        var request = URLRequest(url: url)
+        try await complete(defineSpec(word))
+    }
+
+    func translateStream(_ text: String) -> AsyncThrowingStream<String, Error> {
+        completeStream(translateSpec(text))
+    }
+
+    func defineStream(_ word: String) -> AsyncThrowingStream<String, Error> {
+        completeStream(defineSpec(word))
+    }
+
+    private func makeRequest(_ spec: ChatRequestSpec, stream: Bool) throws -> URLRequest {
+        var request = URLRequest(url: try completionsURL())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": [
-                ["role": "system", "content": buildDictionaryInstruction()],
-                ["role": "user", "content": buildDictionaryUserMessage(word)],
+                ["role": "system", "content": spec.system],
+                ["role": "user", "content": spec.user],
             ],
-            "temperature": 0.2,
-            "max_tokens": 1024,
+            "temperature": spec.temperature,
+            "max_tokens": spec.maxTokens,
             "enable_thinking": false,
         ]
+        if stream {
+            body["stream"] = true
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
 
+    private func complete(_ spec: ChatRequestSpec) async throws -> String {
+        let request = try makeRequest(spec, stream: false)
         let (data, response) = try await Self.sharedSession.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? ""
@@ -179,86 +195,11 @@ final class LLMTranslator: TranslatorProtocol {
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func translateStream(_ text: String) -> AsyncThrowingStream<String, Error> {
+    private func completeStream(_ spec: ChatRequestSpec) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let url = try completionsURL()
-                    var request = URLRequest(url: url)
-                    request.httpMethod = "POST"
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-                    let body: [String: Any] = [
-                        "model": model,
-                        "messages": [
-                            ["role": "system", "content": buildInstruction()],
-                            ["role": "user", "content": buildUserMessage(text)],
-                        ],
-                        "temperature": 0.3,
-                        "max_tokens": 4096,
-                        "enable_thinking": false,
-                        "stream": true,
-                    ]
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-                    let (bytes, response) = try await Self.sharedSession.bytes(for: request)
-                    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                        var bodyData = Data()
-                        for try await byte in bytes {
-                            bodyData.append(byte)
-                            if bodyData.count >= 1024 { break }
-                        }
-                        let body = String(data: bodyData, encoding: .utf8) ?? ""
-                        throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
-                    }
-                    for try await line in bytes.lines {
-                        try Task.checkCancellation()
-                        guard line.hasPrefix("data: "), !line.hasPrefix("data: [DONE]") else { continue }
-                        let jsonStr = String(line.dropFirst(6))
-                        guard let jsonData = jsonStr.data(using: .utf8),
-                              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                              let choices = json["choices"] as? [[String: Any]],
-                              let delta = choices.first?["delta"] as? [String: Any],
-                              let token = delta["content"] as? String else { continue }
-                        continuation.yield(token)
-                    }
-                    continuation.finish()
-                } catch is CancellationError {
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
-        }
-    }
-
-    func defineStream(_ word: String) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    let url = try completionsURL()
-                    var request = URLRequest(url: url)
-                    request.httpMethod = "POST"
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-                    let body: [String: Any] = [
-                        "model": model,
-                        "messages": [
-                            ["role": "system", "content": buildDictionaryInstruction()],
-                            ["role": "user", "content": buildDictionaryUserMessage(word)],
-                        ],
-                        "temperature": 0.2,
-                        "max_tokens": 1024,
-                        "enable_thinking": false,
-                        "stream": true,
-                    ]
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
+                    let request = try makeRequest(spec, stream: true)
                     let (bytes, response) = try await Self.sharedSession.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         var bodyData = Data()

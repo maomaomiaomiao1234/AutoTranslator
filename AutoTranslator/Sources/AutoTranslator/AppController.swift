@@ -437,10 +437,6 @@ final class AppController: NSObject {
         return !screen.visibleFrame.contains(nsPoint)
     }
 
-    private static func isIgnoredFrontmostApplication() -> Bool {
-        ignoredFrontmostApplicationReason() != nil
-    }
-
     private static func ignoredFrontmostApplicationReason() -> String? {
         if NSApp.isActive { return "appActive" }
         guard let app = NSWorkspace.shared.frontmostApplication,
