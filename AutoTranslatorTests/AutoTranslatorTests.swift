@@ -123,6 +123,119 @@ struct TranslationHistoryStoreTests {
         #expect(fixture.store.entries[0].isFavorite)
     }
 
+    @Test
+    func exportingFavoritesWritesOnlyFavoriteEntries() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let favoriteID = fixture.store.record(
+            sourceText: "keep",
+            translatedText: "保留",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+        fixture.store.toggleFavorite(id: try #require(favoriteID))
+        fixture.store.record(
+            sourceText: "skip",
+            translatedText: "跳过",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+
+        let exportURL = fixture.directoryURL.appendingPathComponent("favorites.json")
+        let exportedCount = try fixture.store.exportEntries(favoritesOnly: true, to: exportURL)
+        let data = try Data(contentsOf: exportURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let exportedEntries = try decoder.decode([TranslationHistoryEntry].self, from: data)
+
+        #expect(exportedCount == 1)
+        #expect(exportedEntries.count == 1)
+        #expect(exportedEntries[0].id == favoriteID)
+        #expect(exportedEntries[0].isFavorite)
+    }
+
+    @Test
+    func importingMergesNewerEntriesAndPreservesFavorites() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let existingID = fixture.store.record(
+            sourceText: "hello",
+            translatedText: "你好",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation,
+            at: Date(timeIntervalSince1970: 1_000)
+        )
+        fixture.store.toggleFavorite(id: try #require(existingID))
+
+        let importedEntries = [
+            TranslationHistoryEntry(
+                id: UUID(),
+                sourceText: "hello",
+                translatedText: "您好",
+                sourceLanguage: "en",
+                targetLanguage: "zh-CN",
+                backend: "llm",
+                kind: .translation,
+                createdAt: Date(timeIntervalSince1970: 2_000),
+                isFavorite: false
+            ),
+            TranslationHistoryEntry(
+                id: UUID(),
+                sourceText: "new",
+                translatedText: "新增",
+                sourceLanguage: "en",
+                targetLanguage: "zh-CN",
+                backend: "llm",
+                kind: .dictionary,
+                createdAt: Date(timeIntervalSince1970: 3_000),
+                isFavorite: false
+            ),
+        ]
+        let importURL = fixture.directoryURL.appendingPathComponent("import.json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        try encoder.encode(importedEntries).write(to: importURL)
+
+        let result = try fixture.store.importEntries(from: importURL)
+
+        #expect(result == TranslationHistoryImportResult(acceptedCount: 2, addedCount: 1, updatedCount: 1))
+        #expect(fixture.store.entries.count == 2)
+        let updatedEntry = try #require(fixture.store.entry(id: existingID))
+        #expect(updatedEntry.translatedText == "您好")
+        #expect(updatedEntry.isFavorite)
+    }
+
+    @Test
+    func importingInvalidFileDoesNotChangeHistory() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        fixture.store.record(
+            sourceText: "keep",
+            translatedText: "保留",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+        let previousEntries = fixture.store.entries
+        let importURL = fixture.directoryURL.appendingPathComponent("invalid.json")
+        try Data("{}".utf8).write(to: importURL)
+
+        do {
+            _ = try fixture.store.importEntries(from: importURL)
+            Issue.record("Expected an invalid import file to throw")
+        } catch {
+            #expect(error is TranslationHistoryTransferError)
+        }
+        #expect(fixture.store.entries == previousEntries)
+    }
+
     private func makeFixture(maxRecentItems: Int = 500) throws -> HistoryStoreFixture {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("AutoTranslatorHistoryTests-\(UUID().uuidString)", isDirectory: true)

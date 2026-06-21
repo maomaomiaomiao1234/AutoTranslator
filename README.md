@@ -74,6 +74,8 @@ xcodebuild -project AutoTranslator.xcodeproj -scheme AutoTranslator -configurati
 
 翻译历史独立保存在 `~/Library/Application Support/AutoTranslator/history.json`。默认最多保留 500 条非收藏记录，收藏项不会被自动清理。
 
+可从“翻译历史”窗口右上角导出全部历史或仅导出收藏；导出文件为 JSON，可在另一台设备通过“导入”恢复。导入不会清空本地记录：相同原文、语言、后端和记录类型会合并为较新的内容，收藏状态会保留。
+
 配置项也可通过**环境变量**提供（启动时读取，不覆盖已存在的同名变量；JSON 文件中的键名与环境变量名一致）：
 
 | 键 | 说明 | 默认值 |

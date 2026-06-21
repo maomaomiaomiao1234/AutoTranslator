@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum HistoryScope: String, CaseIterable, Identifiable {
     case all
@@ -22,6 +23,7 @@ struct TranslationHistoryView: View {
     @State private var scope: HistoryScope = .all
     @State private var selectedID: UUID?
     @State private var showsClearConfirmation = false
+    @State private var transferAlert: HistoryTransferAlert?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +56,13 @@ struct TranslationHistoryView: View {
             }
         } message: {
             Text("收藏内容会保留，此操作无法撤销。")
+        }
+        .alert(transferAlert?.title ?? "", isPresented: transferAlertIsPresented) {
+            Button("好", role: .cancel) {
+                transferAlert = nil
+            }
+        } message: {
+            Text(transferAlert?.message ?? "")
         }
     }
 
@@ -88,6 +97,29 @@ struct TranslationHistoryView: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             .frame(width: 132)
+
+            Menu {
+                Button("导出全部历史") {
+                    exportEntries(favoritesOnly: false)
+                }
+                Button("仅导出收藏") {
+                    exportEntries(favoritesOnly: true)
+                }
+                .disabled(favoriteCount == 0)
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 32, height: 32)
+            .help("导出历史记录")
+
+            Button {
+                importEntries()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+            }
+            .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 32))
+            .help("导入历史记录")
 
             Button {
                 showsClearConfirmation = true
@@ -258,6 +290,79 @@ struct TranslationHistoryView: View {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
     }
+
+    private var transferAlertIsPresented: Binding<Bool> {
+        Binding(
+            get: { transferAlert != nil },
+            set: { isPresented in
+                if !isPresented {
+                    transferAlert = nil
+                }
+            }
+        )
+    }
+
+    private func exportEntries(favoritesOnly: Bool) {
+        let panel = NSSavePanel()
+        panel.title = favoritesOnly ? "导出收藏记录" : "导出翻译历史"
+        panel.nameFieldStringValue = favoritesOnly
+            ? "AutoTranslator-收藏.json"
+            : "AutoTranslator-历史记录.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let count = try store.exportEntries(favoritesOnly: favoritesOnly, to: url)
+            transferAlert = HistoryTransferAlert(
+                title: "导出完成",
+                message: "已导出 \(count) 条\(favoritesOnly ? "收藏" : "历史")记录。"
+            )
+        } catch {
+            transferAlert = HistoryTransferAlert(title: "导出失败", message: error.localizedDescription)
+        }
+    }
+
+    private func importEntries() {
+        let panel = NSOpenPanel()
+        panel.title = "导入翻译历史"
+        panel.message = "选择由 AutoTranslator 导出的 JSON 历史文件。"
+        panel.allowedContentTypes = [.json]
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let result = try store.importEntries(from: url)
+            transferAlert = HistoryTransferAlert(
+                title: "导入完成",
+                message: importSummary(for: result)
+            )
+        } catch {
+            transferAlert = HistoryTransferAlert(title: "导入失败", message: error.localizedDescription)
+        }
+    }
+
+    private func importSummary(for result: TranslationHistoryImportResult) -> String {
+        let unchangedCount = result.acceptedCount - result.addedCount - result.updatedCount
+        var fragments = ["已读取 \(result.acceptedCount) 条记录"]
+        if result.addedCount > 0 {
+            fragments.append("新增 \(result.addedCount) 条")
+        }
+        if result.updatedCount > 0 {
+            fragments.append("合并更新 \(result.updatedCount) 条")
+        }
+        if unchangedCount > 0 {
+            fragments.append("\(unchangedCount) 条无需变更")
+        }
+        return fragments.joined(separator: "；") + "。"
+    }
+}
+
+private struct HistoryTransferAlert {
+    let title: String
+    let message: String
 }
 
 private struct HistoryEntryRow: View {
