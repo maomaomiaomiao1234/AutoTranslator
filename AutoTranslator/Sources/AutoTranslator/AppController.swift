@@ -1,6 +1,7 @@
 import Cocoa
 import Combine
 import CoreGraphics
+import ApplicationServices
 
 final class AppController: NSObject {
     private enum TranslationMode {
@@ -426,6 +427,7 @@ final class AppController: NSObject {
         if isMonitoringPaused { return "monitoringPaused" }
         if window.containsScreenPoint(point) { return "insideFloatingWindow" }
         if Self.isSystemChromePoint(point) { return "systemChrome" }
+        if Self.isFocusedElementTextInput() { return "focusedTextInput" }
         return Self.ignoredFrontmostApplicationReason()
     }
 
@@ -450,6 +452,63 @@ final class AppController: NSObject {
             return "ignoredBundle bundle=\(bundleIdentifier)"
         }
         return nil
+    }
+
+    /// 检查最前端应用中聚焦的 UI 元素是否为可编辑的文本输入框。
+    /// 若为真，说明用户正在输入框（网址栏、聊天输入框、搜索框等）中编辑文本，
+    /// 应跳过划词翻译，避免干扰正常的文本编辑操作。
+    private static func isFocusedElementTextInput() -> Bool {
+        guard !NSApp.isActive,
+              let frontApp = NSWorkspace.shared.frontmostApplication else {
+            return false
+        }
+
+        let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
+        AXUIElementSetMessagingTimeout(appRef, 0.2)
+
+        var focused: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focused)
+        guard err == .success, let focusedElement = focused else {
+            return false
+        }
+
+        let element = focusedElement as! AXUIElement
+
+        var roleVal: CFTypeRef?
+        let roleErr = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleVal)
+        guard roleErr == .success, let role = roleVal as? String else {
+            return false
+        }
+
+        // 单行文本输入框 —— 包括浏览器网址栏、搜索框、表单输入框等。
+        // 用户在这些地方几乎不会需要划词翻译，而是做编辑操作。
+        let singleLineInputRoles: Set<String> = [
+            "AXTextField",
+            "AXSearchField",
+            "AXComboBox",
+        ]
+
+        if singleLineInputRoles.contains(role) {
+            return true
+        }
+
+        // 对于多行文本区（AXTextArea），只在已知的聊天/即时通讯应用中跳过，
+        // 避免影响笔记、文档编辑器等 App 里的正常划词翻译体验。
+        if role == "AXTextArea" {
+            guard let bundleID = frontApp.bundleIdentifier else { return false }
+            let chatBundleIDs: Set<String> = [
+                "com.tencent.xinWeChat",     // 微信
+                "com.tencent.qq",            // QQ
+                "com.apple.iChat",           // Messages（iMessage）
+                "com.apple.MobileSMS",       // Messages（短信）
+                "com.apple.messages",        // Messages（macOS Ventura+）
+                "com.tinyspeck.slackmacgap", // Slack
+                "com.microsoft.teams",       // Microsoft Teams
+            ]
+            return chatBundleIDs.contains(bundleID)
+        }
+
+        return false
     }
 
     private static func pointDescription(_ point: CGPoint) -> String {
@@ -880,6 +939,10 @@ extension AppController: MouseMonitorDelegate {
             AppLog.debug("Selection event handling begin allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
             if let reason = Self.ignoredFrontmostApplicationReason() {
                 AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
+                return
+            }
+            if Self.isFocusedElementTextInput() {
+                AppLog.debug("Selection event dropped: focused text input")
                 return
             }
             let text = await self.textSelector.getSelectedText(
