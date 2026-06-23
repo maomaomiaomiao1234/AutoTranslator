@@ -270,6 +270,20 @@ struct FloatingWindowView: View {
 
             Spacer(minLength: AppUI.Space.s)
 
+            Button { model.onSpeakSource?() } label: {
+                speechButtonLabel
+            }
+            .buttonStyle(IconButtonStyle(
+                tint: speechButtonTint,
+                background: speechButtonBackground,
+                border: speechButtonBorder,
+                size: MINIMAL_TOOLBAR_BUTTON_SIZE
+            ))
+            .disabled(!model.canSpeakSource || model.isSpeechBusy)
+            .opacity(model.canSpeakSource ? 1 : 0.36)
+            .help(model.speechState.helpText)
+            .accessibilityLabel(model.speechState.helpText)
+
             Button { model.onToggleFavorite?() } label: {
                 Image(systemName: model.isFavorite ? "star.fill" : "star")
             }
@@ -295,6 +309,7 @@ struct FloatingWindowView: View {
             .accessibilityLabel("切换到完整模式")
         }
         .frame(height: MINIMAL_TOOLBAR_HEIGHT)
+        .animation(.easeInOut(duration: 0.16), value: model.speechState)
     }
 
     private var minimalDestinationContent: some View {
