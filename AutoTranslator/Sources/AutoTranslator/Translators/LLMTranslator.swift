@@ -13,7 +13,7 @@ final class LLMTranslator: TranslatorProtocol {
     let baseURL: String
     private let apiKey: String
 
-    nonisolated static let defaultModel = "deepseek-v3.2"
+    nonisolated static let defaultModel = "deepseek-v4-flash"
     nonisolated static let defaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     private static let sharedSession: URLSession = {

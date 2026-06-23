@@ -135,7 +135,7 @@ API Key 不会以明文写入该文件，而是合并保存在 macOS Keychain �
 | `DEEPSEEK_API_KEY` | 大模型 API Key | 无 |
 | `LLM_API_KEY` | 通用大模型 API Key，作为上一项的候选 | 无 |
 | `DASHSCOPE_API_KEY` | DashScope Key，也可作为大模型和 TTS 的候选 | 无 |
-| `LLM_MODEL` | OpenAI 兼容接口使用的模型 | `deepseek-v3.2` |
+| `LLM_MODEL` | OpenAI 兼容接口使用的模型 | `deepseek-v4-flash` |
 | `LLM_BASE_URL` | API 根地址，填写到 `/v1` | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `TTS_API_KEY` | CosyVoice Key；留空时依次尝试复用 DashScope、大模型 Key | 无 |
 | `TTS_AUTO_PLAY` | `1`、`true`、`yes` 或 `on` 时自动朗读单词 | 关闭 |
