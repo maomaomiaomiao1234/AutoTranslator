@@ -46,6 +46,7 @@ final class FloatingWindowViewModel: ObservableObject {
     var onHide: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onToggleFavorite: (() -> Void)?
+    var onToggleWindowMode: (() -> Void)?
     var onSwapLanguages: (() -> Void)?
     var onSourceLineCountChanged: ((Int) -> Void)?
     var onSourceResizeEnded: (() -> Void)?
@@ -220,13 +221,17 @@ struct FloatingWindowView: View {
     }
 
     private var minimalBody: some View {
-        ScrollView {
-            minimalDestinationContent
-                .padding(.top, AppUI.Space.xxs)
-                .padding(.bottom, AppUI.Space.xs)
+        VStack(spacing: MINIMAL_TOOLBAR_GAP) {
+            minimalToolbar
+
+            ScrollView {
+                minimalDestinationContent
+                    .padding(.top, AppUI.Space.xxs)
+                    .padding(.bottom, AppUI.Space.xs)
+            }
+            .scrollIndicators(.hidden)
+            .frame(minHeight: MINIMAL_TEXT_MIN_HEIGHT, maxHeight: .infinity, alignment: .top)
         }
-        .scrollIndicators(.hidden)
-        .frame(minHeight: MINIMAL_TEXT_MIN_HEIGHT, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, MINIMAL_WINDOW_PADDING_X)
         .padding(.vertical, MINIMAL_WINDOW_PADDING_Y)
         .frame(
@@ -254,13 +259,42 @@ struct FloatingWindowView: View {
                 )
                 .blendMode(.plusLighter)
         }
-        .overlay(alignment: .bottomTrailing) {
+    }
+
+    private var minimalToolbar: some View {
+        HStack(spacing: AppUI.Space.s) {
             if !model.isAwaitingTranslation {
                 MinimalEngineDot(tint: model.destinationTint)
-                    .padding(.trailing, AppUI.Space.m)
-                    .padding(.bottom, AppUI.Space.m)
+                    .accessibilityLabel(model.destinationTitle)
             }
+
+            Spacer(minLength: AppUI.Space.s)
+
+            Button { model.onToggleFavorite?() } label: {
+                Image(systemName: model.isFavorite ? "star.fill" : "star")
+            }
+            .buttonStyle(IconButtonStyle(
+                tint: model.isFavorite ? AppUI.amber : AppUI.textSecondary,
+                background: model.isFavorite ? AppUI.chipWarm : AppUI.toolbarGhost,
+                size: MINIMAL_TOOLBAR_BUTTON_SIZE
+            ))
+            .disabled(!model.canFavorite)
+            .opacity(model.canFavorite ? 1 : 0.36)
+            .help(model.isFavorite ? "取消收藏" : "收藏当前结果")
+            .accessibilityLabel(model.isFavorite ? "取消收藏" : "收藏当前结果")
+
+            Button { model.onToggleWindowMode?() } label: {
+                Image(systemName: "rectangle.expand.vertical")
+            }
+            .buttonStyle(IconButtonStyle(
+                tint: AppUI.textSecondary,
+                background: AppUI.toolbarGhost,
+                size: MINIMAL_TOOLBAR_BUTTON_SIZE
+            ))
+            .help("切换到完整模式")
+            .accessibilityLabel("切换到完整模式")
         }
+        .frame(height: MINIMAL_TOOLBAR_HEIGHT)
     }
 
     private var minimalDestinationContent: some View {
@@ -350,6 +384,16 @@ struct FloatingWindowView: View {
                     border: AppUI.activeToolbarBorder
                 ))
                 .help("截图翻译")
+
+                Button { model.onToggleWindowMode?() } label: {
+                    Image(systemName: "rectangle.compress.vertical")
+                }
+                .buttonStyle(IconButtonStyle(
+                    tint: AppUI.textSecondary,
+                    background: AppUI.toolbarGhost,
+                    border: AppUI.buttonBorder
+                ))
+                .help("切换到极简模式")
 
                 Button { model.onHide?() } label: {
                     Image(systemName: "xmark")

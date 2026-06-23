@@ -184,6 +184,7 @@ protocol FloatingWindowDelegate: AnyObject {
     func screenshotTranslation()
     func retranslateCurrent()
     func toggleFavoriteCurrentResult()
+    func toggleFloatingWindowMode()
     func submitEditedSource(_ text: String)
     func hideWindow()
     func stopSpeech()
@@ -961,7 +962,7 @@ final class FloatingWindow: NSObject {
     }
 
     private var minimalWindowChromeHeight: CGFloat {
-        MINIMAL_WINDOW_PADDING_Y * 2
+        MINIMAL_WINDOW_PADDING_Y * 2 + MINIMAL_TOOLBAR_HEIGHT + MINIMAL_TOOLBAR_GAP
     }
 
     private func growWindowForStreamingIfNeeded() {
@@ -1100,9 +1101,9 @@ final class FloatingWindow: NSObject {
     // MARK: - Private Helpers
 
     private func updateMouseEventPolicy() {
-        // 极简模式只接收滚轮，让内容可滚动；点击和拖拽继续穿透到下面的网页。
+        // 极简模式需要响应收藏与模式切换；窗口内点击由极简工具栏和文本选择处理。
         window.ignoresMouseEvents = false
-        rootView.allowsScrollOnlyMouseInteraction = isMinimalWindowMode
+        rootView.allowsScrollOnlyMouseInteraction = false
         if isMinimalWindowMode {
             window.isMovableByWindowBackground = false
         } else {
@@ -1121,6 +1122,9 @@ final class FloatingWindow: NSObject {
         viewModel.onRefresh = { [weak self] in self?.handleRefresh() }
         viewModel.onToggleFavorite = { [weak self] in
             self?.delegate?.toggleFavoriteCurrentResult()
+        }
+        viewModel.onToggleWindowMode = { [weak self] in
+            self?.delegate?.toggleFloatingWindowMode()
         }
         viewModel.onSwapLanguages = { [weak self] in self?.handleSwapLanguages() }
         viewModel.onSourceLineCountChanged = { [weak self] lineCount in

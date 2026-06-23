@@ -1034,6 +1034,11 @@ extension AppController: FloatingWindowDelegate {
         window.setHistoryFavorite(isFavorite, available: true)
     }
 
+    func toggleFloatingWindowMode() {
+        let nextMode: FloatingWindowMode = currentFloatingWindowMode == .minimal ? .standard : .minimal
+        setFloatingWindowMode(nextMode)
+    }
+
     func hideWindow() {
         window.hide()
     }
