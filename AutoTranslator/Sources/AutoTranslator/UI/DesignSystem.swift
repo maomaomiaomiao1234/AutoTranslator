@@ -56,6 +56,10 @@ let DICTIONARY_PRONUNCIATION_FONT_SIZE: CGFloat = 12
 let DICTIONARY_BODY_FONT_SIZE: CGFloat = 14
 let STREAM_RENDER_INTERVAL: TimeInterval = 0.05
 let STREAM_RENDER_TIMER_TOLERANCE: TimeInterval = 0.015
+/// 流式渲染期间，译文每增长这么多字符才重新测量+尝试增高窗口一次。
+/// 避免每 50ms 都对不断变长的整段译文做一次全量文本布局（近似 O(n²)）。
+/// 增高滞后至多一行左右，流结束时 finishStream 会做一次精确布局兜底。
+let STREAM_GROW_MEASURE_CHAR_DELTA = 20
 
 // MARK: - Theme Detection
 

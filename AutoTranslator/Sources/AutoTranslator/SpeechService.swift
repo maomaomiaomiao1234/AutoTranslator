@@ -1,4 +1,5 @@
 import AVFoundation
+import Accelerate
 import Foundation
 
 @MainActor
@@ -399,18 +400,30 @@ final class SpeechService {
             guard let channelData = buffer.floatChannelData else {
                 throw RuntimeError("无法写入 TTS 流式音频缓冲区")
             }
-            data.withUnsafeBytes { source in
-                guard let bytes = source.bindMemory(to: UInt8.self).baseAddress else { return }
-                for frame in 0..<frameCount {
-                    let frameOffset = frame * bytesPerFrame
-                    for channel in 0..<channelCount {
-                        let sampleOffset = frameOffset + channel * 2
-                        guard sampleOffset + 1 < byteCount else { continue }
-                        let rawSample = UInt16(bytes[sampleOffset])
-                            | (UInt16(bytes[sampleOffset + 1]) << 8)
-                        let sample = Int16(bitPattern: rawSample)
-                        channelData[channel][frame] = Float(sample) / 32768.0
-                    }
+            // 交错 16-bit PCM → 平面 Float32。用 Accelerate 向量化替代逐样本 Swift 循环:
+            // 每声道一次 vDSP_vflt16(Int16→Float)+ vDSP_vsmul(乘 1/32768),消除播放起始时
+            // 在主线程逐样本转换的开销。WAV/PCM 为小端,macOS 全为小端主机,故可直接按 Int16 解释;
+            // Data 由 malloc 分配,基址 16 字节对齐,声道 c 起点偏移 c 个 Int16 仍满足 2 字节对齐。
+            var scale: Float = 1.0 / 32768.0
+            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                guard let base = raw.baseAddress else { return }
+                let int16Base = base.assumingMemoryBound(to: Int16.self)
+                for channel in 0..<channelCount {
+                    vDSP_vflt16(
+                        int16Base + channel,
+                        vDSP_Stride(channelCount),
+                        channelData[channel],
+                        1,
+                        vDSP_Length(frameCount)
+                    )
+                    vDSP_vsmul(
+                        channelData[channel],
+                        1,
+                        &scale,
+                        channelData[channel],
+                        1,
+                        vDSP_Length(frameCount)
+                    )
                 }
             }
 

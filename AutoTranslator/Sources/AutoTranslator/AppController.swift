@@ -427,7 +427,10 @@ final class AppController: NSObject {
         if isMonitoringPaused { return "monitoringPaused" }
         if window.containsScreenPoint(point) { return "insideFloatingWindow" }
         if Self.isSystemChromePoint(point) { return "systemChrome" }
-        if Self.isFocusedElementTextInput() { return "focusedTextInput" }
+        // 注意：这里只做廉价的几何/前台应用判断。聚焦元素是否为文本输入框需要一次
+        // 同步 AX 跨进程查询（最坏阻塞 0.2s），而本方法运行在 CGEventTap 回调（主 run loop）
+        // 的 mouseDown 阶段——对系统中每一次左键点击都执行会拖慢 tap 甚至触发系统禁用。
+        // 该判断改由 mouseUp 后的 onSelectionEvent 统一执行（见 isFocusedElementTextInput 调用处）。
         return Self.ignoredFrontmostApplicationReason()
     }
 
@@ -590,10 +593,39 @@ final class AppController: NSObject {
             "Translate dispatch version=\(request.version) mode=\(Self.modeDescription(request.mode)) length=\(request.text.count) backend=\(request.backend)"
         )
 
+        if presentImmediateResultIfAvailable(for: request) {
+            return
+        }
+
         translateTask = Task { [weak self] in
             guard let self = self else { return }
             await self.runTranslation(request)
         }
+    }
+
+    /// 同步快速路径:命中系统词典或翻译缓存时,在让出 runloop 前直接展示结果。
+    /// 与调用方刚设置的「正在翻译」处于同一 runloop turn,SwiftUI 只渲染最终态,
+    /// 从而消除缓存命中时先闪一帧 loading 再替换的问题。返回 true 表示已处理,无需发起网络翻译。
+    /// 顺序与 runTranslation 一致:系统词典优先于翻译缓存。
+    private func presentImmediateResultIfAvailable(for request: TranslationRequest) -> Bool {
+        if case .dictionary(let word) = request.mode,
+           let definition = SystemDictionary.definition(for: word) {
+            AppLog.debug("Translate version=\(request.version) resolved synchronously by system dictionary")
+            recordHistory(definition, for: request, kind: .systemDictionary)
+            window.show(srcText: request.text, destText: definition, presentation: .systemDictionary)
+            playPronunciationIfNeeded(for: request.text, mode: request.mode)
+            return true
+        }
+
+        if let cached = translationCache.value(forKey: request.cacheKey) {
+            AppLog.debug("Translate version=\(request.version) resolved synchronously by cache")
+            recordHistory(cached, for: request, kind: Self.historyKind(for: request.mode))
+            window.show(srcText: request.text, destText: cached, presentation: request.mode.floatingPresentation)
+            playPronunciationIfNeeded(for: request.text, mode: request.mode)
+            return true
+        }
+
+        return false
     }
 
     private func makeTranslationRequest(version: Int, text: String, mode: TranslationMode) -> TranslationRequest {

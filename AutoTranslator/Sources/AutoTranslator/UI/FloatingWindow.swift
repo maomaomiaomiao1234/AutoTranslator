@@ -221,6 +221,8 @@ final class FloatingWindow: NSObject {
     private var streamBufferCount = 0
     private var streamPos = 0
     private var streamFinal: String?
+    /// 上次为“流式增高”做全量文本测量时的译文字符数；用于按字符增量节流测量。
+    private var lastStreamMeasuredCount = 0
 
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -501,8 +503,10 @@ final class FloatingWindow: NSObject {
             let frame = window.frame
             if abs(frame.width - newWidth) > 0.5 || abs(frame.height - newHeight) > 0.5 {
                 window.setFrame(
-                    NSRect(x: frame.origin.x, y: frame.maxY - newHeight,
-                           width: newWidth, height: newHeight),
+                    clampedStandardFrame(
+                        NSRect(x: frame.origin.x, y: frame.maxY - newHeight,
+                               width: newWidth, height: newHeight)
+                    ),
                     display: true
                 )
             } else {
@@ -521,7 +525,7 @@ final class FloatingWindow: NSObject {
                 y = (screen.height - newHeight) / 2 + screen.origin.y
             }
 
-            window.setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
+            window.setFrame(clampedStandardFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight)), display: true)
             window.alphaValue = 0
             // 不调用 makeKeyAndOrderFront：让浮窗以“非激活”方式出现，避免抢走源程序的 key 焦点、
             // 把本应用置为 active。否则紧接着的划词会在鼠标按下时被 ignoredFrontmostApplicationReason()
@@ -598,6 +602,7 @@ final class FloatingWindow: NSObject {
         streamBufferCount = 0
         streamPos = 0
         streamFinal = nil
+        lastStreamMeasuredCount = 0
         currentDestText = ""
         setDestText("正在翻译...")
         setTranslationState(.loading)
@@ -668,7 +673,9 @@ final class FloatingWindow: NSObject {
             )
         } else {
             window.setFrame(
-                NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: newWidth, height: newHeight),
+                clampedStandardFrame(
+                    NSRect(x: frame.origin.x, y: frame.maxY - newHeight, width: newWidth, height: newHeight)
+                ),
                 display: true
             )
         }
@@ -794,7 +801,9 @@ final class FloatingWindow: NSObject {
         layoutWindow(forcedHeight: targetHeight)
         suppressAutoPin = true
         window.setFrame(
-            NSRect(x: frame.origin.x, y: frame.maxY - targetHeight, width: frame.width, height: targetHeight),
+            clampedStandardFrame(
+                NSRect(x: frame.origin.x, y: frame.maxY - targetHeight, width: frame.width, height: targetHeight)
+            ),
             display: true
         )
         suppressAutoPin = false
@@ -968,6 +977,13 @@ final class FloatingWindow: NSObject {
     private func growWindowForStreamingIfNeeded() {
         guard !usesManualHeightForLayout, window.isVisible else { return }
 
+        // 按字符增量节流：译文每多出 STREAM_GROW_MEASURE_CHAR_DELTA 个字符才重新测量一次，
+        // 而不是每个 streamTick（50ms）都对整段译文做一次全量文本布局。streamPos 即已显示
+        // 字符数，用它判断是 O(1)，避免再花 O(n) 去数 currentDestText。流结束时 finishStream
+        // 会做一次精确布局兜底，故此处增高滞后至多一行不影响最终结果。
+        guard streamPos - lastStreamMeasuredCount >= STREAM_GROW_MEASURE_CHAR_DELTA else { return }
+        lastStreamMeasuredCount = streamPos
+
         let frame = window.frame
         let targetHeight = desiredAutomaticWindowHeight(for: frame.width)
         let growthThreshold: CGFloat = 18
@@ -985,7 +1001,9 @@ final class FloatingWindow: NSObject {
             )
         } else {
             window.setFrame(
-                NSRect(x: frame.origin.x, y: top - newHeight, width: newWidth, height: newHeight),
+                clampedStandardFrame(
+                    NSRect(x: frame.origin.x, y: top - newHeight, width: newWidth, height: newHeight)
+                ),
                 display: true
             )
         }
@@ -1044,6 +1062,24 @@ final class FloatingWindow: NSObject {
 
     private func clampedWindowHeight(_ height: CGFloat) -> CGFloat {
         max(minimumWindowHeight, min(maximumWindowHeight, height))
+    }
+
+    /// 把标准模式下的目标 frame 夹进所在屏幕的 visibleFrame（仅平移原点、不改尺寸），
+    /// 避免长译文向下增高或复用上次位置时窗口滑出屏幕底部/边缘。
+    /// 窗口比屏幕还高时优先保住顶部（标题与控件可见）。极简模式由 minimalWindowFrame 单独处理。
+    private func clampedStandardFrame(_ frame: NSRect) -> NSRect {
+        let screen = NSScreen.screens.first(where: { $0.frame.intersects(frame) }) ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return frame }
+
+        var x = frame.origin.x
+        if x + frame.width > visible.maxX { x = visible.maxX - frame.width }
+        if x < visible.minX { x = visible.minX }
+
+        var y = frame.origin.y
+        if y < visible.minY { y = visible.minY }
+        if y + frame.height > visible.maxY { y = visible.maxY - frame.height }
+
+        return NSRect(x: x, y: y, width: frame.width, height: frame.height)
     }
 
     private func minimalWindowFrame(near point: NSPoint, width: CGFloat, height: CGFloat) -> NSRect {

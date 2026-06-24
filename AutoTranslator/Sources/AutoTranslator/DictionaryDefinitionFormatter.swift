@@ -40,7 +40,21 @@ enum DictionaryDefinitionFormatter {
         "COMPOUNDS",
     ]
 
+    /// 解析结果记忆缓存:同一 (word, definition) 在 SwiftUI 反复重渲染时只解析一次。
+    /// entry() 内部会编译多条正则并多次切分字符串,每帧重算代价不小;命中缓存即省去。
+    nonisolated private static let entryCache = LRUCache<String, DictionaryDisplayEntry>(capacity: 64)
+
     nonisolated static func entry(word: String, definition: String) -> DictionaryDisplayEntry {
+        let cacheKey = "\(word)\u{1}\(definition)"
+        if let cached = entryCache.value(forKey: cacheKey) {
+            return cached
+        }
+        let result = computeEntry(word: word, definition: definition)
+        entryCache.setValue(result, forKey: cacheKey)
+        return result
+    }
+
+    nonisolated private static func computeEntry(word: String, definition: String) -> DictionaryDisplayEntry {
         let fallbackTitle = word.trimmingCharacters(in: .whitespacesAndNewlines)
         var title = fallbackTitle.isEmpty ? "词典" : fallbackTitle
         var pronunciation: String?
