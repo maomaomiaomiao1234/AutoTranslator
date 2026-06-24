@@ -31,11 +31,17 @@ final class AppController: NSObject {
         let version: Int
         let text: String
         let mode: TranslationMode
+        let selectionActivity: SelectionActivity?
         let backend: String
         let sourceLanguage: String
         let targetLanguage: String
         let cacheKey: String
         let translator: TranslatorProtocol?
+    }
+
+    private struct SelectionActivity {
+        let id: UUID
+        let occurredAt: Date
     }
 
     // MARK: - State
@@ -573,7 +579,11 @@ final class AppController: NSObject {
 
     // MARK: - Translation dispatch
 
-    private func dispatchTranslate(_ text: String, mode: TranslationMode) {
+    private func dispatchTranslate(
+        _ text: String,
+        mode: TranslationMode,
+        selectionActivity: SelectionActivity? = nil
+    ) {
         translateVersion += 1
         let version = translateVersion
         if translateTask != nil {
@@ -588,7 +598,12 @@ final class AppController: NSObject {
         currentHistoryEntryID = nil
         window.setHistoryFavorite(false, available: false)
 
-        let request = makeTranslationRequest(version: version, text: text, mode: mode)
+        let request = makeTranslationRequest(
+            version: version,
+            text: text,
+            mode: mode,
+            selectionActivity: selectionActivity
+        )
         AppLog.debug(
             "Translate dispatch version=\(request.version) mode=\(Self.modeDescription(request.mode)) length=\(request.text.count) backend=\(request.backend)"
         )
@@ -628,7 +643,12 @@ final class AppController: NSObject {
         return false
     }
 
-    private func makeTranslationRequest(version: Int, text: String, mode: TranslationMode) -> TranslationRequest {
+    private func makeTranslationRequest(
+        version: Int,
+        text: String,
+        mode: TranslationMode,
+        selectionActivity: SelectionActivity?
+    ) -> TranslationRequest {
         let backend = translatorBackend
         let sourceLanguage = srcLang
         let targetLanguage = destLang
@@ -643,6 +663,7 @@ final class AppController: NSObject {
             version: version,
             text: text,
             mode: mode,
+            selectionActivity: selectionActivity,
             backend: backend,
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
@@ -827,6 +848,12 @@ final class AppController: NSObject {
             backend: request.backend,
             kind: kind
         )
+        if let selectionActivity = request.selectionActivity {
+            TranslationActivityRecorder.recordSelectionTranslation(
+                id: selectionActivity.id,
+                occurredAt: selectionActivity.occurredAt
+            )
+        }
         if let currentHistoryEntryID,
            let entry = TranslationHistoryStore.shared.entry(id: currentHistoryEntryID) {
             window.setHistoryFavorite(entry.isFavorite, available: true)
@@ -999,7 +1026,11 @@ extension AppController: MouseMonitorDelegate {
             self.lastTranslationMode = mode
             AppLog.debug("Selection event accepted length=\(text.count) mode=\(Self.modeDescription(mode))")
             self.window.show(srcText: text, destText: nil, presentation: mode.floatingPresentation)
-            self.dispatchTranslate(text, mode: mode)
+            self.dispatchTranslate(
+                text,
+                mode: mode,
+                selectionActivity: SelectionActivity(id: UUID(), occurredAt: .now)
+            )
         }
     }
 }
