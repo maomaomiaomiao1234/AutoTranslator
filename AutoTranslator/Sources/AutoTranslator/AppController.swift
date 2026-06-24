@@ -81,6 +81,10 @@ final class AppController: NSObject {
     var currentBackend: String { translatorBackend }
 
     private static let ignoredSelectionBundleIdentifiers: Set<String> = [
+        // Finder 同时承载桌面和文件列表。它会把被选中的文件/文件夹名称暴露为
+        // AXSelectedText；这不是用户划选的正文。跳过整个鼠标序列也能避免在
+        // 拖拽选择文件时触发 TextSelector 的模拟 ⌘C 回退。
+        "com.apple.finder",
         "com.apple.dock",
         "com.apple.systemuiserver",
         "com.apple.controlcenter",
