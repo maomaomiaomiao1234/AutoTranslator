@@ -96,13 +96,27 @@ final class LLMTranslator: TranslatorProtocol {
         return """
         你是一部简明双语词典。用户只会给出一个词或短词形。\
         你的任务是用\(tgtName)给出词典式解释，而不是翻译句子、回答问题或扩展话题。\
+        如果词条包含中文，必须先给出对应英文翻译，同时保留词性、释义和例句等词典说明。\
         如能判断语言，请给出常见词性、核心释义、常见搭配或变形，并给一个短例句。\
         内容要简洁准确；不要输出思考过程、免责声明或额外说明。
         """
     }
 
     private func buildDictionaryUserMessage(_ word: String) -> String {
-        """
+        if LanguageHeuristics.containsChinese(word) {
+            return """
+            为以下词条生成词典解释：\(word)
+
+            输出格式：
+            词条：...
+            英译：...
+            词性：...
+            释义：...
+            例句：...
+            """
+        }
+
+        return """
         为以下词条生成词典解释：\(word)
 
         输出格式：

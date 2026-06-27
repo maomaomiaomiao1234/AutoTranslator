@@ -9,6 +9,38 @@ import Foundation
 import Testing
 @testable import AutoTranslator
 
+struct LanguageHeuristicsTests {
+    @Test
+    func autoDetectedChineseUsesEnglishWhenTargetIsDefaultChinese() {
+        let target = LanguageHeuristics.effectiveTargetLanguage(
+            sourceLanguage: "auto",
+            configuredTargetLanguage: "zh-CN",
+            text: "苹果"
+        )
+
+        #expect(target == "en")
+    }
+
+    @Test
+    func nonChineseOrExplicitLanguageKeepsConfiguredTarget() {
+        #expect(LanguageHeuristics.effectiveTargetLanguage(
+            sourceLanguage: "auto",
+            configuredTargetLanguage: "zh-CN",
+            text: "apple"
+        ) == "zh-CN")
+        #expect(LanguageHeuristics.effectiveTargetLanguage(
+            sourceLanguage: "zh-CN",
+            configuredTargetLanguage: "zh-CN",
+            text: "苹果"
+        ) == "zh-CN")
+        #expect(LanguageHeuristics.effectiveTargetLanguage(
+            sourceLanguage: "auto",
+            configuredTargetLanguage: "ja",
+            text: "苹果"
+        ) == "ja")
+    }
+}
+
 @MainActor
 @Suite(.serialized)
 struct TranslationHistoryStoreTests {

@@ -331,11 +331,14 @@ final class AppController: NSObject {
 
     // MARK: - Translator management
 
-    private func createTranslator() -> TranslatorProtocol {
+    private func createTranslator(source: String? = nil, target: String? = nil) -> TranslatorProtocol {
+        let sourceLanguage = source ?? srcLang
+        let targetLanguage = target ?? destLang
+
         if translatorBackend == "llm" {
             do {
                 AppLog.debug("使用大模型翻译 (LLM)")
-                return try LLMTranslator(source: srcLang, target: destLang)
+                return try LLMTranslator(source: sourceLanguage, target: targetLanguage)
             } catch {
                 AppLog.error("大模型翻译初始化失败，回退到谷歌翻译: \(error)")
                 NotificationManager.shared.post(
@@ -348,7 +351,7 @@ final class AppController: NSObject {
         } else if translatorBackend == "apple" {
             if #available(macOS 15.0, *) {
                 AppLog.debug("使用系统翻译 (Apple Translation)")
-                return AppleTranslator(source: srcLang, target: destLang)
+                return AppleTranslator(source: sourceLanguage, target: targetLanguage)
             } else {
                 AppLog.error("系统翻译需要 macOS 15 及以上，回退到谷歌翻译")
                 NotificationManager.shared.post(
@@ -360,7 +363,7 @@ final class AppController: NSObject {
             }
         }
         AppLog.debug("使用谷歌翻译 (Google)")
-        return GoogleTranslator(source: srcLang, target: destLang)
+        return GoogleTranslator(source: sourceLanguage, target: targetLanguage)
     }
 
     private func switchTranslatorBackend() {
@@ -528,18 +531,28 @@ final class AppController: NSObject {
         "(\(String(format: "%.1f", point.x)),\(String(format: "%.1f", point.y)))"
     }
 
-    private func translator(for mode: TranslationMode) -> TranslatorProtocol? {
+    private func translator(for mode: TranslationMode,
+                            sourceLanguage: String,
+                            targetLanguage: String) -> TranslatorProtocol? {
         switch mode {
         case .translation:
-            return translator
+            if translator.source == sourceLanguage, translator.target == targetLanguage {
+                return translator
+            }
+            return createTranslator(source: sourceLanguage, target: targetLanguage)
         case .dictionary:
-            if let llmTranslator = translator as? LLMTranslator {
+            if let llmTranslator = translator as? LLMTranslator,
+               llmTranslator.source == sourceLanguage,
+               llmTranslator.target == targetLanguage {
                 return llmTranslator
             }
-            if let llmTranslator = try? LLMTranslator(source: srcLang, target: destLang) {
+            if let llmTranslator = try? LLMTranslator(source: sourceLanguage, target: targetLanguage) {
                 return llmTranslator
             }
-            return translator
+            if translator.source == sourceLanguage, translator.target == targetLanguage {
+                return translator
+            }
+            return createTranslator(source: sourceLanguage, target: targetLanguage)
         }
     }
 
@@ -561,6 +574,16 @@ final class AppController: NSObject {
         case .dictionary: kind = "d"
         }
         return "\(backend)|\(src)|\(dest)|\(kind)|\(text)"
+    }
+
+    private static func effectiveTargetLanguage(sourceLanguage: String,
+                                                targetLanguage: String,
+                                                text: String) -> String {
+        LanguageHeuristics.effectiveTargetLanguage(
+            sourceLanguage: sourceLanguage,
+            configuredTargetLanguage: targetLanguage,
+            text: text
+        )
     }
 
     private static func dictionaryWord(from text: String) -> String? {
@@ -607,6 +630,11 @@ final class AppController: NSObject {
             text: text,
             mode: mode,
             selectionActivity: selectionActivity
+        )
+        window.setLanguages(
+            Languages.codeByName,
+            source: request.sourceLanguage,
+            target: request.targetLanguage
         )
         AppLog.debug(
             "Translate dispatch version=\(request.version) mode=\(Self.modeDescription(request.mode)) length=\(request.text.count) backend=\(request.backend)"
@@ -655,7 +683,11 @@ final class AppController: NSObject {
     ) -> TranslationRequest {
         let backend = translatorBackend
         let sourceLanguage = srcLang
-        let targetLanguage = destLang
+        let targetLanguage = Self.effectiveTargetLanguage(
+            sourceLanguage: sourceLanguage,
+            targetLanguage: destLang,
+            text: text
+        )
         let cacheKey = Self.translationCacheKey(
             backend: backend,
             src: sourceLanguage,
@@ -672,7 +704,11 @@ final class AppController: NSObject {
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             cacheKey: cacheKey,
-            translator: translator(for: mode)
+            translator: translator(
+                for: mode,
+                sourceLanguage: sourceLanguage,
+                targetLanguage: targetLanguage
+            )
         )
     }
 
