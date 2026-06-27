@@ -39,6 +39,48 @@ struct LanguageHeuristicsTests {
             text: "苹果"
         ) == "ja")
     }
+
+    @Test
+    func chineseDictionaryEntryAlwaysUsesEnglishTarget() {
+        #expect(LanguageHeuristics.effectiveDictionaryTargetLanguage(
+            sourceLanguage: "zh-CN",
+            configuredTargetLanguage: "ja",
+            word: "翻译"
+        ) == "en")
+        #expect(LanguageHeuristics.effectiveDictionaryTargetLanguage(
+            sourceLanguage: "auto",
+            configuredTargetLanguage: "zh-CN",
+            word: "translation"
+        ) == "zh-CN")
+    }
+
+    @Test
+    func chineseTextRequiresARealSystemDictionaryEntryForDictionaryMode() {
+        #expect(!LanguageHeuristics.shouldUseDictionaryMode(
+            for: "请求失败时保留系统词典结果",
+            systemDefinitionAvailable: false
+        ))
+        #expect(LanguageHeuristics.shouldUseDictionaryMode(
+            for: "翻译",
+            systemDefinitionAvailable: true
+        ))
+        #expect(LanguageHeuristics.shouldUseDictionaryMode(
+            for: "translation",
+            systemDefinitionAvailable: false
+        ))
+    }
+}
+
+struct SystemDictionaryTests {
+    @Test
+    func englishTranslationIsInsertedAfterDictionaryTitle() {
+        let result = SystemDictionary.definition(
+            "翻译\n这是将内容从一种语言转换成另一种语言。",
+            addingEnglishTranslation: "translate; translation"
+        )
+
+        #expect(result == "翻译\n英文翻译：translate; translation\n这是将内容从一种语言转换成另一种语言。")
+    }
 }
 
 @MainActor

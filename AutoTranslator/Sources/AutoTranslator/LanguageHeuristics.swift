@@ -29,4 +29,25 @@ enum LanguageHeuristics {
         }
         return "en"
     }
+
+    /// 中文词条在系统词典命中后还需要补充英译，因此词典模式固定以英语为目标语言。
+    static func effectiveDictionaryTargetLanguage(sourceLanguage: String,
+                                                  configuredTargetLanguage: String,
+                                                  word: String) -> String {
+        if containsChinese(word) {
+            return "en"
+        }
+        return effectiveTargetLanguage(
+            sourceLanguage: sourceLanguage,
+            configuredTargetLanguage: configuredTargetLanguage,
+            text: word
+        )
+    }
+
+    /// 中文没有天然的空格分词，不能仅凭“无空格”判定为单词。
+    /// 只有系统词典确认存在完整词条时才使用词典模式；拉丁文字仍沿用单词规则。
+    static func shouldUseDictionaryMode(for word: String,
+                                        systemDefinitionAvailable: Bool) -> Bool {
+        !containsChinese(word) || systemDefinitionAvailable
+    }
 }

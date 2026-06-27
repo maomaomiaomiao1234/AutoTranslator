@@ -558,7 +558,13 @@ final class AppController: NSObject {
 
     private static func translationMode(for text: String) -> TranslationMode {
         if let word = dictionaryWord(from: text) {
-            return .dictionary(word: word)
+            let hasSystemDefinition = SystemDictionary.definition(for: word) != nil
+            if LanguageHeuristics.shouldUseDictionaryMode(
+                for: word,
+                systemDefinitionAvailable: hasSystemDefinition
+            ) {
+                return .dictionary(word: word)
+            }
         }
         return .translation
     }
@@ -657,6 +663,22 @@ final class AppController: NSObject {
     private func presentImmediateResultIfAvailable(for request: TranslationRequest) -> Bool {
         if case .dictionary(let word) = request.mode,
            let definition = SystemDictionary.definition(for: word) {
+            if LanguageHeuristics.containsChinese(word) {
+                if let cached = translationCache.value(forKey: request.cacheKey) {
+                    AppLog.debug("Translate version=\(request.version) resolved synchronously by augmented dictionary cache")
+                    recordHistory(cached, for: request, kind: .systemDictionary)
+                    window.show(srcText: request.text, destText: cached, presentation: .systemDictionary)
+                    playPronunciationIfNeeded(for: request.text, mode: request.mode)
+                    return true
+                }
+
+                AppLog.debug("Translate version=\(request.version) showing system dictionary while requesting English translation")
+                recordHistory(definition, for: request, kind: .systemDictionary)
+                window.show(srcText: request.text, destText: definition, presentation: .systemDictionary)
+                playPronunciationIfNeeded(for: request.text, mode: request.mode)
+                return false
+            }
+
             AppLog.debug("Translate version=\(request.version) resolved synchronously by system dictionary")
             recordHistory(definition, for: request, kind: .systemDictionary)
             window.show(srcText: request.text, destText: definition, presentation: .systemDictionary)
@@ -683,11 +705,20 @@ final class AppController: NSObject {
     ) -> TranslationRequest {
         let backend = translatorBackend
         let sourceLanguage = srcLang
-        let targetLanguage = Self.effectiveTargetLanguage(
-            sourceLanguage: sourceLanguage,
-            targetLanguage: destLang,
-            text: text
-        )
+        let targetLanguage: String
+        if case .dictionary(let word) = mode {
+            targetLanguage = LanguageHeuristics.effectiveDictionaryTargetLanguage(
+                sourceLanguage: sourceLanguage,
+                configuredTargetLanguage: destLang,
+                word: word
+            )
+        } else {
+            targetLanguage = Self.effectiveTargetLanguage(
+                sourceLanguage: sourceLanguage,
+                targetLanguage: destLang,
+                text: text
+            )
+        }
         let cacheKey = Self.translationCacheKey(
             backend: backend,
             src: sourceLanguage,
@@ -714,6 +745,9 @@ final class AppController: NSObject {
 
     private func runTranslation(_ request: TranslationRequest) async {
         do {
+            if await augmentChineseSystemDictionaryIfNeeded(for: request) {
+                return
+            }
             if await presentSystemDictionaryResultIfAvailable(for: request) {
                 return
             }
@@ -732,6 +766,53 @@ final class AppController: NSObject {
             await presentFinalTranslation(result, for: request)
         } catch {
             await presentTranslationError(error, for: request)
+        }
+    }
+
+    /// 中文单词先即时展示本地词典，再用当前翻译后端补充纯英文翻译。
+    /// 补充请求失败时保留已经展示的本地结果，不把可用内容替换成错误页。
+    private func augmentChineseSystemDictionaryIfNeeded(for request: TranslationRequest) async -> Bool {
+        guard case .dictionary(let word) = request.mode,
+              LanguageHeuristics.containsChinese(word),
+              let localDefinition = SystemDictionary.definition(for: word) else {
+            return false
+        }
+
+        if let cached = translationCache.value(forKey: request.cacheKey) {
+            await presentAugmentedSystemDictionary(cached, for: request)
+            return true
+        }
+
+        guard let translator = request.translator else { return true }
+        do {
+            AppLog.debug("Translate version=\(request.version) requesting English translation for Chinese system dictionary entry")
+            let englishTranslation = try await translator.translate(word)
+            guard !Task.isCancelled, isCurrentTranslation(request.version) else { return true }
+            let combined = SystemDictionary.definition(
+                localDefinition,
+                addingEnglishTranslation: englishTranslation
+            )
+            translationCache.setValue(combined, forKey: request.cacheKey)
+            await presentAugmentedSystemDictionary(combined, for: request)
+        } catch {
+            guard !Task.isCancelled, isCurrentTranslation(request.version) else { return true }
+            AppLog.debug(
+                "Translate version=\(request.version) English dictionary augmentation failed; keeping system dictionary: \(Self.userFacingErrorMessage(from: error, fallback: "翻译服务暂时不可用", maxLength: 80))"
+            )
+        }
+        return true
+    }
+
+    private func presentAugmentedSystemDictionary(_ definition: String,
+                                                  for request: TranslationRequest) async {
+        await MainActor.run { [weak self] in
+            guard let self, self.isCurrentTranslation(request.version) else { return }
+            self.recordHistory(definition, for: request, kind: .systemDictionary)
+            self.window.show(
+                srcText: request.text,
+                destText: definition,
+                presentation: .systemDictionary
+            )
         }
     }
 
