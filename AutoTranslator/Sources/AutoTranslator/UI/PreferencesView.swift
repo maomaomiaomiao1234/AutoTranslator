@@ -14,6 +14,7 @@ struct PreferencesSnapshot {
     var targetLang: String
     var theme: Theme
     var floatingWindowMode: FloatingWindowMode
+    var clipboardFallback: Bool
 }
 
 struct PreferencesSavePayload {
@@ -30,6 +31,7 @@ struct PreferencesSavePayload {
     let targetLang: String
     let theme: Theme
     let floatingWindowMode: FloatingWindowMode
+    let clipboardFallback: Bool
 }
 
 struct PreferencesView: View {
@@ -46,6 +48,7 @@ struct PreferencesView: View {
     @State private var targetLang: String
     @State private var theme: Theme
     @State private var floatingWindowMode: FloatingWindowMode
+    @State private var clipboardFallback: Bool
     @State private var statusText = ""
 
     let configPath: String
@@ -69,6 +72,7 @@ struct PreferencesView: View {
         _targetLang = State(initialValue: snapshot.targetLang)
         _theme = State(initialValue: snapshot.theme)
         _floatingWindowMode = State(initialValue: snapshot.floatingWindowMode)
+        _clipboardFallback = State(initialValue: snapshot.clipboardFallback)
         self.configPath = configPath
         self.onSave = onSave
         self.onClose = onClose
@@ -81,6 +85,7 @@ struct PreferencesView: View {
             ScrollView {
                 VStack(spacing: AppUI.Space.l) {
                     engineSection
+                    selectionSection
                     speechSection
                     languageSection
                 }
@@ -175,6 +180,21 @@ struct PreferencesView: View {
                     .padding(.horizontal, AppUI.Space.s)
                     .frame(width: 292, height: 34)
                     .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+            }
+        }
+    }
+
+    private var selectionSection: some View {
+        SettingsSection(title: "取词方式", subtitle: "控制划词时如何读取其他应用中的选中文本。") {
+            SettingRow(
+                icon: "doc.on.clipboard",
+                title: "剪贴板回退",
+                detail: "Accessibility 取词失败时，临时模拟 ⌘C 复制选中文本并尽量恢复原剪贴板。关闭后完全不触碰剪贴板，但部分应用（不提供 AX 选区）将无法划词。"
+            ) {
+                Toggle("", isOn: $clipboardFallback)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .frame(width: 252, alignment: .trailing)
             }
         }
     }
@@ -328,7 +348,8 @@ struct PreferencesView: View {
             sourceLang: sourceLang,
             targetLang: target,
             theme: theme,
-            floatingWindowMode: floatingWindowMode
+            floatingWindowMode: floatingWindowMode,
+            clipboardFallback: clipboardFallback
         ))
         statusText = "已保存 \(timestamp())"
     }

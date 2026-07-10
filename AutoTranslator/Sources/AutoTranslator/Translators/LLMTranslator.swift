@@ -184,8 +184,12 @@ final class LLMTranslator: TranslatorProtocol {
             ],
             "temperature": spec.temperature,
             "max_tokens": spec.maxTokens,
-            "enable_thinking": false,
         ]
+        // enable_thinking 是 DashScope 专有参数（关闭 Qwen 系列的思考模式）。
+        // OpenAI 等标准端点会对未知参数返回 400 Unrecognized argument，故仅对 DashScope 发送。
+        if baseURL.lowercased().contains("dashscope") {
+            body["enable_thinking"] = false
+        }
         if stream {
             body["stream"] = true
         }

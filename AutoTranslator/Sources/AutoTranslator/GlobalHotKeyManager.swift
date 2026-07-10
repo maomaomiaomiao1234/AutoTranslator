@@ -6,7 +6,9 @@ final class GlobalHotKeyManager {
         case toggleMonitoring = 1
     }
 
-    static let monitoringShortcutLabel = "⌥E"
+    // ⌃⌥E：不能用裸 ⌥E——那是输入重音符的死键组合（⌥E 再按 e 得 é），
+    // 注册成全局热键会吞掉系统级的重音输入，法语/西语用户将无法打字。
+    static let monitoringShortcutLabel = "⌃⌥E"
 
     var onToggleMonitoring: (() -> Void)?
 
@@ -63,7 +65,7 @@ final class GlobalHotKeyManager {
     private func register(command: Command, keyCode: UInt32, shortcutLabel: String) {
         let hotKeyID = EventHotKeyID(signature: signature, id: command.rawValue)
         var hotKeyRef: EventHotKeyRef?
-        let modifiers = UInt32(optionKey)
+        let modifiers = UInt32(controlKey | optionKey)
         let status = RegisterEventHotKey(
             keyCode,
             modifiers,

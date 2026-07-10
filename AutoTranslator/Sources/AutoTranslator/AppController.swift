@@ -31,17 +31,11 @@ final class AppController: NSObject {
         let version: Int
         let text: String
         let mode: TranslationMode
-        let selectionActivity: SelectionActivity?
         let backend: String
         let sourceLanguage: String
         let targetLanguage: String
         let cacheKey: String
         let translator: TranslatorProtocol?
-    }
-
-    private struct SelectionActivity {
-        let id: UUID
-        let occurredAt: Date
     }
 
     // MARK: - State
@@ -135,8 +129,13 @@ final class AppController: NSObject {
 
     // MARK: - Start / Stop
 
-    func start() {
+    /// 与权限无关的启动准备（应用主题等）；无论辅助功能是否授权都应在启动时执行。
+    func prepare() {
         currentTheme.apply()
+    }
+
+    /// 启动划词监听。事件 tap 在辅助功能授权前创建会失败，须在授权后调用。
+    func start() {
         mouseMonitor.start()
     }
 
@@ -335,35 +334,47 @@ final class AppController: NSObject {
         let sourceLanguage = source ?? srcLang
         let targetLanguage = target ?? destLang
 
-        if translatorBackend == "llm" {
+        switch translatorBackend {
+        case TranslationBackend.llm:
             do {
                 AppLog.debug("使用大模型翻译 (LLM)")
                 return try LLMTranslator(source: sourceLanguage, target: targetLanguage)
             } catch {
-                AppLog.error("大模型翻译初始化失败，回退到谷歌翻译: \(error)")
-                NotificationManager.shared.post(
-                    title: "大模型不可用，已回退到谷歌翻译",
-                    body: "请在偏好设置中配置 API Key。"
+                // 不再静默把文本改发到用户没有选择的云服务（旧行为：回退谷歌）。
+                // macOS 15+ 回退到本机系统翻译并通知；更早系统保持 llm 后端标签，
+                // 由占位翻译器在使用时给出配置引导错误。
+                if #available(macOS 15.0, *) {
+                    AppLog.error("大模型未配置 API Key，已回退到系统翻译（本机）: \(error)")
+                    NotificationManager.shared.post(
+                        title: "大模型不可用，已改用系统翻译",
+                        body: "系统翻译在本机完成，不会发送文本到第三方。可在偏好设置中配置 API Key 后切回大模型。"
+                    )
+                    translatorBackend = TranslationBackend.apple
+                    window.setBackendLabel(TranslationBackend.apple)
+                    return AppleTranslator(source: sourceLanguage, target: targetLanguage)
+                }
+                AppLog.error("大模型未配置 API Key: \(error)")
+                return UnconfiguredTranslator(
+                    source: sourceLanguage,
+                    target: targetLanguage,
+                    message: "未配置大模型 API Key。请在偏好设置中填写，或切换其他翻译后端。"
                 )
-                translatorBackend = "google"
-                window.setBackendLabel("google")
             }
-        } else if translatorBackend == "apple" {
+        case TranslationBackend.apple:
             if #available(macOS 15.0, *) {
                 AppLog.debug("使用系统翻译 (Apple Translation)")
                 return AppleTranslator(source: sourceLanguage, target: targetLanguage)
-            } else {
-                AppLog.error("系统翻译需要 macOS 15 及以上，回退到谷歌翻译")
-                NotificationManager.shared.post(
-                    title: "系统翻译不可用，已回退到谷歌翻译",
-                    body: "系统翻译需要 macOS 15 及以上版本。"
-                )
-                translatorBackend = "google"
-                window.setBackendLabel("google")
             }
+            AppLog.error("系统翻译需要 macOS 15 及以上")
+            return UnconfiguredTranslator(
+                source: sourceLanguage,
+                target: targetLanguage,
+                message: "系统翻译需要 macOS 15 及以上。请在偏好设置中选择其他后端。"
+            )
+        default:
+            AppLog.debug("使用谷歌翻译 (Google)")
+            return GoogleTranslator(source: sourceLanguage, target: targetLanguage)
         }
-        AppLog.debug("使用谷歌翻译 (Google)")
-        return GoogleTranslator(source: sourceLanguage, target: targetLanguage)
     }
 
     private func switchTranslatorBackend() {
@@ -519,7 +530,8 @@ final class AppController: NSObject {
                 "com.apple.MobileSMS",       // Messages（短信）
                 "com.apple.messages",        // Messages（macOS Ventura+）
                 "com.tinyspeck.slackmacgap", // Slack
-                "com.microsoft.teams",       // Microsoft Teams
+                "com.microsoft.teams",       // Microsoft Teams（经典版）
+                "com.microsoft.teams2",      // Microsoft Teams（新版，2023+ 默认）
             ]
             return chatBundleIDs.contains(bundleID)
         }
@@ -531,29 +543,16 @@ final class AppController: NSObject {
         "(\(String(format: "%.1f", point.x)),\(String(format: "%.1f", point.y)))"
     }
 
-    private func translator(for mode: TranslationMode,
-                            sourceLanguage: String,
+    /// 词典与普通翻译一律使用用户当前选择的后端。
+    /// 曾经的实现会在词典模式下优先尝试 LLM(即使用户选了系统翻译/谷歌),
+    /// 导致文本被发送到用户未选择的云服务;知情同意优先于释义质量,
+    /// 非 LLM 后端的词典释义由 TranslatorProtocol 的 define 默认实现(直接翻译该词)承担。
+    private func translator(sourceLanguage: String,
                             targetLanguage: String) -> TranslatorProtocol? {
-        switch mode {
-        case .translation:
-            if translator.source == sourceLanguage, translator.target == targetLanguage {
-                return translator
-            }
-            return createTranslator(source: sourceLanguage, target: targetLanguage)
-        case .dictionary:
-            if let llmTranslator = translator as? LLMTranslator,
-               llmTranslator.source == sourceLanguage,
-               llmTranslator.target == targetLanguage {
-                return llmTranslator
-            }
-            if let llmTranslator = try? LLMTranslator(source: sourceLanguage, target: targetLanguage) {
-                return llmTranslator
-            }
-            if translator.source == sourceLanguage, translator.target == targetLanguage {
-                return translator
-            }
-            return createTranslator(source: sourceLanguage, target: targetLanguage)
+        if translator.source == sourceLanguage, translator.target == targetLanguage {
+            return translator
         }
+        return createTranslator(source: sourceLanguage, target: targetLanguage)
     }
 
     private static func translationMode(for text: String) -> TranslationMode {
@@ -612,11 +611,24 @@ final class AppController: NSObject {
 
     // MARK: - Translation dispatch
 
+    /// 单次翻译输入上限：超长 GET URL 会被谷歌接口拒绝、大模型会静默截断输出，
+    /// 与其让用户看到晦涩失败/残缺译文，不如直接明确提示。
+    private static let maxTranslationInputLength = 5000
+
     private func dispatchTranslate(
         _ text: String,
-        mode: TranslationMode,
-        selectionActivity: SelectionActivity? = nil
+        mode: TranslationMode
     ) {
+        guard text.count <= Self.maxTranslationInputLength else {
+            AppLog.debug("Translate rejected: input too long length=\(text.count)")
+            window.showError(
+                srcText: text,
+                message: "文本过长（\(text.count) 字符），单次最多 \(Self.maxTranslationInputLength) 字符",
+                status: "文本过长",
+                presentation: mode.floatingPresentation
+            )
+            return
+        }
         translateVersion += 1
         let version = translateVersion
         if translateTask != nil {
@@ -634,8 +646,7 @@ final class AppController: NSObject {
         let request = makeTranslationRequest(
             version: version,
             text: text,
-            mode: mode,
-            selectionActivity: selectionActivity
+            mode: mode
         )
         window.setLanguages(
             Languages.codeByName,
@@ -700,8 +711,7 @@ final class AppController: NSObject {
     private func makeTranslationRequest(
         version: Int,
         text: String,
-        mode: TranslationMode,
-        selectionActivity: SelectionActivity?
+        mode: TranslationMode
     ) -> TranslationRequest {
         let backend = translatorBackend
         let sourceLanguage = srcLang
@@ -730,13 +740,11 @@ final class AppController: NSObject {
             version: version,
             text: text,
             mode: mode,
-            selectionActivity: selectionActivity,
             backend: backend,
             sourceLanguage: sourceLanguage,
             targetLanguage: targetLanguage,
             cacheKey: cacheKey,
             translator: translator(
-                for: mode,
                 sourceLanguage: sourceLanguage,
                 targetLanguage: targetLanguage
             )
@@ -969,12 +977,6 @@ final class AppController: NSObject {
             backend: request.backend,
             kind: kind
         )
-        if let selectionActivity = request.selectionActivity {
-            TranslationActivityRecorder.recordSelectionTranslation(
-                id: selectionActivity.id,
-                occurredAt: selectionActivity.occurredAt
-            )
-        }
         if let currentHistoryEntryID,
            let entry = TranslationHistoryStore.shared.entry(id: currentHistoryEntryID) {
             window.setHistoryFavorite(entry.isFavorite, available: true)
@@ -1104,6 +1106,17 @@ final class AppController: NSObject {
             ?? ""
         return ["1", "true", "yes", "on"].contains(value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
+
+    /// 剪贴板回退开关（默认开启）。关闭后仅通过 Accessibility 取词，
+    /// 不再模拟 ⌘C，也不会读取/恢复用户剪贴板；部分不支持 AX 选区的应用将无法划词。
+    private static func isClipboardFallbackEnabled() -> Bool {
+        let value = ConfigStore.shared.get(.clipboardFallback)
+            ?? ProcessInfo.processInfo.environment["CLIPBOARD_FALLBACK"]
+            ?? ""
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return true }
+        return !["0", "false", "no", "off"].contains(normalized)
+    }
 }
 
 // MARK: - MouseMonitorDelegate
@@ -1114,9 +1127,11 @@ extension AppController: MouseMonitorDelegate {
             AppLog.debug("Selection event cancels previous selectionTask")
         }
         selectionTask?.cancel()
+        // 手势层面的回退许可还要过用户开关：关闭后绝不模拟 ⌘C、不触碰剪贴板。
+        let clipboardFallbackPermitted = allowClipboardFallback && Self.isClipboardFallbackEnabled()
         selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            AppLog.debug("Selection event handling begin allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
+            AppLog.debug("Selection event handling begin allowClipboardFallback=\(clipboardFallbackPermitted) allowDeepAX=\(allowDeepAccessibilitySearch)")
             if let reason = Self.ignoredFrontmostApplicationReason() {
                 AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
                 return
@@ -1126,7 +1141,7 @@ extension AppController: MouseMonitorDelegate {
                 return
             }
             let text = await self.textSelector.getSelectedText(
-                allowClipboardFallback: allowClipboardFallback,
+                allowClipboardFallback: clipboardFallbackPermitted,
                 allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
             )
             guard !Task.isCancelled else {
@@ -1137,6 +1152,8 @@ extension AppController: MouseMonitorDelegate {
                 AppLog.debug("Selection event dropped: no selected text")
                 return
             }
+            // 去重看「是否明确划选手势」（allowClipboardFallback 原始语义），与用户回退开关无关：
+            // 即使回退被关闭，明确划选同一段文字也应再次弹窗。
             guard allowClipboardFallback || text != self.lastText else {
                 AppLog.debug("Selection event dropped: duplicate text length=\(text.count)")
                 return
@@ -1147,11 +1164,7 @@ extension AppController: MouseMonitorDelegate {
             self.lastTranslationMode = mode
             AppLog.debug("Selection event accepted length=\(text.count) mode=\(Self.modeDescription(mode))")
             self.window.show(srcText: text, destText: nil, presentation: mode.floatingPresentation)
-            self.dispatchTranslate(
-                text,
-                mode: mode,
-                selectionActivity: SelectionActivity(id: UUID(), occurredAt: .now)
-            )
+            self.dispatchTranslate(text, mode: mode)
         }
     }
 }

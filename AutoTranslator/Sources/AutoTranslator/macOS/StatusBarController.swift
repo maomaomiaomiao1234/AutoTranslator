@@ -4,6 +4,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     var currentBackend: String { get }
     var isMonitoringPaused: Bool { get }
     var currentTheme: Theme { get }
+    var isAccessibilityGranted: Bool { get }
     func statusBarRequestedManualTranslation()
     func statusBarRequestedScreenshotTranslation()
     func statusBarRequestedOpenHistory()
@@ -11,6 +12,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     func statusBarRequestedTogglePause()
     func statusBarRequestedOpenPreferences()
     func statusBarRequestedSetTheme(_ theme: Theme)
+    func statusBarRequestedOpenAccessibilitySettings()
     func statusBarRequestedQuit()
 }
 
@@ -36,6 +38,11 @@ final class StatusBarController: NSObject {
     private let prefsItem = NSMenuItem(title: "偏好设置…", action: #selector(openPreferences), keyEquivalent: ",")
     private let quitItem = NSMenuItem(title: "退出 AutoTranslator", action: #selector(quitApp), keyEquivalent: "q")
     private let statusItemMenuItem = NSMenuItem(title: "AutoTranslator", action: nil, keyEquivalent: "")
+    private let accessibilityItem = NSMenuItem(
+        title: "打开辅助功能设置…",
+        action: #selector(openAccessibilitySettings),
+        keyEquivalent: ""
+    )
 
     // 主题子菜单
     private let themeMenuItem = NSMenuItem(title: "主题外观", action: nil, keyEquivalent: "")
@@ -64,8 +71,14 @@ final class StatusBarController: NSObject {
     }
 
     private func buildMenu() {
+        // 手动管理 isEnabled（如未授权时禁用「暂停监听」），需关闭 AppKit 的自动启用。
+        menu.autoenablesItems = false
         statusItemMenuItem.isEnabled = false
         menu.addItem(statusItemMenuItem)
+        // 仅在辅助功能未授权时显示（见 refresh()），提供直达系统设置的入口。
+        accessibilityItem.target = self
+        accessibilityItem.isHidden = true
+        menu.addItem(accessibilityItem)
         menu.addItem(.separator())
 
         let backendHeader = NSMenuItem(title: "翻译后端", action: nil, keyEquivalent: "")
@@ -140,12 +153,20 @@ final class StatusBarController: NSObject {
         pauseItem.title = paused
             ? "恢复监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
             : "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
-        statusItemMenuItem.title = paused
-            ? "AutoTranslator · 已暂停"
-            : "AutoTranslator · \(TranslationBackend.shortName(backend))"
+
+        let accessibilityGranted = delegate.isAccessibilityGranted
+        accessibilityItem.isHidden = accessibilityGranted
+        pauseItem.isEnabled = accessibilityGranted
+        if !accessibilityGranted {
+            statusItemMenuItem.title = "AutoTranslator · 等待辅助功能授权"
+        } else {
+            statusItemMenuItem.title = paused
+                ? "AutoTranslator · 已暂停"
+                : "AutoTranslator · \(TranslationBackend.shortName(backend))"
+        }
 
         if let button = statusItem.button {
-            button.appearsDisabled = paused
+            button.appearsDisabled = paused || !accessibilityGranted
         }
     }
 
@@ -187,6 +208,10 @@ final class StatusBarController: NSObject {
         guard let raw = sender.representedObject as? String,
               let theme = Theme(rawValue: raw) else { return }
         delegate?.statusBarRequestedSetTheme(theme)
+    }
+
+    @objc private func openAccessibilitySettings() {
+        delegate?.statusBarRequestedOpenAccessibilitySettings()
     }
 
     @objc private func quitApp() {

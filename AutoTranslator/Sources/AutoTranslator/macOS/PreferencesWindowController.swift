@@ -121,6 +121,12 @@ final class PreferencesWindowController: NSWindowController {
             ?? Theme.from(rawValue: ConfigStore.shared.get(.theme))
         let floatingWindowMode = prefDelegate?.preferencesCurrentFloatingWindowMode()
             ?? FloatingWindowMode.from(rawValue: ConfigStore.shared.get(.floatingWindowMode))
+        // 默认开启：只有显式配置为 0/false/no/off 时才视为关闭（与 AppController 读取逻辑一致）。
+        let clipboardFallback = Self.boolValue(
+            ConfigStore.shared.get(.clipboardFallback)
+                ?? ProcessInfo.processInfo.environment["CLIPBOARD_FALLBACK"],
+            defaultValue: true
+        )
 
         return PreferencesSnapshot(
             backend: TranslationBackend.isValid(backend) ? backend : "llm",
@@ -135,13 +141,18 @@ final class PreferencesWindowController: NSWindowController {
             sourceLang: Languages.nameByCode[source] == nil ? Languages.defaultSourceCode : source,
             targetLang: (target == "auto" || Languages.nameByCode[target] == nil) ? Languages.defaultTargetCode : target,
             theme: theme,
-            floatingWindowMode: floatingWindowMode
+            floatingWindowMode: floatingWindowMode,
+            clipboardFallback: clipboardFallback
         )
     }
 
-    private static func boolValue(_ value: String?) -> Bool {
-        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-            return false
+    private static func boolValue(_ value: String?, defaultValue: Bool = false) -> Bool {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !value.isEmpty else {
+            return defaultValue
+        }
+        if defaultValue {
+            return !["0", "false", "no", "off"].contains(value)
         }
         return ["1", "true", "yes", "on"].contains(value)
     }
@@ -173,6 +184,8 @@ final class PreferencesWindowController: NSWindowController {
             .ttsVoice: payload.ttsVoice,
             .ttsBaseURL: payload.ttsBaseURL,
             .floatingWindowMode: payload.floatingWindowMode.rawValue,
+            // 默认开启，故仅在关闭时落盘；开启时删除键保持 config.json 精简。
+            .clipboardFallback: payload.clipboardFallback ? nil : "false",
         ]
 
         if let apiKey = payload.apiKey {

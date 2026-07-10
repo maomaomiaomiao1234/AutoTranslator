@@ -58,16 +58,6 @@ func runOCRHelperIfRequested() -> Bool {
 
 // MARK: - Permission
 
-func ensureAccessibilityPermission() -> Bool {
-    if AXIsProcessTrusted() { return true }
-
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-    if AXIsProcessTrustedWithOptions(options) { return true }
-
-    AppLog.error("需要辅助功能权限，请在 系统设置 > 隐私与安全性 > 辅助功能 中允许 AutoTranslator。")
-    return false
-}
-
 func isRunningUnderTests() -> Bool {
     let environment = ProcessInfo.processInfo.environment
     return environment["XCTestConfigurationFilePath"] != nil
@@ -83,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let preferences: PreferencesWindowController
     let history: HistoryWindowController
     let globalHotKeys: GlobalHotKeyManager
+    let accessibilityPermission: AccessibilityPermissionCoordinator
 
     override init() {
         controller = AppController()
@@ -90,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferences = PreferencesWindowController()
         history = HistoryWindowController(store: TranslationHistoryStore.shared)
         globalHotKeys = GlobalHotKeyManager()
+        accessibilityPermission = AccessibilityPermissionCoordinator()
         super.init()
         statusBar.delegate = self
         preferences.prefDelegate = self
@@ -98,16 +90,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
         guard !isRunningUnderTests() else { return }
+        controller.prepare()
         configureGlobalHotKeys()
-        controller.start()
+
+        // 未授权时不再退出：应用照常驻留菜单栏（翻译输入/截图/历史可用），
+        // 引导授权并在授权到位后自动启动划词监听，无需重启。
+        let grantedAtLaunch = AXIsProcessTrusted()
+        accessibilityPermission.onGranted = { [weak self] in
+            guard let self else { return }
+            self.controller.start()
+            self.statusBar.refresh()
+            if !grantedAtLaunch {
+                NotificationManager.shared.post(
+                    title: "辅助功能已授权",
+                    body: "划词翻译已启用。"
+                )
+            }
+            let backendName = TranslationBackend.displayName(self.controller.currentBackend)
+            AppLog.debug("翻译器已启动（\(backendName)），支持语言切换")
+        }
+        accessibilityPermission.begin()
+
         statusBar.refresh()
         NotificationManager.shared.requestAuthorization()
-
-        let backendName = TranslationBackend.displayName(controller.currentBackend)
-        AppLog.debug("翻译器已启动（\(backendName)），支持语言切换")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        accessibilityPermission.stop()
         globalHotKeys.stop()
         controller.stop()
         // 历史写入是去抖的后台异步操作；退出前同步落盘，避免丢失最近记录。
@@ -176,9 +185,14 @@ extension AppDelegate: StatusBarControllerDelegate {
     var currentBackend: String { controller.currentBackend }
     var isMonitoringPaused: Bool { controller.isMonitoringPaused }
     var currentTheme: Theme { controller.currentTheme }
+    var isAccessibilityGranted: Bool { accessibilityPermission.isGranted }
 
     func statusBarRequestedManualTranslation() {
         controller.presentManualInput()
+    }
+
+    func statusBarRequestedOpenAccessibilitySettings() {
+        AccessibilityPermissionCoordinator.openSystemSettings()
     }
 
     func statusBarRequestedScreenshotTranslation() {
@@ -251,23 +265,9 @@ func main() {
     // 加载持久化配置 → 同步到环境变量（不覆盖已有变量）
     ConfigStore.shared.applyToEnvironment()
 
-    if !isRunningUnderTests() {
-        guard ensureAccessibilityPermission() else {
-            exit(1)
-        }
-    }
-
-    // 如果选择大模型但没有 API Key，自动回退到谷歌
-    let backend = ProcessInfo.processInfo.environment["TRANSLATOR_BACKEND"] ?? "llm"
-    if backend == "llm" {
-        let apiKey = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
-            ?? ProcessInfo.processInfo.environment["LLM_API_KEY"]
-            ?? ProcessInfo.processInfo.environment["DASHSCOPE_API_KEY"]
-        if apiKey == nil || apiKey!.isEmpty {
-            AppLog.error("未设置 API Key，回退到谷歌翻译。可在菜单栏 → 偏好设置中配置。")
-            setenv("TRANSLATOR_BACKEND", "google", 1)
-        }
-    }
+    // 注意：不在此处做「无 API Key 回退谷歌」的静默改道。
+    // 后端可用性由 AppController.createTranslator 处理：macOS 15+ 回退本机系统翻译并通知，
+    // 更早系统在使用时展示配置引导，用户的文本永远不会发给未选择的服务。
 
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)

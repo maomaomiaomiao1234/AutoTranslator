@@ -18,6 +18,21 @@ enum ProcessRunError: LocalizedError {
 }
 
 enum ProcessRunner {
+    /// 子进程（OCR helper、screencapture 等）不需要任何密钥；
+    /// 主进程通过 setenv 注入的 API Key 不应随环境继承出去。
+    private nonisolated static let sensitiveEnvironmentKeys: Set<String> = [
+        "DEEPSEEK_API_KEY",
+        "LLM_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "TTS_API_KEY",
+    ]
+
+    nonisolated static func sanitizedChildEnvironment(
+        from environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        environment.filter { !sensitiveEnvironmentKeys.contains($0.key) }
+    }
+
     nonisolated static func run(executableURL: URL,
                                 arguments: [String],
                                 timeout: TimeInterval,
@@ -47,6 +62,7 @@ enum ProcessRunner {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = sanitizedChildEnvironment()
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

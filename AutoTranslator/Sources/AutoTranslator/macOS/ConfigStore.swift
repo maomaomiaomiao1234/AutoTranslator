@@ -22,6 +22,7 @@ final class ConfigStore {
         case destLang = "DEST_LANG"
         case theme = "THEME"
         case floatingWindowMode = "FLOATING_WINDOW_MODE"
+        case clipboardFallback = "CLIPBOARD_FALLBACK"
     }
 
     /// 敏感秘钥：存 Keychain，不落 config.json。
