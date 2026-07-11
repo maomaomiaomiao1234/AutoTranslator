@@ -39,6 +39,10 @@ final class TextSelector {
         self.copyPollIntervalNs = UInt64(copyPollInterval * 1_000_000_000)
         self.maxCopyPollCount = maxCopyPollCount
         self.maxAXDescendantSearchCount = maxAXDescendantSearchCount
+        // 对 app 元素设置的超时只作用于对该元素本身的消息；深度搜索访问的子元素
+        // 仍走系统默认超时（可达数秒）。对 system-wide 元素设置可令本进程发出的
+        // 所有 AX 消息统一使用短超时，覆盖全部取词路径。
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.2)
     }
 
     @MainActor
@@ -52,11 +56,19 @@ final class TextSelector {
         let bundleID = frontApp.bundleIdentifier ?? "<unknown>"
         AppLog.debug("TextSelector begin app=\(bundleID) pid=\(pid) allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
 
-        // 尝试 Accessibility API
-        if let text = getSelectedTextViaAccessibility(
-            pid: pid,
-            allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
-        ) {
+        // 尝试 Accessibility API。AX 为同步跨进程调用（目标 app 慢时逐条阻塞直至超时），
+        // 深度搜索还会遍历上百个元素，故放到后台线程执行，避免冻结主 run loop。
+        let axText = await Task.detached(priority: .userInitiated) { [self] in
+            getSelectedTextViaAccessibility(
+                pid: pid,
+                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+            )
+        }.value
+        if Task.isCancelled {
+            AppLog.debug("TextSelector cancelled during AX lookup app=\(bundleID)")
+            return nil
+        }
+        if let text = axText {
             AppLog.debug("TextSelector success via AX length=\(text.count) app=\(bundleID)")
             return text
         }
@@ -77,6 +89,9 @@ final class TextSelector {
     private func getSelectedTextViaAccessibility(pid: pid_t,
                                                  allowDeepAccessibilitySearch: Bool) -> String? {
         let appRef = AXUIElementCreateApplication(pid)
+        // 目标应用无响应时，AX 调用默认可阻塞主线程达数秒；深度搜索会遍历上百个元素，
+        // 极端情况下会连锁冻结取词流程。设置消息超时兜底，令单次跨进程查询快速失败。
+        AXUIElementSetMessagingTimeout(appRef, 0.2)
         let focusedResult = copyAXElementAttribute(appRef, kAXFocusedUIElementAttribute as CFString)
         guard let focused = focusedResult.element else {
             AppLog.debug("TextSelector AX focused element unavailable err=\(focusedResult.error.rawValue)")
@@ -249,7 +264,20 @@ final class TextSelector {
         let pb = NSPasteboard.general
         let snapshot = capturePasteboardSnapshot(pb)
         let oldCount = pb.changeCount
-        defer { restorePasteboardSnapshot(snapshot, to: pb) }
+        // 轮询中读到我方 ⌘C 产生的 changeCount 后记录于此；恢复前据此区分
+        // 「我们的复制」与「用户随后自己的复制」，后者绝不能被快照覆盖。
+        var observedChangeCount = oldCount
+        defer {
+            let currentCount = pb.changeCount
+            if currentCount == oldCount {
+                // 剪贴板从未变化（复制失败/无选区），无需重写，避免无谓地 bump changeCount。
+            } else if observedChangeCount != oldCount, currentCount != observedChangeCount {
+                // 在我们读取之后剪贴板又被外部写入（用户自己复制了新内容），保留之。
+                AppLog.debug("TextSelector clipboard restore skipped: changed externally count=\(currentCount)")
+            } else {
+                restorePasteboardSnapshot(snapshot, to: pb)
+            }
+        }
 
         AppLog.debug("TextSelector clipboard copy requested oldChangeCount=\(oldCount) hadContents=\(snapshot.hadContents)")
         simulateCmdC()
@@ -264,6 +292,7 @@ final class TextSelector {
             }
             try? await Task.sleep(nanoseconds: copyPollIntervalNs)
             if pb.changeCount != oldCount {
+                observedChangeCount = pb.changeCount
                 newText = pb.string(forType: .string)
                 AppLog.debug("TextSelector clipboard changed after polls=\(pollIndex) newChangeCount=\(pb.changeCount)")
                 break

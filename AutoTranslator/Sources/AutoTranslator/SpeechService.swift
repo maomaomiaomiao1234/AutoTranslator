@@ -38,8 +38,9 @@ final class SpeechService {
 
     /// 缓存最近合成的音频：避免对同一文本（如词典自动朗读高频词）重复请求 TTS。
     /// 存储实时播放时入队的原始音频块，命中时按序重放，行为与现网一致。
+    /// 单条上限 8MB、按总字节数封顶 32MB，避免最坏情况下常驻数百 MB 内存。
     private var capturedChunks: [Data] = []
-    private let audioCache = LRUCache<String, [Data]>(capacity: 32)
+    private let audioCache = LRUCache<String, [Data]>(capacity: 32, totalCostLimit: 32 * 1024 * 1024)
     nonisolated private static let maxCacheableAudioBytes = 8 * 1024 * 1024
 
     /// DashScope CosyVoice 按「字符数」限制单次合成（v3 系列：SDK/Android 2000、WebSocket 20000，
@@ -93,7 +94,7 @@ final class SpeechService {
                 let fetched = try await Self.requestSpeechAudio(input: requestInput)
                 try Task.checkCancellation()
                 if fetched.count <= Self.maxCacheableAudioBytes {
-                    audioCache.setValue([fetched], forKey: cacheKey)
+                    audioCache.setValue([fetched], forKey: cacheKey, cost: fetched.count)
                 }
                 data = fetched
             }
@@ -141,7 +142,7 @@ final class SpeechService {
         guard !chunks.isEmpty else { return }
         let total = chunks.reduce(0) { $0 + $1.count }
         guard total > 0, total <= Self.maxCacheableAudioBytes else { return }
-        audioCache.setValue(chunks, forKey: key)
+        audioCache.setValue(chunks, forKey: key, cost: total)
     }
 
     nonisolated private static func audioCacheKey(input: String, format: String) -> String {

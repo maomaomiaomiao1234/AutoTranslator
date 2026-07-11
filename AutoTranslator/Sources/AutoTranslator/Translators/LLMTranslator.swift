@@ -228,16 +228,32 @@ final class LLMTranslator: TranslatorProtocol {
                         let body = String(data: bodyData, encoding: .utf8) ?? ""
                         throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
                     }
+                    var sawCompletion = false
+                    var yieldedAnyToken = false
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        guard line.hasPrefix("data: "), !line.hasPrefix("data: [DONE]") else { continue }
+                        guard line.hasPrefix("data: ") else { continue }
+                        if line.hasPrefix("data: [DONE]") {
+                            sawCompletion = true
+                            continue
+                        }
                         let jsonStr = String(line.dropFirst(6))
                         guard let jsonData = jsonStr.data(using: .utf8),
                               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                              let choices = json["choices"] as? [[String: Any]],
-                              let delta = choices.first?["delta"] as? [String: Any],
+                              let choices = json["choices"] as? [[String: Any]] else { continue }
+                        if let finishReason = choices.first?["finish_reason"] as? String,
+                           finishReason == "stop" {
+                            sawCompletion = true
+                        }
+                        guard let delta = choices.first?["delta"] as? [String: Any],
                               let token = delta["content"] as? String else { continue }
+                        yieldedAnyToken = true
                         continuation.yield(token)
+                    }
+                    // 网络中断时 SSE 字节流会「正常」结束而没有 [DONE]/finish_reason=stop，
+                    // 半截译文若按成功返回会被上层写入缓存，此后同一文本永远命中残缺结果。
+                    guard sawCompletion || !yieldedAnyToken else {
+                        throw RuntimeError("LLM 流式响应中断，译文不完整")
                     }
                     continuation.finish()
                 } catch is CancellationError {

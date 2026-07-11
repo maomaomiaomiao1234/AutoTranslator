@@ -481,16 +481,13 @@ final class AppController: NSObject {
         return nil
     }
 
-    /// 检查最前端应用中聚焦的 UI 元素是否为可编辑的文本输入框。
+    /// 检查指定进程中聚焦的 UI 元素是否为可编辑的文本输入框。
     /// 若为真，说明用户正在输入框（网址栏、聊天输入框、搜索框等）中编辑文本，
     /// 应跳过划词翻译，避免干扰正常的文本编辑操作。
-    private static func isFocusedElementTextInput() -> Bool {
-        guard !NSApp.isActive,
-              let frontApp = NSWorkspace.shared.frontmostApplication else {
-            return false
-        }
-
-        let appRef = AXUIElementCreateApplication(frontApp.processIdentifier)
+    /// 只做跨进程 AX 查询、不触碰 AppKit 主线程状态，可在后台线程执行——
+    /// 系统里每次左键点击都会触发本检查，同步跑在主线程会造成可感知卡顿。
+    private static func isFocusedElementTextInput(pid: pid_t, bundleIdentifier: String?) -> Bool {
+        let appRef = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appRef, 0.2)
 
         var focused: CFTypeRef?
@@ -522,7 +519,7 @@ final class AppController: NSObject {
         // 对于多行文本区（AXTextArea），只在已知的聊天/即时通讯应用中跳过，
         // 避免影响笔记、文档编辑器等 App 里的正常划词翻译体验。
         if role == "AXTextArea" {
-            guard let bundleID = frontApp.bundleIdentifier else { return false }
+            guard let bundleID = bundleIdentifier else { return false }
             let chatBundleIDs: Set<String> = [
                 "com.tencent.xinWeChat",     // 微信
                 "com.tencent.qq",            // QQ
@@ -1136,7 +1133,22 @@ extension AppController: MouseMonitorDelegate {
                 AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
                 return
             }
-            if Self.isFocusedElementTextInput() {
+            guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+                AppLog.debug("Selection event dropped: no frontmost application")
+                return
+            }
+            let pid = frontApp.processIdentifier
+            let bundleID = frontApp.bundleIdentifier
+            // AX 跨进程查询会阻塞调用线程（最坏 0.2s，见 messaging timeout）。放到后台线程执行，
+            // 避免每次划选/单击探测都占用主 run loop。
+            let isTextInput = await Task.detached(priority: .userInitiated) {
+                Self.isFocusedElementTextInput(pid: pid, bundleIdentifier: bundleID)
+            }.value
+            guard !Task.isCancelled else {
+                AppLog.debug("Selection event cancelled during focus check")
+                return
+            }
+            if isTextInput {
                 AppLog.debug("Selection event dropped: focused text input")
                 return
             }

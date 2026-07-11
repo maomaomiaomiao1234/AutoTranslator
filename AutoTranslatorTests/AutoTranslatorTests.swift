@@ -336,3 +336,51 @@ private struct HistoryStoreFixture {
         try? FileManager.default.removeItem(at: directoryURL)
     }
 }
+
+struct LRUCacheTests {
+    @Test
+    func capacityEvictsLeastRecentlyUsed() {
+        let cache = LRUCache<String, Int>(capacity: 2)
+        cache.setValue(1, forKey: "a")
+        cache.setValue(2, forKey: "b")
+        #expect(cache.value(forKey: "a") == 1) // a 变为最近使用
+        cache.setValue(3, forKey: "c")
+
+        #expect(cache.value(forKey: "b") == nil)
+        #expect(cache.value(forKey: "a") == 1)
+        #expect(cache.value(forKey: "c") == 3)
+    }
+
+    @Test
+    func totalCostLimitEvictsUntilUnderLimit() {
+        let cache = LRUCache<String, Int>(capacity: 10, totalCostLimit: 100)
+        cache.setValue(1, forKey: "a", cost: 40)
+        cache.setValue(2, forKey: "b", cost: 40)
+        cache.setValue(3, forKey: "c", cost: 40) // 总成本 120 > 100，应淘汰最久未用的 a
+
+        #expect(cache.value(forKey: "a") == nil)
+        #expect(cache.value(forKey: "b") == 2)
+        #expect(cache.value(forKey: "c") == 3)
+    }
+
+    @Test
+    func totalCostLimitKeepsMostRecentEntryEvenIfOversized() {
+        let cache = LRUCache<String, Int>(capacity: 10, totalCostLimit: 50)
+        cache.setValue(1, forKey: "a", cost: 10)
+        cache.setValue(2, forKey: "huge", cost: 999) // 超限也至少保留最近一条
+
+        #expect(cache.value(forKey: "a") == nil)
+        #expect(cache.value(forKey: "huge") == 2)
+    }
+
+    @Test
+    func updatingExistingKeyReplacesCost() {
+        let cache = LRUCache<String, Int>(capacity: 10, totalCostLimit: 100)
+        cache.setValue(1, forKey: "a", cost: 90)
+        cache.setValue(2, forKey: "a", cost: 10) // 旧成本应被替换而非累加
+        cache.setValue(3, forKey: "b", cost: 80)
+
+        #expect(cache.value(forKey: "a") == 2)
+        #expect(cache.value(forKey: "b") == 3)
+    }
+}
