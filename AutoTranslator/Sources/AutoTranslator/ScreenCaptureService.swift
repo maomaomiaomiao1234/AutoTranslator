@@ -24,6 +24,7 @@ struct ScreenCaptureResult {
 
 enum ScreenCaptureService {
     private nonisolated static let interactiveCaptureTimeout: TimeInterval = 300
+    private nonisolated static let rectCaptureTimeout: TimeInterval = 15
 
     @MainActor
     static func ensurePermission() -> Bool {
@@ -66,7 +67,49 @@ enum ScreenCaptureService {
         }
     }
 
+    /// 定点截取指定屏幕区域（贴图翻译用；自绘框选已给出矩形）。
+    /// - Parameters:
+    ///   - rect: AppKit 全局屏幕坐标（左下原点）的目标矩形。
+    ///   - primaryScreenFrame: 主屏 frame，用于换算 `screencapture -R` 的 CG 顶左坐标。
+    nonisolated static func captureRect(_ rect: CGRect,
+                                        primaryScreenFrame: CGRect) async throws -> ScreenCaptureResult {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoTranslator-Overlay-\(UUID().uuidString).png")
+        let cgRect = OverlayGeometry.cgGlobalRect(fromAppKit: rect, primaryScreenFrame: primaryScreenFrame)
+        let rectArgument = "\(Int(cgRect.minX)),\(Int(cgRect.minY)),\(Int(cgRect.width)),\(Int(cgRect.height))"
+
+        do {
+            let result = try await ProcessRunner.run(
+                executableURL: URL(fileURLWithPath: "/usr/sbin/screencapture"),
+                arguments: ["-R", rectArgument, "-x", fileURL.path],
+                timeout: rectCaptureTimeout
+            )
+
+            guard result.terminationStatus == 0,
+                  FileManager.default.fileExists(atPath: fileURL.path) else {
+                removeCapturedImage(at: fileURL)
+                throw ScreenCaptureError.failed("定点截屏失败")
+            }
+
+            guard let properties = imageProperties(at: fileURL) else {
+                removeCapturedImage(at: fileURL)
+                throw ScreenCaptureError.failed("无法读取截图图像")
+            }
+
+            AppLog.debug("定点截屏完成 rect=\(rectArgument) image=\(properties.width)x\(properties.height)")
+            return ScreenCaptureResult(
+                imageURL: fileURL,
+                width: properties.width,
+                height: properties.height
+            )
+        } catch {
+            removeCapturedImage(at: fileURL)
+            throw error
+        }
+    }
+
     private nonisolated static func imageProperties(at url: URL) -> (width: Int, height: Int)? {
+
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,

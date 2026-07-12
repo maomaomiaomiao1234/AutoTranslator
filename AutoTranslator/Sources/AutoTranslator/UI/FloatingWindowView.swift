@@ -43,6 +43,7 @@ final class FloatingWindowViewModel: ObservableObject {
     var onSpeakSource: (() -> Void)?
     var onToggleBackend: (() -> Void)?
     var onScreenshotTranslation: (() -> Void)?
+    var onOverlayTranslation: (() -> Void)?
     var onHide: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onToggleFavorite: (() -> Void)?
@@ -399,6 +400,16 @@ struct FloatingWindowView: View {
                     border: AppUI.activeToolbarBorder
                 ))
                 .help("截图翻译")
+
+                Button { model.onOverlayTranslation?() } label: {
+                    Image(systemName: "photo.on.rectangle.angled")
+                }
+                .buttonStyle(IconButtonStyle(
+                    tint: AppUI.textSecondary,
+                    background: AppUI.toolbarGhost,
+                    border: AppUI.buttonBorder
+                ))
+                .help("贴图翻译（译文贴回原位）")
 
                 Button { model.onToggleWindowMode?() } label: {
                     Image(systemName: "rectangle.compress.vertical")

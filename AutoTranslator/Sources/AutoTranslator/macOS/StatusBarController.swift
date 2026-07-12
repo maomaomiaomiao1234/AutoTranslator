@@ -7,6 +7,7 @@ protocol StatusBarControllerDelegate: AnyObject {
     var isAccessibilityGranted: Bool { get }
     func statusBarRequestedManualTranslation()
     func statusBarRequestedScreenshotTranslation()
+    func statusBarRequestedOverlayTranslation()
     func statusBarRequestedOpenHistory()
     func statusBarRequestedSwitchBackend(to backend: String)
     func statusBarRequestedTogglePause()
@@ -29,6 +30,7 @@ final class StatusBarController: NSObject {
     private let backendAppleItem = NSMenuItem(title: "系统翻译（离线）", action: #selector(switchToApple), keyEquivalent: "")
     private let manualInputItem = NSMenuItem(title: "翻译输入…", action: #selector(startManualTranslation), keyEquivalent: "")
     private let screenshotItem = NSMenuItem(title: "截图翻译", action: #selector(startScreenshotTranslation), keyEquivalent: "")
+    private let overlayItem = NSMenuItem(title: "贴图翻译", action: #selector(startOverlayTranslation), keyEquivalent: "")
     private let historyItem = NSMenuItem(title: "翻译历史…", action: #selector(openHistory), keyEquivalent: "")
     private let pauseItem = NSMenuItem(
         title: "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))",
@@ -100,6 +102,9 @@ final class StatusBarController: NSObject {
 
         screenshotItem.target = self
         menu.addItem(screenshotItem)
+
+        overlayItem.target = self
+        menu.addItem(overlayItem)
 
         historyItem.target = self
         menu.addItem(historyItem)
@@ -194,6 +199,10 @@ final class StatusBarController: NSObject {
 
     @objc private func startScreenshotTranslation() {
         delegate?.statusBarRequestedScreenshotTranslation()
+    }
+
+    @objc private func startOverlayTranslation() {
+        delegate?.statusBarRequestedOverlayTranslation()
     }
 
     @objc private func openHistory() {

@@ -39,6 +39,30 @@ func runOCRHelperIfRequested() -> Bool {
     }
 
     let sourceLanguage = value(after: "--source-language") ?? Languages.defaultSourceCode
+
+    // 结构化模式（贴图翻译）：JSON 写入 --output 指定的文件而非 stdout，
+    // 从根源绕开 Vision 框架把日志混入 stdout 的问题。
+    if arguments.contains("--structured") {
+        guard let outputPath = value(after: "--output") else {
+            AppLog.error("OCR 子进程缺少 --output 参数")
+            exit(2)
+        }
+        do {
+            let result = try withStandardOutputRedirectedToStandardError {
+                try OCRService.recognizeStructuredForCommandLine(
+                    inFileAt: URL(fileURLWithPath: imagePath),
+                    sourceLanguage: sourceLanguage
+                )
+            }
+            let data = try JSONEncoder().encode(result)
+            try data.write(to: URL(fileURLWithPath: outputPath), options: [.atomic])
+            return true
+        } catch {
+            AppLog.error("结构化 OCR 子进程失败: \(error.localizedDescription)")
+            exit(2)
+        }
+    }
+
     do {
         let text = try withStandardOutputRedirectedToStandardError {
             try OCRService.recognizeTextForCommandLine(
@@ -198,6 +222,12 @@ extension AppDelegate: StatusBarControllerDelegate {
     func statusBarRequestedScreenshotTranslation() {
         Task { @MainActor [controller] in
             controller.startScreenshotTranslation()
+        }
+    }
+
+    func statusBarRequestedOverlayTranslation() {
+        Task { @MainActor [controller] in
+            controller.startOverlayTranslation()
         }
     }
 

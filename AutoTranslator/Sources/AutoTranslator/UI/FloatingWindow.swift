@@ -182,6 +182,7 @@ protocol FloatingWindowDelegate: AnyObject {
     func toggleTranslator()
     func speakCurrentSource()
     func screenshotTranslation()
+    func overlayTranslation()
     func retranslateCurrent()
     func toggleFavoriteCurrentResult()
     func toggleFloatingWindowMode()
@@ -755,6 +756,10 @@ final class FloatingWindow: NSObject {
         delegate?.screenshotTranslation()
     }
 
+    private func handleOverlayTranslation() {
+        delegate?.overlayTranslation()
+    }
+
     private func handleHide() {
         hide()
     }
@@ -1153,6 +1158,7 @@ final class FloatingWindow: NSObject {
         viewModel.onSpeakSource = { [weak self] in self?.handleSpeakSource() }
         viewModel.onToggleBackend = { [weak self] in self?.handleBackendToggle() }
         viewModel.onScreenshotTranslation = { [weak self] in self?.handleScreenshotTranslation() }
+        viewModel.onOverlayTranslation = { [weak self] in self?.handleOverlayTranslation() }
         viewModel.onHide = { [weak self] in self?.handleHide() }
         viewModel.onRefresh = { [weak self] in self?.handleRefresh() }
         viewModel.onToggleFavorite = { [weak self] in

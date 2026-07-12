@@ -61,6 +61,22 @@ let STREAM_RENDER_TIMER_TOLERANCE: TimeInterval = 0.015
 /// 增高滞后至多一行左右，流结束时 finishStream 会做一次精确布局兜底。
 let STREAM_GROW_MEASURE_CHAR_DELTA = 20
 
+// MARK: - 贴图翻译（Overlay）
+
+/// 贴图色块圆角。刻意小于卡片圆角：色块是行级元素，要贴合文字尺度。
+let OVERLAY_PATCH_RADIUS: CGFloat = 3
+/// 色块相对文本块矩形的外扩量（点），盖住字形边缘的抗锯齿残影。
+let OVERLAY_PATCH_INFLATE_X: CGFloat = 2
+let OVERLAY_PATCH_INFLATE_Y: CGFloat = 1
+/// 贴图图像区圆角：足够小以免裁掉截图内容，又能与描边一起形成"卡片"感。
+let OVERLAY_PIN_RADIUS: CGFloat = 6
+/// 贴图控制条（胶囊）高度与它到图像区的间距。
+let OVERLAY_STRIP_HEIGHT: CGFloat = 36
+let OVERLAY_STRIP_GAP: CGFloat = 8
+/// 译文适配的最小字号：再小就无法阅读，宁可截断。
+let OVERLAY_MIN_FONT_SIZE: CGFloat = 9
+
+
 // MARK: - Theme Detection
 
 private func appearanceIsDark(_ appearance: NSAppearance) -> Bool {

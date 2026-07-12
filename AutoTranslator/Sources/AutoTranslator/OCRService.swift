@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Vision
 
 final class OCRService {
@@ -40,6 +41,166 @@ final class OCRService {
     static func recognizeTextForCommandLine(inFileAt imageURL: URL,
                                             sourceLanguage: String) throws -> String {
         try recognizeTextSynchronously(inFileAt: imageURL, sourceLanguage: sourceLanguage)
+    }
+
+    // MARK: - 结构化识别（贴图翻译用：保留每行边界框）
+
+    /// 结构化识别：返回每行文本 + 图像像素边界框（左上原点）。
+    /// 与纯文本路径一致：优先子进程（JSON 落盘绕开 stdout 框架日志噪音），失败回退主进程。
+    func recognizeTextLines(inFileAt imageURL: URL,
+                            imageWidth: Int,
+                            imageHeight: Int,
+                            sourceLanguage: String) async throws -> OCRStructuredResult {
+        var subprocessFailure: Error?
+        do {
+            let result = try await recognizeStructuredOutOfProcess(
+                inFileAt: imageURL,
+                sourceLanguage: sourceLanguage
+            )
+            AppLog.debug("结构化 OCR 子进程完成 image=\(result.width)x\(result.height) lines=\(result.lines.count)")
+            return result
+        } catch {
+            subprocessFailure = error
+            AppLog.debug("结构化 OCR 子进程失败，尝试主进程识别: \(Self.logMessage(from: error.localizedDescription))")
+        }
+
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    autoreleasepool {
+                        do {
+                            let result = try Self.recognizeStructuredSynchronously(
+                                inFileAt: imageURL,
+                                imageWidth: imageWidth,
+                                imageHeight: imageHeight,
+                                sourceLanguage: sourceLanguage
+                            )
+                            AppLog.debug("结构化 OCR 主进程回退完成 lines=\(result.lines.count)")
+                            continuation.resume(returning: result)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+            }
+        } catch {
+            let subprocessMessage = subprocessFailure
+                .map { Self.logMessage(from: $0.localizedDescription) }
+                ?? "未知"
+            AppLog.error("结构化 OCR 识别失败: 子进程=\(subprocessMessage); 主进程=\(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    /// 子进程入口（main.swift `--structured --output` 调用）：同步识别并返回结构化结果。
+    static func recognizeStructuredForCommandLine(inFileAt imageURL: URL,
+                                                  sourceLanguage: String) throws -> OCRStructuredResult {
+        guard let dimensions = imagePixelDimensions(at: imageURL) else {
+            throw ScreenCaptureError.failed("无法读取图像尺寸")
+        }
+        return try recognizeStructuredSynchronously(
+            inFileAt: imageURL,
+            imageWidth: dimensions.width,
+            imageHeight: dimensions.height,
+            sourceLanguage: sourceLanguage
+        )
+    }
+
+    private func recognizeStructuredOutOfProcess(inFileAt imageURL: URL,
+                                                 sourceLanguage: String) async throws -> OCRStructuredResult {
+        guard let executableURL = Bundle.main.executableURL else {
+            throw ScreenCaptureError.failed("无法定位 OCR 子进程可执行文件")
+        }
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoTranslator-OCR-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let result = try await ProcessRunner.run(
+            executableURL: executableURL,
+            arguments: [
+                "--autotranslator-ocr",
+                "--image", imageURL.path,
+                "--source-language", sourceLanguage,
+                "--structured",
+                "--output", outputURL.path,
+            ],
+            timeout: Self.subprocessTimeout
+        )
+
+        let stderrMessage = Self.logMessage(from: result.stderr)
+        if !stderrMessage.isEmpty {
+            AppLog.debug("结构化 OCR 子进程 stderr: \(stderrMessage)")
+        }
+
+        guard result.terminationStatus == 0 else {
+            let message = stderrMessage.isEmpty
+                ? "OCR 子进程退出码 \(result.terminationStatus)"
+                : "OCR 子进程退出码 \(result.terminationStatus): \(stderrMessage)"
+            throw ScreenCaptureError.failed(String(message.prefix(200)))
+        }
+
+        let data = try Data(contentsOf: outputURL)
+        return try JSONDecoder().decode(OCRStructuredResult.self, from: data)
+    }
+
+    private nonisolated static func recognizeStructuredSynchronously(inFileAt imageURL: URL,
+                                                                     imageWidth: Int,
+                                                                     imageHeight: Int,
+                                                                     sourceLanguage: String) throws -> OCRStructuredResult {
+        let attempts = recognitionLanguageAttempts(for: sourceLanguage)
+        var attemptSummaries: [String] = []
+
+        for languages in attempts {
+            let request = makeTextRequest(languages: languages)
+            let handler = VNImageRequestHandler(url: imageURL, options: [:])
+            try handler.perform([request])
+            let observations = request.results ?? []
+            attemptSummaries.append(
+                "file/\(languages.isEmpty ? "default" : languages.joined(separator: "+")):\(observations.count)"
+            )
+
+            let lines = structuredLines(
+                from: observations,
+                imageWidth: imageWidth,
+                imageHeight: imageHeight
+            )
+            if !lines.isEmpty {
+                AppLog.debug("结构化 OCR 识别成功 languages=\(languages.isEmpty ? "default" : languages.joined(separator: "+")) lines=\(lines.count)")
+                return OCRStructuredResult(width: imageWidth, height: imageHeight, lines: lines)
+            }
+        }
+
+        AppLog.debug("结构化 OCR 未识别到文字 attempts=\(attemptSummaries.joined(separator: ","))")
+        return OCRStructuredResult(width: imageWidth, height: imageHeight, lines: [])
+    }
+
+    private nonisolated static func structuredLines(from observations: [VNRecognizedTextObservation],
+                                                    imageWidth: Int,
+                                                    imageHeight: Int) -> [OCRLine] {
+        observations
+            .sorted(by: readingOrder)
+            .compactMap { observation -> OCRLine? in
+                let text = observation.topCandidates(1).first?.string
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty else { return nil }
+                let rect = OverlayGeometry.pixelRect(
+                    fromNormalized: observation.boundingBox,
+                    imageWidth: imageWidth,
+                    imageHeight: imageHeight
+                )
+                return OCRLine(text: text, rect: rect)
+            }
+    }
+
+    private nonisolated static func imagePixelDimensions(at url: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+            return nil
+        }
+        return (width, height)
     }
 
     private func recognizeTextOutOfProcess(inFileAt imageURL: URL,

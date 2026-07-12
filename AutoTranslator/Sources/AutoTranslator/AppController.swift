@@ -2,6 +2,7 @@ import Cocoa
 import Combine
 import CoreGraphics
 import ApplicationServices
+import ImageIO
 
 final class AppController: NSObject {
     private enum TranslationMode {
@@ -63,6 +64,22 @@ final class AppController: NSObject {
     private var speechGeneration = 0
     private var currentHistoryEntryID: UUID?
     private var historyObservation: AnyCancellable?
+
+    // MARK: 贴图翻译状态
+
+    private var overlayWindow: OverlayTranslationController?
+    private var overlayTask: Task<Void, Never>?
+    private var overlayVersion = 0
+    /// 贴图翻译的重试上下文：块、配色与语言在初次流程确定后保持不变。
+    private struct OverlayContext {
+        let blocks: [TextBlock]
+        let styles: [PatchStyle]
+        let scale: CGFloat
+        let sourceLanguage: String
+        let targetLanguage: String
+        let backend: String
+    }
+    private var overlayContext: OverlayContext?
 
     /// 翻译/词典结果缓存：避免重复划选同一文本时重复请求后端。
     /// key 含后端与源/目标语言，故切换它们天然命中不同条目；模型/BaseURL 变更时由 reloadFromConfig 清空。
@@ -145,6 +162,7 @@ final class AppController: NSObject {
         selectionTask?.cancel()
         translateTask?.cancel()
         screenshotTask?.cancel()
+        overlayTask?.cancel()
         speechTask?.cancel()
         speechService.stop()
     }
@@ -242,6 +260,262 @@ final class AppController: NSObject {
                 NotificationManager.shared.post(title: "截图翻译失败", body: errMsg)
             }
         }
+    }
+
+    // MARK: - 贴图翻译（原位替换文字）
+
+    /// 贴图翻译入口：自绘框选 → 定点截屏 → 原位钉图 → 结构化 OCR →
+    /// 分块并发翻译 → 译文色块逐个淡入。与「截图翻译」互不影响。
+    @MainActor
+    func startOverlayTranslation() {
+        selectionTask?.cancel()
+        screenshotTask?.cancel()
+        overlayTask?.cancel()
+        speechTask?.cancel()
+
+        // 旧贴图先关闭（其 delegate 清理只影响旧任务），再开新版本。
+        let overlay = ensureOverlayWindow()
+        overlay.close()
+        overlayContext = nil
+        overlayVersion += 1
+        let version = overlayVersion
+
+        overlayTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            guard ScreenCaptureService.ensurePermission() else {
+                NotificationManager.shared.post(
+                    title: "需要屏幕录制权限",
+                    body: "请在 系统设置 > 隐私与安全性 > 屏幕与系统音频录制 中允许 AutoTranslator，然后重新点击贴图翻译。"
+                )
+                return
+            }
+
+            let shouldResumeMonitoring = !self.isMonitoringPaused
+            if shouldResumeMonitoring {
+                self.mouseMonitor.stop()
+            }
+            defer {
+                if shouldResumeMonitoring {
+                    self.mouseMonitor.start()
+                }
+            }
+
+            // 浮窗与蒙层不同框：隐藏浮窗避免它挡住/进入取景。
+            self.window.hideImmediately()
+
+            guard let rect = await RegionSelectionController.selectRegion() else { return }
+            guard self.isCurrentOverlay(version) else { return }
+            guard let primaryScreenFrame = NSScreen.screens.first?.frame else { return }
+
+            do {
+                let capture = try await ScreenCaptureService.captureRect(
+                    rect,
+                    primaryScreenFrame: primaryScreenFrame
+                )
+                defer { ScreenCaptureService.removeCapturedImage(at: capture.imageURL) }
+
+                guard let baseImage = Self.loadCGImage(at: capture.imageURL) else {
+                    throw ScreenCaptureError.failed("无法读取截图图像")
+                }
+                guard self.isCurrentOverlay(version) else { return }
+
+                // 立即钉出原图（识别中），随后阶段逐步补内容。
+                overlay.present(baseImage: baseImage, imageScreenRect: rect)
+
+                let structured = try await self.ocrService.recognizeTextLines(
+                    inFileAt: capture.imageURL,
+                    imageWidth: capture.width,
+                    imageHeight: capture.height,
+                    sourceLanguage: self.srcLang
+                )
+                guard self.isCurrentOverlay(version) else { return }
+
+                let blocks = TextBlockGrouper.group(lines: structured.lines)
+                guard !blocks.isEmpty else {
+                    overlay.finishNoText()
+                    return
+                }
+
+                let scale = CGFloat(capture.width) / max(rect.width, 1)
+                let joinedSource = blocks.map(\.text).joined(separator: "\n")
+                let backend = self.translatorBackend
+                let sourceLanguage = self.srcLang
+                let targetLanguage = Self.effectiveTargetLanguage(
+                    sourceLanguage: sourceLanguage,
+                    targetLanguage: self.destLang,
+                    text: joinedSource
+                )
+                overlay.setLanguageChip(Self.overlayLanguageChipText(
+                    source: sourceLanguage,
+                    target: targetLanguage,
+                    backend: backend
+                ))
+
+                // 逐块取色。只读各块外沿+块内的有界像素区域（非整图），块数通常 <10，
+                // 直接在主 actor 上算，避免把 CGImage 送进 detached 任务引发 Sendable 警告。
+                let styles = blocks.map { PatchStyleSampler.style(for: $0.pxRect, in: baseImage) }
+                guard self.isCurrentOverlay(version) else { return }
+
+                let skeletons = zip(blocks, styles).map { block, style in
+                    (
+                        ptRect: CGRect(
+                            x: block.pxRect.minX / scale,
+                            y: block.pxRect.minY / scale,
+                            width: block.pxRect.width / scale,
+                            height: block.pxRect.height / scale
+                        ),
+                        style: style
+                    )
+                }
+                overlay.showSkeleton(skeletons)
+
+                let context = OverlayContext(
+                    blocks: blocks,
+                    styles: styles,
+                    scale: scale,
+                    sourceLanguage: sourceLanguage,
+                    targetLanguage: targetLanguage,
+                    backend: backend
+                )
+                self.overlayContext = context
+
+                let translated = await self.translateOverlayBlocks(
+                    indices: Array(blocks.indices),
+                    context: context,
+                    version: version,
+                    overlay: overlay
+                )
+                guard self.isCurrentOverlay(version) else { return }
+                overlay.finishTranslating()
+
+                if !translated.isEmpty {
+                    let translatedJoined = translated
+                        .sorted { $0.index < $1.index }
+                        .map(\.text)
+                        .joined(separator: "\n")
+                    TranslationHistoryStore.shared.record(
+                        sourceText: joinedSource,
+                        translatedText: translatedJoined,
+                        sourceLanguage: sourceLanguage,
+                        targetLanguage: targetLanguage,
+                        backend: backend,
+                        kind: .translation
+                    )
+                }
+            } catch ScreenCaptureError.cancelled {
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.isCurrentOverlay(version) else { return }
+                let message = Self.userFacingErrorMessage(
+                    from: error,
+                    fallback: "贴图翻译失败，请重新框选",
+                    maxLength: 60
+                )
+                // 截屏/OCR 阶段的失败没有可重试的块：收起贴图并通知。
+                overlay.close()
+                NotificationManager.shared.post(title: "贴图翻译失败", body: message)
+            }
+        }
+    }
+
+    /// 有界并发（≤4）逐块翻译；命中缓存的块也走同一 reveal 路径。
+    /// 返回成功翻译的 (块下标, 译文)。
+    /// 本项目默认 actor 隔离为 MainActor：用 MainActor 继承的 `Task` 值维持有界并发，
+    /// 翻译器留在主 actor（其耗时在 async 网络 I/O，不阻塞主线程），避免把非 Sendable
+    /// 的 translator 送进 `@Sendable` 任务组闭包。
+    @MainActor
+    private func translateOverlayBlocks(indices: [Int],
+                                        context: OverlayContext,
+                                        version: Int,
+                                        overlay: OverlayTranslationController) async -> [(index: Int, text: String)] {
+        guard let translator = translator(
+            sourceLanguage: context.sourceLanguage,
+            targetLanguage: context.targetLanguage
+        ) else { return [] }
+
+        var translated: [(index: Int, text: String)] = []
+        let maxConcurrent = 4
+
+        // 按下标切成每批 ≤4，批内并发、批间串行；块数通常 <10，足够。
+        for batchStart in stride(from: 0, to: indices.count, by: maxConcurrent) {
+            guard isCurrentOverlay(version) else { break }
+            let batch = Array(indices[batchStart..<min(batchStart + maxConcurrent, indices.count)])
+
+            var tasks: [(index: Int, task: Task<String?, Never>)] = []
+            for index in batch {
+                let text = context.blocks[index].text
+                let cacheKey = Self.translationCacheKey(
+                    backend: context.backend,
+                    src: context.sourceLanguage,
+                    dest: context.targetLanguage,
+                    mode: .translation,
+                    text: text
+                )
+                if let cached = translationCache.value(forKey: cacheKey) {
+                    tasks.append((index, Task { cached as String? }))
+                } else {
+                    tasks.append((index, Task { try? await translator.translate(text) }))
+                }
+            }
+
+            for (index, task) in tasks {
+                let result = await task.value
+                guard isCurrentOverlay(version) else { break }
+                let block = context.blocks[index]
+                if let result = result?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !result.isEmpty {
+                    let cacheKey = Self.translationCacheKey(
+                        backend: context.backend,
+                        src: context.sourceLanguage,
+                        dest: context.targetLanguage,
+                        mode: .translation,
+                        text: block.text
+                    )
+                    translationCache.setValue(result, forKey: cacheKey)
+                    let layout = OverlayComposer.layout(
+                        blockIndex: index,
+                        block: block,
+                        translatedText: result,
+                        style: context.styles[index],
+                        scale: context.scale
+                    )
+                    overlay.revealBlock(index, layout: layout)
+                    translated.append((index, result))
+                } else {
+                    overlay.markBlockFailed(index)
+                }
+            }
+        }
+        return translated
+    }
+
+    @MainActor
+    private func ensureOverlayWindow() -> OverlayTranslationController {
+        if let overlayWindow {
+            return overlayWindow
+        }
+        let controller = OverlayTranslationController()
+        controller.delegate = self
+        overlayWindow = controller
+        return controller
+    }
+
+    private func isCurrentOverlay(_ version: Int) -> Bool {
+        version == overlayVersion
+    }
+
+    private static func overlayLanguageChipText(source: String,
+                                                target: String,
+                                                backend: String) -> String {
+        "\(Languages.name(for: source)) → \(Languages.name(for: target)) · \(TranslationBackend.shortName(backend))"
+    }
+
+    private static func loadCGImage(at url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
     /// 来自「翻译输入」入口：对手动输入/编辑的文本发起翻译。
@@ -1224,6 +1498,12 @@ extension AppController: FloatingWindowDelegate {
         }
     }
 
+    func overlayTranslation() {
+        Task { @MainActor [weak self] in
+            self?.startOverlayTranslation()
+        }
+    }
+
     func retranslateCurrent() {
         retranslateLast()
     }
@@ -1262,5 +1542,44 @@ extension AppController: FloatingWindowDelegate {
         speechTask = nil
         speechService.stop()
         window.setSpeechState(.idle)
+    }
+}
+
+// MARK: - OverlayTranslationControllerDelegate
+
+extension AppController: OverlayTranslationControllerDelegate {
+    func overlayRequestedOpenInFloatingWindow() {
+        guard let context = overlayContext else { return }
+        let source = context.blocks.map(\.text).joined(separator: "\n")
+        guard !source.isEmpty else { return }
+        // 复用手动输入管线：整段联合上下文重新翻译，浮窗里可复制/朗读/收藏。
+        translateText(source)
+    }
+
+    func overlayRequestedRetry() {
+        guard let context = overlayContext else { return }
+        let overlay = ensureOverlayWindow()
+        let indices = overlay.resetFailedBlocksToPending()
+        guard !indices.isEmpty else { return }
+
+        overlayTask?.cancel()
+        overlayVersion += 1
+        let version = overlayVersion
+        overlayTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.translateOverlayBlocks(
+                indices: indices,
+                context: context,
+                version: version,
+                overlay: overlay
+            )
+            guard self.isCurrentOverlay(version) else { return }
+            overlay.finishTranslating()
+        }
+    }
+
+    func overlayDidClose() {
+        overlayTask?.cancel()
+        overlayContext = nil
     }
 }
