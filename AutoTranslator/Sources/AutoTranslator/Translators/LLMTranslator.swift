@@ -103,7 +103,7 @@ final class LLMTranslator: TranslatorProtocol {
     }
 
     private func buildDictionaryUserMessage(_ word: String) -> String {
-        if LanguageHeuristics.containsChinese(word) {
+        if LanguageHeuristics.isLikelyChinese(word) {
             return """
             为以下词条生成词典解释：\(word)
 

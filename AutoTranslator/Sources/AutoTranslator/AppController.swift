@@ -671,7 +671,7 @@ final class AppController: NSObject {
     private func presentImmediateResultIfAvailable(for request: TranslationRequest) -> Bool {
         if case .dictionary(let word) = request.mode,
            let definition = SystemDictionary.definition(for: word) {
-            if LanguageHeuristics.containsChinese(word) {
+            if LanguageHeuristics.isLikelyChinese(word) {
                 if let cached = translationCache.value(forKey: request.cacheKey) {
                     AppLog.debug("Translate version=\(request.version) resolved synchronously by augmented dictionary cache")
                     recordHistory(cached, for: request, kind: .systemDictionary)
@@ -778,7 +778,7 @@ final class AppController: NSObject {
     /// 补充请求失败时保留已经展示的本地结果，不把可用内容替换成错误页。
     private func augmentChineseSystemDictionaryIfNeeded(for request: TranslationRequest) async -> Bool {
         guard case .dictionary(let word) = request.mode,
-              LanguageHeuristics.containsChinese(word),
+              LanguageHeuristics.isLikelyChinese(word),
               let localDefinition = SystemDictionary.definition(for: word) else {
             return false
         }

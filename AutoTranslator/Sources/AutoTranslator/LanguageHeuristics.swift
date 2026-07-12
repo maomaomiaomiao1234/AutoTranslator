@@ -1,6 +1,7 @@
 import Foundation
 
 enum LanguageHeuristics {
+    /// 是否包含汉字（CJK 统一表意文字）。日文中的汉字也会命中，不能单独用来判断语言。
     static func containsChinese(_ text: String) -> Bool {
         text.unicodeScalars.contains { scalar in
             switch scalar.value {
@@ -19,12 +20,19 @@ enum LanguageHeuristics {
         }
     }
 
+    /// 文本是否更可能是中文，而不是同样含有汉字的日文或韩文。
+    static func isLikelyChinese(_ text: String) -> Bool {
+        containsChinese(text)
+            && !containsJapaneseKana(text)
+            && !containsHangul(text)
+    }
+
     static func effectiveTargetLanguage(sourceLanguage: String,
                                         configuredTargetLanguage: String,
                                         text: String) -> String {
         guard sourceLanguage == Languages.defaultSourceCode,
               configuredTargetLanguage == Languages.defaultTargetCode,
-              containsChinese(text) else {
+              isLikelyChinese(text) else {
             return configuredTargetLanguage
         }
         return "en"
@@ -34,7 +42,7 @@ enum LanguageHeuristics {
     static func effectiveDictionaryTargetLanguage(sourceLanguage: String,
                                                   configuredTargetLanguage: String,
                                                   word: String) -> String {
-        if containsChinese(word) {
+        if isLikelyChinese(word) {
             return "en"
         }
         return effectiveTargetLanguage(
@@ -49,5 +57,38 @@ enum LanguageHeuristics {
     static func shouldUseDictionaryMode(for word: String,
                                         systemDefinitionAvailable: Bool) -> Bool {
         !containsChinese(word) || systemDefinitionAvailable
+    }
+
+    private static func containsJapaneseKana(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3040...0x309F,   // Hiragana
+                 0x30A0...0x30FF,   // Katakana
+                 0x31F0...0x31FF,   // Katakana Phonetic Extensions
+                 0xFF65...0xFF9F,   // Halfwidth Katakana
+                 0x1AFF0...0x1AFFF, // Kana Extended-B
+                 0x1B000...0x1B0FF, // Kana Supplement
+                 0x1B100...0x1B12F, // Kana Extended-A
+                 0x1B130...0x1B16F: // Small Kana Extension
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    private static func containsHangul(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x1100...0x11FF,
+                 0x3130...0x318F,
+                 0xA960...0xA97F,
+                 0xAC00...0xD7AF,
+                 0xD7B0...0xD7FF:
+                return true
+            default:
+                return false
+            }
+        }
     }
 }

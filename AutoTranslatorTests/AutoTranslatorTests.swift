@@ -76,6 +76,27 @@ struct LanguageHeuristicsTests {
     }
 
     @Test
+    func autoDetectedJapaneseScreenshotKeepsSimplifiedChineseTarget() {
+        let screenshotText = """
+        詳細については iTunes サポート
+        www.apple.com/support/itunes/
+        ww/へご連絡ください。
+        OK
+        Apple Account の設定には数分かかる場合があります。
+        """
+
+        let target = LanguageHeuristics.effectiveTargetLanguage(
+            sourceLanguage: "auto",
+            configuredTargetLanguage: "zh-CN",
+            text: screenshotText
+        )
+
+        #expect(LanguageHeuristics.containsChinese(screenshotText))
+        #expect(!LanguageHeuristics.isLikelyChinese(screenshotText))
+        #expect(target == "zh-CN")
+    }
+
+    @Test
     func nonChineseOrExplicitLanguageKeepsConfiguredTarget() {
         #expect(LanguageHeuristics.effectiveTargetLanguage(
             sourceLanguage: "auto",
