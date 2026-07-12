@@ -257,7 +257,6 @@ final class FloatingWindow: NSObject {
         rootView.addSubview(resizeView)
 
         rootView.onAppearanceChanged = { [weak self] in
-            refreshThemeCache()
             self?.viewModel.appearanceVersion += 1
             self?.resizeView.needsDisplay = true
         }

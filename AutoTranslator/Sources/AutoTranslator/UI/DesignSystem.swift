@@ -63,16 +63,12 @@ let STREAM_GROW_MEASURE_CHAR_DELTA = 20
 
 // MARK: - Theme Detection
 
-private var _cachedIsDarkMode: Bool = {
-    NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-}()
-
-var isDarkMode: Bool {
-    _cachedIsDarkMode
+private func appearanceIsDark(_ appearance: NSAppearance) -> Bool {
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
 }
 
-func refreshThemeCache() {
-    _cachedIsDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+var isDarkMode: Bool {
+    appearanceIsDark(NSApp.effectiveAppearance)
 }
 
 // MARK: - Color Helpers
@@ -98,106 +94,139 @@ func blendWithBlack(_ color: NSColor, amount: CGFloat, alpha: CGFloat = 1.0) -> 
     return NSColor(calibratedRed: r, green: g, blue: b, alpha: alpha)
 }
 
+private func adaptiveColor(light: NSColor, dark: NSColor) -> NSColor {
+    NSColor(name: nil) { appearance in
+        appearanceIsDark(appearance) ? dark : light
+    }
+}
+
 // MARK: - Color Palette (Theme-aware)
 
-var WINDOW_BG: NSColor { rgb(0, 0, 0, 0) }
+let WINDOW_BG = rgb(0, 0, 0, 0)
 
-var PANEL_TOP: NSColor {
-    isDarkMode ? rgb(32, 31, 29, 0.97) : rgb(253, 251, 248, 0.98)
-}
-var PANEL_BOTTOM: NSColor {
-    isDarkMode ? rgb(24, 24, 23, 0.96) : rgb(246, 242, 236, 0.97)
-}
-var PANEL_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.13) : rgb(86, 70, 58, 0.14)
-}
-var MINIMAL_PANEL_BG: NSColor {
+let PANEL_TOP = adaptiveColor(
+    light: rgb(253, 251, 248, 0.98),
+    dark: rgb(32, 31, 29, 0.97)
+)
+let PANEL_BOTTOM = adaptiveColor(
+    light: rgb(246, 242, 236, 0.97),
+    dark: rgb(24, 24, 23, 0.96)
+)
+let PANEL_BORDER = adaptiveColor(
+    light: rgb(86, 70, 58, 0.14),
+    dark: rgb(255, 255, 255, 0.13)
+)
+let MINIMAL_PANEL_BG = adaptiveColor(
     // 低不透明度的暖色薄膜，叠在 .regularMaterial 之上：让磨砂玻璃透出背景模糊，
     // 同时保留品牌暖调。过去的 ~0.8 会盖住材质，导致面板看起来是实心暖卡而非毛玻璃。
-    isDarkMode ? rgb(30, 29, 27, 0.36) : rgb(255, 253, 249, 0.34)
-}
-var MINIMAL_PANEL_TOP: NSColor {
-    isDarkMode ? rgb(42, 39, 35, 0.34) : rgb(255, 255, 255, 0.42)
-}
-var MINIMAL_PANEL_BOTTOM: NSColor {
-    isDarkMode ? rgb(19, 18, 17, 0.22) : rgb(232, 225, 215, 0.18)
-}
-var MINIMAL_PANEL_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.22) : rgb(86, 70, 58, 0.22)
-}
-var MINIMAL_PANEL_HIGHLIGHT: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.16) : rgb(255, 255, 255, 0.68)
-}
-var SOURCE_CARD_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.055) : rgb(255, 255, 255, 0.70)
-}
-var LANG_BAR_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.050) : rgb(255, 255, 255, 0.66)
-}
-var DEST_CARD_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.078) : rgb(255, 255, 255, 0.92)
-}
-var SURFACE_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.085) : rgb(255, 255, 255, 0.82)
-}
-var SURFACE_BG_SOFT: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.045) : rgb(247, 244, 239, 0.74)
-}
-var TOOLBAR_GHOST_BG: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.060) : rgb(255, 255, 255, 0.58)
-}
-var CARD_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(87, 71, 58, 0.11)
-}
-var BUTTON_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.12) : rgb(87, 71, 58, 0.13)
-}
-var TEXT_PRIMARY: NSColor {
-    isDarkMode ? rgb(240, 239, 236) : rgb(31, 29, 27)
-}
-var TEXT_SECONDARY: NSColor {
-    isDarkMode ? rgb(177, 172, 164) : rgb(101, 91, 82)
-}
-var TEXT_MUTED: NSColor {
-    isDarkMode ? rgb(126, 121, 114) : rgb(143, 132, 121)
-}
-var BLUE_ACCENT: NSColor {
-    isDarkMode ? rgb(112, 145, 176) : rgb(46, 89, 126)
-}
-var TEAL_ACCENT: NSColor {
-    isDarkMode ? rgb(78, 183, 160) : rgb(16, 132, 116)
-}
-var AMBER_ACCENT: NSColor {
-    isDarkMode ? rgb(231, 164, 76) : rgb(177, 103, 28)
-}
-var CORAL_ACCENT: NSColor {
-    isDarkMode ? rgb(238, 121, 92) : rgb(194, 75, 48)
-}
-var PANEL_HAIRLINE: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.075) : rgb(255, 255, 255, 0.72)
-}
-var TOOLBAR_BUTTON_BORDER: NSColor {
-    isDarkMode ? rgb(255, 255, 255, 0.10) : rgb(87, 71, 58, 0.12)
-}
-var TOOLBAR_ACTIVE_BG: NSColor {
-    isDarkMode
-        ? blendWithBlack(CORAL_ACCENT, amount: 0.55, alpha: 0.58)
-        : blendWithWhite(CORAL_ACCENT, amount: 0.84, alpha: 0.78)
-}
-var TOOLBAR_ACTIVE_BORDER: NSColor {
-    isDarkMode
-        ? blendWithBlack(CORAL_ACCENT, amount: 0.30, alpha: 0.78)
-        : blendWithWhite(CORAL_ACCENT, amount: 0.54, alpha: 0.86)
-}
-var CHIP_BG: NSColor {
-    isDarkMode ? rgb(33, 43, 52, 0.92) : rgb(230, 239, 244, 0.94)
-}
-var CHIP_BG_ALT: NSColor {
-    isDarkMode ? rgb(28, 48, 42, 0.92) : rgb(226, 242, 236, 0.94)
-}
-var CHIP_BG_WARM: NSColor {
-    isDarkMode ? rgb(50, 42, 31, 0.92) : rgb(251, 236, 211, 0.94)
-}
+    light: rgb(255, 253, 249, 0.34),
+    dark: rgb(30, 29, 27, 0.36)
+)
+let MINIMAL_PANEL_TOP = adaptiveColor(
+    light: rgb(255, 255, 255, 0.42),
+    dark: rgb(42, 39, 35, 0.34)
+)
+let MINIMAL_PANEL_BOTTOM = adaptiveColor(
+    light: rgb(232, 225, 215, 0.18),
+    dark: rgb(19, 18, 17, 0.22)
+)
+let MINIMAL_PANEL_BORDER = adaptiveColor(
+    light: rgb(86, 70, 58, 0.22),
+    dark: rgb(255, 255, 255, 0.22)
+)
+let MINIMAL_PANEL_HIGHLIGHT = adaptiveColor(
+    light: rgb(255, 255, 255, 0.68),
+    dark: rgb(255, 255, 255, 0.16)
+)
+let SOURCE_CARD_BG = adaptiveColor(
+    light: rgb(255, 255, 255, 0.70),
+    dark: rgb(255, 255, 255, 0.055)
+)
+let LANG_BAR_BG = adaptiveColor(
+    light: rgb(255, 255, 255, 0.66),
+    dark: rgb(255, 255, 255, 0.050)
+)
+let DEST_CARD_BG = adaptiveColor(
+    light: rgb(255, 255, 255, 0.92),
+    dark: rgb(255, 255, 255, 0.078)
+)
+let SURFACE_BG = adaptiveColor(
+    light: rgb(255, 255, 255, 0.90),
+    dark: rgb(255, 255, 255, 0.10)
+)
+let SURFACE_BG_SOFT = adaptiveColor(
+    light: rgb(247, 244, 239, 0.88),
+    dark: rgb(255, 255, 255, 0.065)
+)
+let TOOLBAR_GHOST_BG = adaptiveColor(
+    light: rgb(255, 255, 255, 0.68),
+    dark: rgb(255, 255, 255, 0.075)
+)
+let CARD_BORDER = adaptiveColor(
+    light: rgb(87, 71, 58, 0.14),
+    dark: rgb(255, 255, 255, 0.12)
+)
+let BUTTON_BORDER = adaptiveColor(
+    light: rgb(87, 71, 58, 0.16),
+    dark: rgb(255, 255, 255, 0.14)
+)
+let TEXT_PRIMARY = adaptiveColor(
+    light: rgb(31, 29, 27),
+    dark: rgb(240, 239, 236)
+)
+let TEXT_SECONDARY = adaptiveColor(
+    light: rgb(88, 80, 72),
+    dark: rgb(177, 172, 164)
+)
+let TEXT_MUTED = adaptiveColor(
+    light: rgb(98, 91, 84),
+    dark: rgb(155, 149, 141)
+)
+let BLUE_ACCENT = adaptiveColor(
+    light: rgb(46, 89, 126),
+    dark: rgb(112, 145, 176)
+)
+let TEAL_ACCENT = adaptiveColor(
+    light: rgb(16, 132, 116),
+    dark: rgb(78, 183, 160)
+)
+let AMBER_ACCENT = adaptiveColor(
+    light: rgb(177, 103, 28),
+    dark: rgb(231, 164, 76)
+)
+
+private let coralLight = rgb(194, 75, 48)
+private let coralDark = rgb(238, 121, 92)
+
+let CORAL_ACCENT = adaptiveColor(light: coralLight, dark: coralDark)
+let PANEL_HAIRLINE = adaptiveColor(
+    light: rgb(255, 255, 255, 0.72),
+    dark: rgb(255, 255, 255, 0.075)
+)
+let TOOLBAR_BUTTON_BORDER = adaptiveColor(
+    light: rgb(87, 71, 58, 0.12),
+    dark: rgb(255, 255, 255, 0.10)
+)
+let TOOLBAR_ACTIVE_BG = adaptiveColor(
+    light: blendWithWhite(coralLight, amount: 0.84, alpha: 0.78),
+    dark: blendWithBlack(coralDark, amount: 0.55, alpha: 0.58)
+)
+let TOOLBAR_ACTIVE_BORDER = adaptiveColor(
+    light: blendWithWhite(coralLight, amount: 0.54, alpha: 0.86),
+    dark: blendWithBlack(coralDark, amount: 0.30, alpha: 0.78)
+)
+let CHIP_BG = adaptiveColor(
+    light: rgb(230, 239, 244, 0.94),
+    dark: rgb(33, 43, 52, 0.92)
+)
+let CHIP_BG_ALT = adaptiveColor(
+    light: rgb(226, 242, 236, 0.94),
+    dark: rgb(28, 48, 42, 0.92)
+)
+let CHIP_BG_WARM = adaptiveColor(
+    light: rgb(251, 236, 211, 0.94),
+    dark: rgb(50, 42, 31, 0.92)
+)
 
 // MARK: - Text Measurement
 

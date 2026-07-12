@@ -5,9 +5,63 @@
 //  Created by hang w on 12/6/26.
 //
 
+import AppKit
 import Foundation
 import Testing
 @testable import AutoTranslator
+
+@MainActor
+struct DesignSystemColorTests {
+    @Test
+    func mutedTextMaintainsReadableContrastInBothAppearances() {
+        let lightText = components(of: TEXT_MUTED, appearance: .aqua)
+        let lightBackground = components(of: PANEL_BOTTOM, appearance: .aqua)
+        let darkText = components(of: TEXT_MUTED, appearance: .darkAqua)
+        let darkBackground = components(of: PANEL_BOTTOM, appearance: .darkAqua)
+
+        #expect(contrastRatio(lightText, lightBackground) >= 4.5)
+        #expect(contrastRatio(darkText, darkBackground) >= 4.5)
+        #expect(lightText.red < darkText.red)
+    }
+
+    private func components(
+        of color: NSColor,
+        appearance name: NSAppearance.Name
+    ) -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
+        var result: (red: CGFloat, green: CGFloat, blue: CGFloat) = (0, 0, 0)
+        let appearance = NSAppearance(named: name)!
+        appearance.performAsCurrentDrawingAppearance {
+            guard let resolved = color.usingColorSpace(.sRGB) else { return }
+            result = (resolved.redComponent, resolved.greenComponent, resolved.blueComponent)
+        }
+        return result
+    }
+
+    private func contrastRatio(
+        _ first: (red: CGFloat, green: CGFloat, blue: CGFloat),
+        _ second: (red: CGFloat, green: CGFloat, blue: CGFloat)
+    ) -> CGFloat {
+        let firstLuminance = relativeLuminance(first)
+        let secondLuminance = relativeLuminance(second)
+        return (max(firstLuminance, secondLuminance) + 0.05)
+            / (min(firstLuminance, secondLuminance) + 0.05)
+    }
+
+    private func relativeLuminance(
+        _ color: (red: CGFloat, green: CGFloat, blue: CGFloat)
+    ) -> CGFloat {
+        func linearize(_ component: CGFloat) -> CGFloat {
+            if component <= 0.04045 {
+                return component / 12.92
+            }
+            return CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
+        }
+
+        return 0.2126 * linearize(color.red)
+            + 0.7152 * linearize(color.green)
+            + 0.0722 * linearize(color.blue)
+    }
+}
 
 struct LanguageHeuristicsTests {
     @Test

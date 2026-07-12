@@ -34,6 +34,38 @@ struct PreferencesSavePayload {
     let clipboardFallback: Bool
 }
 
+private enum PreferencesPane: String, CaseIterable, Identifiable {
+    case translation
+    case selection
+    case speech
+    case appearance
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .translation: return "翻译"
+        case .selection: return "取词"
+        case .speech: return "语音"
+        case .appearance: return "语言与外观"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .translation: return "bolt.horizontal"
+        case .selection: return "text.viewfinder"
+        case .speech: return "speaker.wave.2"
+        case .appearance: return "paintpalette"
+        }
+    }
+}
+
+private enum PreferenceMetrics {
+    static let controlWidth: CGFloat = 292
+    static let controlHeight: CGFloat = 36
+}
+
 struct PreferencesView: View {
     @State private var backend: String
     @State private var apiKey: String
@@ -50,6 +82,7 @@ struct PreferencesView: View {
     @State private var floatingWindowMode: FloatingWindowMode
     @State private var clipboardFallback: Bool
     @State private var statusText = ""
+    @State private var selectedPane: PreferencesPane = .translation
 
     let configPath: String
     let onSave: (PreferencesSavePayload) -> Void
@@ -79,26 +112,34 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        VStack(spacing: AppUI.Space.l) {
-            header
-            summaryPanel
-            ScrollView {
-                VStack(spacing: AppUI.Space.l) {
-                    engineSection
-                    selectionSection
-                    speechSection
-                    languageSection
-                }
-                .padding(.vertical, AppUI.Space.xxs)
+        VStack(spacing: 0) {
+            VStack(spacing: AppUI.Space.l) {
+                header
+                paneSelector
             }
+            .padding(.top, AppUI.Space.xxl)
+            .padding(.horizontal, AppUI.Space.xxl)
+            .padding(.bottom, AppUI.Space.l)
+            .background(AppUI.panelTop)
+
+            Rectangle()
+                .fill(AppUI.cardBorder)
+                .frame(height: 1)
+
+            ScrollView {
+                paneContent
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, AppUI.Space.xxl)
+                    .padding(.vertical, AppUI.Space.l)
+            }
+            .id(selectedPane)
             .frame(maxHeight: .infinity)
+
             footer
         }
-        .padding(.top, AppUI.Space.xxl)
-        .padding(.horizontal, AppUI.Space.xxl)
-        .padding(.bottom, AppUI.Space.xl)
-        .frame(width: 640, height: 740)
+        .frame(minWidth: 640, minHeight: 620)
         .background(AppUI.panelBottom)
+        .tint(AppUI.accent)
     }
 
     private var header: some View {
@@ -110,10 +151,10 @@ struct PreferencesView: View {
                 size: 44
             )
             VStack(alignment: .leading, spacing: AppUI.Space.xs) {
-                Text("偏好配置")
+                Text("偏好设置")
                     .font(.system(size: AppUI.FontSize.display, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
-                Text("管理划词后的翻译行为、默认语言和浮窗外观。")
+                Text("配置翻译、取词、语音和浮窗外观。")
                     .font(.system(size: AppUI.FontSize.base))
                     .foregroundStyle(AppUI.textSecondary)
             }
@@ -121,23 +162,58 @@ struct PreferencesView: View {
         }
     }
 
-    private var summaryPanel: some View {
-        HStack(spacing: AppUI.Space.m) {
-            SummaryItem(icon: "bolt.horizontal", title: "引擎", value: TranslationBackend.shortName(backend))
-            SummaryItem(icon: "speaker.wave.2", title: "语音", value: speechSummary)
-            SummaryItem(icon: "arrow.left.arrow.right", title: "语言", value: "\(Languages.name(for: sourceLang)) → \(Languages.name(for: targetLang))")
-            SummaryItem(icon: "circle.lefthalf.filled", title: "外观", value: "\(theme.displayName) · \(floatingWindowMode.displayName)")
+    private var paneSelector: some View {
+        HStack(spacing: AppUI.Space.xs) {
+            ForEach(PreferencesPane.allCases) { pane in
+                Button {
+                    selectedPane = pane
+                } label: {
+                    HStack(spacing: AppUI.Space.s) {
+                        Image(systemName: pane.icon)
+                            .font(.system(size: AppUI.FontSize.base, weight: .semibold))
+                        Text(pane.title)
+                            .font(.system(size: AppUI.FontSize.base, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(selectedPane == pane ? AppUI.accent : AppUI.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .background {
+                        if selectedPane == pane {
+                            RoundedRectangle(cornerRadius: AppUI.controlRadius - 2, style: .continuous)
+                                .fill(AppUI.activeToolbar)
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if selectedPane == pane {
+                            Capsule()
+                                .fill(AppUI.accent)
+                                .frame(width: 24, height: 2)
+                                .padding(.bottom, AppUI.Space.xs)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedPane == pane ? .isSelected : [])
+                .help(pane.title)
+            }
         }
-        .padding(AppUI.Space.l)
-        .appSurface(shadow: true)
+        .padding(AppUI.Space.xs)
+        .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
     }
 
-    private var speechSummary: String {
-        let mode = ttsAutoPlay ? "自动" : "手动"
-        let hasDedicatedKey = !ttsApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasSharedKey = !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if hasDedicatedKey { return "\(mode) · 独立" }
-        return hasSharedKey ? "\(mode) · 共用" : "\(mode) · 未配置"
+    @ViewBuilder
+    private var paneContent: some View {
+        switch selectedPane {
+        case .translation:
+            engineSection
+        case .selection:
+            selectionSection
+        case .speech:
+            speechSection
+        case .appearance:
+            languageSection
+        }
     }
 
     private var engineSection: some View {
@@ -152,34 +228,23 @@ struct PreferencesView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 252)
+                .controlSize(.large)
+                .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
             SettingDivider()
             SettingRow(icon: "key", title: "翻译 API Key", detail: "仅大模型后端需要；留空时会回退到 Google。") {
                 SecureField("sk-... (DeepSeek / DashScope)", text: $apiKey)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
             SettingDivider()
             SettingRow(icon: "cube", title: "翻译模型", detail: "留空使用默认翻译模型。") {
                 TextField(LLMTranslator.defaultModel, text: $model)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
             SettingDivider()
             SettingRow(icon: "link", title: "翻译 Base URL", detail: "填到 /v1 即可，代码会自动拼接接口路径。") {
                 TextField(LLMTranslator.defaultBaseURL, text: $baseURL)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
         }
     }
@@ -194,7 +259,8 @@ struct PreferencesView: View {
                 Toggle("", isOn: $clipboardFallback)
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .frame(width: 252, alignment: .trailing)
+                    .controlSize(.large)
+                    .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
         }
     }
@@ -203,45 +269,30 @@ struct PreferencesView: View {
         SettingsSection(title: "语音 API", subtitle: "单独配置 DashScope CosyVoice 非实时语音合成。") {
             SettingRow(icon: "key", title: "语音 API Key", detail: "写入 TTS_API_KEY；留空时沿用环境中的 DashScope Key。") {
                 SecureField("sk-... (DashScope TTS)", text: $ttsApiKey)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
             SettingDivider()
             SettingRow(icon: "speaker.wave.2", title: "自动播放", detail: "单词释义完成后自动朗读原词。") {
                 Toggle("", isOn: $ttsAutoPlay)
                     .labelsHidden()
                     .toggleStyle(.switch)
-                    .frame(width: 252, alignment: .trailing)
+                    .controlSize(.large)
+                    .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
             SettingDivider()
             SettingRow(icon: "waveform", title: "语音模型", detail: "留空使用 cosyvoice-v3-flash。") {
                 TextField(SpeechService.defaultModel, text: $ttsModel)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
             SettingDivider()
             SettingRow(icon: "person.wave.2", title: "音色", detail: "默认使用 longanyang；取决于服务商支持。") {
                 TextField(SpeechService.defaultVoice, text: $ttsVoice)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
             SettingDivider()
             SettingRow(icon: "link.badge.plus", title: "语音 Endpoint", detail: "留空使用 DashScope SpeechSynthesizer 接口。") {
                 TextField(SpeechService.defaultEndpoint, text: $ttsBaseURL)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: AppUI.FontSize.small, design: .monospaced))
-                    .padding(.horizontal, AppUI.Space.s)
-                    .frame(width: 292, height: 34)
-                    .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+                    .preferenceTextField()
             }
         }
     }
@@ -256,7 +307,8 @@ struct PreferencesView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 252)
+                .controlSize(.large)
+                .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
             SettingDivider()
             SettingRow(icon: "character.book.closed", title: "目标语言", detail: "译文输出语言。") {
@@ -267,7 +319,8 @@ struct PreferencesView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 252)
+                .controlSize(.large)
+                .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
             SettingDivider()
             SettingRow(icon: "paintpalette", title: "外观主题", detail: "控制浮窗和偏好配置窗口的明暗外观。") {
@@ -278,7 +331,8 @@ struct PreferencesView: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
-                .frame(width: 252)
+                .controlSize(.large)
+                .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
             SettingDivider()
             SettingRow(icon: "rectangle", title: "极简浮窗", detail: "只显示划词后的译文内容，隐藏原文、语言和工具按钮。") {
@@ -288,38 +342,63 @@ struct PreferencesView: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .frame(width: 252, alignment: .trailing)
+                .controlSize(.large)
+                .frame(width: PreferenceMetrics.controlWidth, alignment: .trailing)
             }
         }
     }
 
     private var footer: some View {
-        VStack(spacing: AppUI.Space.m) {
-            Text("配置文件：\(configPath)")
-                .font(.system(size: AppUI.FontSize.micro, design: .monospaced))
-                .foregroundStyle(AppUI.textMuted)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: AppUI.Space.l) {
+            VStack(alignment: .leading, spacing: AppUI.Space.xs) {
+                HStack(spacing: AppUI.Space.s) {
+                    Text("配置文件")
+                        .font(.system(size: AppUI.FontSize.micro, weight: .semibold))
+                        .foregroundStyle(AppUI.textMuted)
+                    if !statusText.isEmpty {
+                        Label(statusText, systemImage: "checkmark.circle.fill")
+                            .font(.system(size: AppUI.FontSize.micro, weight: .medium))
+                            .foregroundStyle(AppUI.teal)
+                    }
+                }
+                Text(configPath)
+                    .font(.system(size: AppUI.FontSize.micro, design: .monospaced))
+                    .foregroundStyle(AppUI.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(configPath)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: AppUI.Space.s) {
-                Text(statusText)
-                    .font(.system(size: AppUI.FontSize.small, weight: .medium))
-                    .foregroundStyle(AppUI.teal)
-                Spacer()
                 Button("关闭") {
                     onClose()
                 }
                 .keyboardShortcut(.cancelAction)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(AppUI.textSecondary)
+                .frame(minWidth: 72, minHeight: 44)
+
                 Button("保存") {
                     save()
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .tint(AppUI.accent)
+                .frame(minWidth: 72, minHeight: 44)
             }
         }
-        .padding(AppUI.Space.l)
-        .appSurface(background: AppUI.surfaceSoft)
+        .padding(.horizontal, AppUI.Space.xxl)
+        .padding(.vertical, AppUI.Space.m)
+        .background(AppUI.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(AppUI.cardBorder)
+                .frame(height: 1)
+        }
     }
 
     private func save() {
@@ -361,29 +440,6 @@ struct PreferencesView: View {
     }
 }
 
-private struct SummaryItem: View {
-    let icon: String
-    let title: String
-    let value: String
-
-    var body: some View {
-        HStack(spacing: AppUI.Space.s) {
-            SymbolBadge(symbol: icon, tint: AppUI.accent, background: AppUI.activeToolbar, size: 30)
-            VStack(alignment: .leading, spacing: AppUI.Space.xs) {
-                Text(title)
-                    .font(.system(size: AppUI.FontSize.mini, weight: .bold))
-                    .foregroundStyle(AppUI.textMuted)
-                Text(value)
-                    .font(.system(size: AppUI.FontSize.base, weight: .semibold))
-                    .foregroundStyle(AppUI.textPrimary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 private struct SettingsSection<Content: View>: View {
     let title: String
     let subtitle: String
@@ -393,7 +449,7 @@ private struct SettingsSection<Content: View>: View {
         VStack(alignment: .leading, spacing: AppUI.Space.m) {
             VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                 Text(title)
-                    .font(.system(size: AppUI.FontSize.section, weight: .bold))
+                    .font(.system(size: AppUI.FontSize.section, weight: .semibold))
                     .foregroundStyle(AppUI.textPrimary)
                 Text(subtitle)
                     .font(.system(size: AppUI.FontSize.small))
@@ -418,12 +474,13 @@ private struct SettingRow<Content: View>: View {
                 SymbolBadge(symbol: icon, tint: AppUI.textSecondary, background: AppUI.surfaceSoft, size: 30)
                 VStack(alignment: .leading, spacing: AppUI.Space.xs) {
                     Text(title)
-                        .font(.system(size: AppUI.FontSize.base, weight: .bold))
+                        .font(.system(size: AppUI.FontSize.base, weight: .semibold))
                         .foregroundStyle(AppUI.textPrimary)
                     Text(detail)
                         .font(.system(size: AppUI.FontSize.small))
                         .foregroundStyle(AppUI.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(minWidth: 206, maxWidth: .infinity, alignment: .leading)
@@ -439,5 +496,20 @@ private struct SettingDivider: View {
         Rectangle()
             .fill(AppUI.cardBorder)
             .frame(height: 1)
+    }
+}
+
+private extension View {
+    func preferenceTextField() -> some View {
+        textFieldStyle(.plain)
+            .font(.system(size: AppUI.FontSize.small, design: .monospaced))
+            .foregroundStyle(AppUI.textPrimary)
+            .padding(.horizontal, AppUI.Space.s)
+            .frame(width: PreferenceMetrics.controlWidth, height: PreferenceMetrics.controlHeight)
+            .appSurface(
+                background: AppUI.surfaceSoft,
+                radius: AppUI.controlRadius,
+                border: AppUI.buttonBorder
+            )
     }
 }

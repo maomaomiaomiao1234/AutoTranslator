@@ -25,14 +25,15 @@ final class PreferencesWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 740),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 680),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "偏好设置"
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 640, height: 620)
         window.center()
 
         hostingView = NSHostingView(rootView: PreferencesWindowController.makeView(
