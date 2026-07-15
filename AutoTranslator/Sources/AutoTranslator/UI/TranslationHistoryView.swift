@@ -305,15 +305,19 @@ struct TranslationHistoryView: View {
     private func exportEntries(favoritesOnly: Bool) {
         let panel = NSSavePanel()
         panel.title = favoritesOnly ? "导出收藏记录" : "导出翻译历史"
-        panel.nameFieldStringValue = favoritesOnly
-            ? "AutoTranslator-收藏.json"
-            : "AutoTranslator-历史记录.json"
-        panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
 
+        let baseName = favoritesOnly ? "AutoTranslator-收藏" : "AutoTranslator-历史记录"
+        let formatPicker = HistoryExportFormatPicker(
+            panel: panel,
+            defaultBaseName: baseName,
+            initialFormat: .markdown
+        )
+
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        let format = formatPicker.selectedFormat
         do {
-            let count = try store.exportEntries(favoritesOnly: favoritesOnly, to: url)
+            let count = try store.exportEntries(favoritesOnly: favoritesOnly, format: format, to: url)
             transferAlert = HistoryTransferAlert(
                 title: "导出完成",
                 message: "已导出 \(count) 条\(favoritesOnly ? "收藏" : "历史")记录。"
@@ -363,6 +367,74 @@ struct TranslationHistoryView: View {
 private struct HistoryTransferAlert {
     let title: String
     let message: String
+}
+
+/// 给 `NSSavePanel` 挂一个「格式：」下拉框（accessoryView），切换时同步
+/// 面板的 `allowedContentTypes` 与文件名扩展名。须在 `runModal()` 期间
+/// 保持强引用（`NSControl.target` 是弱引用）。
+@MainActor
+private final class HistoryExportFormatPicker: NSObject {
+    private let panel: NSSavePanel
+    private let defaultBaseName: String
+
+    private(set) var selectedFormat: HistoryExportFormat
+
+    init(panel: NSSavePanel, defaultBaseName: String, initialFormat: HistoryExportFormat) {
+        self.panel = panel
+        self.defaultBaseName = defaultBaseName
+        self.selectedFormat = initialFormat
+        super.init()
+
+        let label = NSTextField(labelWithString: "格式：")
+        label.sizeToFit()
+
+        let popUp = NSPopUpButton(frame: .zero, pullsDown: false)
+        for format in HistoryExportFormat.allCases {
+            popUp.addItem(withTitle: format.displayName)
+        }
+        popUp.selectItem(at: HistoryExportFormat.allCases.firstIndex(of: initialFormat) ?? 0)
+        popUp.target = self
+        popUp.action = #selector(formatChanged(_:))
+        popUp.sizeToFit()
+
+        let padding: CGFloat = 12
+        let spacing: CGFloat = 8
+        let contentWidth = label.frame.width + spacing + popUp.frame.width
+        let contentHeight = max(label.frame.height, popUp.frame.height)
+        let container = NSView(frame: NSRect(
+            x: 0, y: 0,
+            width: contentWidth + padding * 2,
+            height: contentHeight + padding * 2
+        ))
+        label.setFrameOrigin(NSPoint(
+            x: padding,
+            y: (container.frame.height - label.frame.height) / 2
+        ))
+        popUp.setFrameOrigin(NSPoint(
+            x: padding + label.frame.width + spacing,
+            y: (container.frame.height - popUp.frame.height) / 2
+        ))
+        container.addSubview(label)
+        container.addSubview(popUp)
+        panel.accessoryView = container
+
+        apply(initialFormat)
+    }
+
+    @objc private func formatChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        guard HistoryExportFormat.allCases.indices.contains(index) else { return }
+        selectedFormat = HistoryExportFormat.allCases[index]
+        apply(selectedFormat)
+    }
+
+    private func apply(_ format: HistoryExportFormat) {
+        panel.allowedContentTypes = [format.contentType]
+        // 保留用户已改的基名，仅替换扩展名。
+        let currentBase = (panel.nameFieldStringValue as NSString).deletingPathExtension
+        let base = currentBase.isEmpty ? defaultBaseName : currentBase
+        panel.nameFieldStringValue = "\(base).\(format.fileExtension)"
+    }
 }
 
 private struct HistoryEntryRow: View {

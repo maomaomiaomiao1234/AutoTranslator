@@ -386,6 +386,61 @@ struct TranslationHistoryStoreTests {
         #expect(fixture.store.entries == previousEntries)
     }
 
+    @Test
+    func exportingMarkdownWritesOnlyFavoritesAsReadableDocument() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let favoriteID = fixture.store.record(
+            sourceText: "keep",
+            translatedText: "保留",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+        fixture.store.toggleFavorite(id: try #require(favoriteID))
+        fixture.store.record(
+            sourceText: "skip",
+            translatedText: "跳过",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+
+        let exportURL = fixture.directoryURL.appendingPathComponent("favorites.md")
+        let exportedCount = try fixture.store.exportEntries(favoritesOnly: true, format: .markdown, to: exportURL)
+        let text = try String(contentsOf: exportURL, encoding: .utf8)
+
+        #expect(exportedCount == 1)
+        #expect(text.contains("# AutoTranslator 翻译历史"))
+        #expect(text.contains("> keep"))
+        #expect(text.contains("> 保留"))
+        #expect(!text.contains("skip"))
+    }
+
+    @Test
+    func exportingPDFWritesValidPDFData() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        fixture.store.record(
+            sourceText: "hello",
+            translatedText: "你好",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+
+        let exportURL = fixture.directoryURL.appendingPathComponent("history.pdf")
+        let exportedCount = try fixture.store.exportEntries(favoritesOnly: false, format: .pdf, to: exportURL)
+        let data = try Data(contentsOf: exportURL)
+
+        #expect(exportedCount == 1)
+        #expect(!data.isEmpty)
+        #expect(data.starts(with: Array("%PDF".utf8)))
+    }
+
     private func makeFixture(maxRecentItems: Int = 500) throws -> HistoryStoreFixture {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("AutoTranslatorHistoryTests-\(UUID().uuidString)", isDirectory: true)
@@ -409,6 +464,60 @@ private struct HistoryStoreFixture {
         // 历史写入是后台异步的；先同步落盘，避免去抖写入在目录被删后重建临时目录。
         store.flush()
         try? FileManager.default.removeItem(at: directoryURL)
+    }
+}
+
+@MainActor
+struct HistoryExportRendererTests {
+    private func makeEntry(
+        source: String = "hello",
+        translated: String = "你好",
+        kind: TranslationHistoryKind = .translation,
+        favorite: Bool = false
+    ) -> TranslationHistoryEntry {
+        TranslationHistoryEntry(
+            id: UUID(),
+            sourceText: source,
+            translatedText: translated,
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: kind,
+            createdAt: Date(timeIntervalSince1970: 1_750_000_000),
+            isFavorite: favorite
+        )
+    }
+
+    @Test
+    func markdownEscapesStructuralCharactersAndUsesDictionaryWording() {
+        let entry = makeEntry(
+            source: "**bold** [link](x) `code`",
+            translated: "第一行\n第二行",
+            kind: .dictionary
+        )
+        let markdown = HistoryExportRenderer.markdown(for: [entry])
+
+        #expect(markdown.contains("共 1 条记录"))
+        #expect(markdown.contains("**释义**")) // 词典条目的译文块标题
+        #expect(markdown.contains(#"> \*\*bold\*\* \[link\](x) \`code\`"#))
+        #expect(markdown.contains("> 第一行\n> 第二行")) // 多行文本逐行加引用前缀
+    }
+
+    @Test
+    func htmlEscapesMarkupAndMarksFavorites() {
+        let entry = makeEntry(
+            source: "<script>alert('x & y')</script>",
+            translated: "安全",
+            favorite: true
+        )
+        let html = HistoryExportRenderer.html(for: [entry])
+
+        #expect(html.contains("<meta charset=\"utf-8\">"))
+        #expect(!html.contains("<script>"))
+        #expect(html.contains("&lt;script&gt;alert(&#39;x &amp; y&#39;)&lt;/script&gt;"))
+        #expect(html.contains("安全"))
+        #expect(html.contains("译文"))
+        #expect(html.contains("⭐️ 收藏"))
     }
 }
 

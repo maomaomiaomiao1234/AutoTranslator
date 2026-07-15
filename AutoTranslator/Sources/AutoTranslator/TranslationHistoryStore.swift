@@ -159,10 +159,25 @@ final class TranslationHistoryStore: ObservableObject {
 
     @discardableResult
     func exportEntries(favoritesOnly: Bool, to url: URL) throws -> Int {
+        try exportEntries(favoritesOnly: favoritesOnly, format: .json, to: url)
+    }
+
+    @discardableResult
+    func exportEntries(favoritesOnly: Bool, format: HistoryExportFormat, to url: URL) throws -> Int {
         let entriesToExport = favoritesOnly
             ? entries.filter(\.isFavorite)
             : entries
-        let data = try Self.makeEncoder().encode(entriesToExport)
+        let data: Data
+        switch format {
+        case .json:
+            data = try Self.makeEncoder().encode(entriesToExport)
+        case .markdown:
+            data = Data(HistoryExportRenderer.markdown(for: entriesToExport).utf8)
+        case .html:
+            data = Data(HistoryExportRenderer.html(for: entriesToExport).utf8)
+        case .pdf:
+            data = try HistoryExportRenderer.pdfData(for: entriesToExport)
+        }
         try data.write(to: url, options: [.atomic])
         return entriesToExport.count
     }
