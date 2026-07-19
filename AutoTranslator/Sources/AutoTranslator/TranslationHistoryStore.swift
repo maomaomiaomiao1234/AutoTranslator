@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-enum TranslationHistoryKind: String, Codable, CaseIterable, Sendable {
+nonisolated enum TranslationHistoryKind: String, Codable, CaseIterable, Sendable {
     case translation
     case dictionary
     case systemDictionary
@@ -18,13 +18,13 @@ enum TranslationHistoryKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-struct TranslationHistoryImportResult: Equatable {
+nonisolated struct TranslationHistoryImportResult: Equatable {
     let acceptedCount: Int
     let addedCount: Int
     let updatedCount: Int
 }
 
-enum TranslationHistoryTransferError: LocalizedError {
+nonisolated enum TranslationHistoryTransferError: LocalizedError {
     case invalidFile
     case noImportableEntries
 
@@ -38,7 +38,7 @@ enum TranslationHistoryTransferError: LocalizedError {
     }
 }
 
-struct TranslationHistoryEntry: Identifiable, Codable, Equatable, Sendable {
+nonisolated struct TranslationHistoryEntry: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var sourceText: String
     var translatedText: String
@@ -69,20 +69,92 @@ struct TranslationHistoryEntry: Identifiable, Codable, Equatable, Sendable {
 final class TranslationHistoryStore: ObservableObject {
     static let shared = TranslationHistoryStore()
 
-    @Published private(set) var entries: [TranslationHistoryEntry]
+    /// 当前查询的一页。无论数据库里有多少收藏，常驻内存都受 pageSize 约束。
+    @Published private(set) var entries: [TranslationHistoryEntry] = []
+    @Published private(set) var totalEntryCount = 0
+    @Published private(set) var favoriteEntryCount = 0
+    @Published private(set) var filteredEntryCount = 0
+    @Published private(set) var currentPage = 0
+    /// 记录增删改的轻量通知；浮窗据此按 ID 查询当前记录，不依赖它是否在历史页中。
+    @Published private(set) var revision = 0
 
-    private let fileURL: URL
+    private let legacyFileURL: URL
+    private let database: HistoryDatabase
     private let maxRecentItems: Int
-    private let writer: HistoryFileWriter
-    private let writeDebounceInterval: TimeInterval
+    private let pageSize: Int
+    private var searchText = ""
+    private var favoritesOnly = false
+    private var isPageLoadingActive = true
 
-    init(fileURL: URL? = nil, maxRecentItems: Int = 500, writeDebounceInterval: TimeInterval = 0.5) {
-        let resolvedURL = fileURL ?? Self.defaultFileURL()
-        self.fileURL = resolvedURL
+    init(fileURL: URL? = nil,
+         maxRecentItems: Int = 500,
+         writeDebounceInterval _: TimeInterval = 0.5,
+         pageSize: Int = 100) {
+        let resolvedLegacyURL = fileURL ?? Self.defaultFileURL()
+        let databaseURL = resolvedLegacyURL
+            .deletingPathExtension()
+            .appendingPathExtension("sqlite3")
+        let resolvedDatabase: HistoryDatabase
+        do {
+            resolvedDatabase = try HistoryDatabase(fileURL: databaseURL)
+        } catch {
+            AppLog.error("打开历史数据库失败，当前会话改用内存数据库: \(error.localizedDescription)")
+            resolvedDatabase = try! HistoryDatabase(fileURL: nil)
+        }
+
+        self.legacyFileURL = resolvedLegacyURL
+        self.database = resolvedDatabase
         self.maxRecentItems = max(1, maxRecentItems)
-        self.writeDebounceInterval = max(0, writeDebounceInterval)
-        self.writer = HistoryFileWriter(fileURL: resolvedURL)
-        entries = Self.loadEntries(from: resolvedURL)
+        self.pageSize = max(1, pageSize)
+
+        migrateLegacyHistoryIfNeeded()
+        do {
+            try database.trimNonFavorites(keeping: self.maxRecentItems)
+        } catch {
+            AppLog.error("裁剪历史记录失败: \(error.localizedDescription)")
+        }
+        refreshPage()
+    }
+
+    var pageCount: Int {
+        max(1, (filteredEntryCount + pageSize - 1) / pageSize)
+    }
+
+    var canGoToPreviousPage: Bool { currentPage > 0 }
+    var canGoToNextPage: Bool { currentPage + 1 < pageCount }
+
+    func updateQuery(searchText: String, favoritesOnly: Bool) {
+        guard self.searchText != searchText || self.favoritesOnly != favoritesOnly else { return }
+        self.searchText = searchText
+        self.favoritesOnly = favoritesOnly
+        currentPage = 0
+        refreshPage()
+    }
+
+    func goToPreviousPage() {
+        guard canGoToPreviousPage else { return }
+        currentPage -= 1
+        refreshPage()
+    }
+
+    func goToNextPage() {
+        guard canGoToNextPage else { return }
+        currentPage += 1
+        refreshPage()
+    }
+
+    func activatePageLoading() {
+        guard !isPageLoadingActive else {
+            refreshPage()
+            return
+        }
+        isPageLoadingActive = true
+        refreshPage()
+    }
+
+    func deactivatePageLoading() {
+        isPageLoadingActive = false
+        entries = []
     }
 
     @discardableResult
@@ -97,19 +169,16 @@ final class TranslationHistoryStore: ObservableObject {
         let translation = translatedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty, !translation.isEmpty else { return nil }
 
-        let identityIndex = entries.firstIndex {
-            $0.sourceText == source
-                && $0.sourceLanguage == sourceLanguage
-                && $0.targetLanguage == targetLanguage
-                && $0.backend == backend
-                && $0.kind == kind
-        }
-
-        let entry: TranslationHistoryEntry
-        if let identityIndex {
-            let previous = entries.remove(at: identityIndex)
-            entry = TranslationHistoryEntry(
-                id: previous.id,
+        do {
+            let previous = try database.entry(
+                sourceText: source,
+                sourceLanguage: sourceLanguage,
+                targetLanguage: targetLanguage,
+                backend: backend,
+                kind: kind
+            )
+            let entry = TranslationHistoryEntry(
+                id: previous?.id ?? UUID(),
                 sourceText: source,
                 translatedText: translation,
                 sourceLanguage: sourceLanguage,
@@ -117,44 +186,45 @@ final class TranslationHistoryStore: ObservableObject {
                 backend: backend,
                 kind: kind,
                 createdAt: date,
-                isFavorite: previous.isFavorite
+                isFavorite: previous?.isFavorite ?? false
             )
-        } else {
-            entry = TranslationHistoryEntry(
-                id: UUID(),
-                sourceText: source,
-                translatedText: translation,
-                sourceLanguage: sourceLanguage,
-                targetLanguage: targetLanguage,
-                backend: backend,
-                kind: kind,
-                createdAt: date,
-                isFavorite: false
-            )
+            try database.save(entry)
+            try database.trimNonFavorites(keeping: maxRecentItems)
+            refreshAfterMutation()
+            return entry.id
+        } catch {
+            AppLog.error("保存翻译历史失败: \(error.localizedDescription)")
+            return nil
         }
-
-        entries.insert(entry, at: 0)
-        trimRecentItemsIfNeeded()
-        persist()
-        return entry.id
     }
 
     func toggleFavorite(id: UUID) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        entries[index].isFavorite.toggle()
-        persist()
+        do {
+            guard try database.toggleFavorite(id: id) else { return }
+            try database.trimNonFavorites(keeping: maxRecentItems)
+            refreshAfterMutation()
+        } catch {
+            AppLog.error("更新收藏状态失败: \(error.localizedDescription)")
+        }
     }
 
     func delete(id: UUID) {
-        guard entries.contains(where: { $0.id == id }) else { return }
-        entries.removeAll { $0.id == id }
-        persist()
+        do {
+            guard try database.delete(id: id) else { return }
+            refreshAfterMutation()
+        } catch {
+            AppLog.error("删除历史记录失败: \(error.localizedDescription)")
+        }
     }
 
     func clearNonFavorites() {
-        guard entries.contains(where: { !$0.isFavorite }) else { return }
-        entries.removeAll { !$0.isFavorite }
-        persist()
+        do {
+            guard try database.clearNonFavorites() else { return }
+            currentPage = 0
+            refreshAfterMutation()
+        } catch {
+            AppLog.error("清空历史记录失败: \(error.localizedDescription)")
+        }
     }
 
     @discardableResult
@@ -164,19 +234,19 @@ final class TranslationHistoryStore: ObservableObject {
 
     @discardableResult
     func exportEntries(favoritesOnly: Bool, format: HistoryExportFormat, to url: URL) throws -> Int {
-        let entriesToExport = favoritesOnly
-            ? entries.filter(\.isFavorite)
-            : entries
+        // 导出是用户主动发起的一次性操作；只在此时临时读取完整结果集。
+        let entriesToExport = try database.fetchAll(favoritesOnly: favoritesOnly)
+        let context = HistoryExportContext(favoritesOnly: favoritesOnly)
         let data: Data
         switch format {
         case .json:
             data = try Self.makeEncoder().encode(entriesToExport)
         case .markdown:
-            data = Data(HistoryExportRenderer.markdown(for: entriesToExport).utf8)
+            data = Data(HistoryExportRenderer.markdown(for: entriesToExport, context: context).utf8)
         case .html:
-            data = Data(HistoryExportRenderer.html(for: entriesToExport).utf8)
+            data = Data(HistoryExportRenderer.html(for: entriesToExport, context: context).utf8)
         case .pdf:
-            data = try HistoryExportRenderer.pdfData(for: entriesToExport)
+            data = try HistoryExportRenderer.pdfData(for: entriesToExport, context: context)
         }
         try data.write(to: url, options: [.atomic])
         return entriesToExport.count
@@ -197,91 +267,97 @@ final class TranslationHistoryStore: ObservableObject {
             throw TranslationHistoryTransferError.noImportableEntries
         }
 
-        let mergedImportedEntries = Self.mergeDuplicateImports(importedEntries)
-        var mergedEntries = entries
-        var existingIndexByIdentity: [HistoryEntryIdentity: Int] = [:]
-        for (index, entry) in mergedEntries.enumerated() {
-            existingIndexByIdentity[Self.identity(for: entry)] = index
-        }
-        var usedIDs = Set(mergedEntries.map(\.id))
-        var addedCount = 0
-        var updatedCount = 0
-
-        for importedEntry in mergedImportedEntries {
-            let identity = Self.identity(for: importedEntry)
-            if let index = existingIndexByIdentity[identity] {
-                let existingEntry = mergedEntries[index]
-                let mergedEntry = Self.merged(existing: existingEntry, imported: importedEntry)
-                if mergedEntry != existingEntry {
-                    mergedEntries[index] = mergedEntry
-                    updatedCount += 1
-                }
-                continue
-            }
-
-            var entry = importedEntry
-            while usedIDs.contains(entry.id) {
-                entry = TranslationHistoryEntry(
-                    id: UUID(),
-                    sourceText: entry.sourceText,
-                    translatedText: entry.translatedText,
-                    sourceLanguage: entry.sourceLanguage,
-                    targetLanguage: entry.targetLanguage,
-                    backend: entry.backend,
-                    kind: entry.kind,
-                    createdAt: entry.createdAt,
-                    isFavorite: entry.isFavorite
-                )
-            }
-            usedIDs.insert(entry.id)
-            existingIndexByIdentity[identity] = mergedEntries.count
-            mergedEntries.append(entry)
-            addedCount += 1
-        }
-
-        entries = mergedEntries.sorted { $0.createdAt > $1.createdAt }
-        trimRecentItemsIfNeeded()
-        persist()
+        let existingEntries = try database.fetchAll()
+        let mergeResult = Self.merging(
+            existingEntries: existingEntries,
+            importedEntries: Self.mergeDuplicateImports(importedEntries)
+        )
+        try database.replaceAll(with: mergeResult.entries)
+        try database.trimNonFavorites(keeping: maxRecentItems)
+        currentPage = 0
+        refreshAfterMutation()
         return TranslationHistoryImportResult(
             acceptedCount: importedEntries.count,
-            addedCount: addedCount,
-            updatedCount: updatedCount
+            addedCount: mergeResult.addedCount,
+            updatedCount: mergeResult.updatedCount
         )
     }
 
     func entry(id: UUID?) -> TranslationHistoryEntry? {
         guard let id else { return nil }
-        return entries.first { $0.id == id }
-    }
-
-    private func trimRecentItemsIfNeeded() {
-        var retainedNonFavorites = 0
-        entries = entries.filter { entry in
-            if entry.isFavorite { return true }
-            retainedNonFavorites += 1
-            return retainedNonFavorites <= maxRecentItems
+        do {
+            return try database.entry(id: id)
+        } catch {
+            AppLog.error("读取历史记录失败: \(error.localizedDescription)")
+            return entries.first { $0.id == id }
         }
     }
 
-    /// 内存中的 entries 立即更新（驱动 UI），磁盘写入交给后台串行 writer，
-    /// 并对突发的连续写入做合并去抖，避免每次划词都在主线程上整文件编码+写盘。
-    private func persist() {
-        writer.schedule(entries, debounce: writeDebounceInterval)
-    }
-
-    /// 同步刷新待写的历史到磁盘。App 退出前调用以确保不丢最近记录；测试中用于在回读文件前落盘。
+    /// SQLite 写入是事务性的，不再有待刷新的整份 JSON 快照；退出时只做 WAL checkpoint。
     func flush() {
-        writer.flush()
+        database.checkpoint()
     }
 
-    private nonisolated static func loadEntries(from fileURL: URL) -> [TranslationHistoryEntry] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
+    private func refreshAfterMutation() {
+        refreshPage()
+        revision &+= 1
+    }
+
+    private func refreshPage() {
         do {
-            return try makeDecoder().decode([TranslationHistoryEntry].self, from: data)
-                .sorted { $0.createdAt > $1.createdAt }
+            totalEntryCount = try database.count()
+            favoriteEntryCount = try database.count(favoritesOnly: true)
+            filteredEntryCount = try database.count(
+                searchText: searchText,
+                favoritesOnly: favoritesOnly
+            )
+            let lastPage = max(0, (filteredEntryCount - 1) / pageSize)
+            currentPage = min(currentPage, lastPage)
+            if isPageLoadingActive {
+                entries = try database.fetchPage(
+                    searchText: searchText,
+                    favoritesOnly: favoritesOnly,
+                    limit: pageSize,
+                    offset: currentPage * pageSize
+                )
+            } else if !entries.isEmpty {
+                entries = []
+            }
         } catch {
-            AppLog.error("读取翻译历史失败，将从空历史开始: \(error.localizedDescription)")
-            return []
+            AppLog.error("刷新历史分页失败: \(error.localizedDescription)")
+        }
+    }
+
+    private func migrateLegacyHistoryIfNeeded() {
+        do {
+            guard try !database.hasCompletedLegacyMigration() else { return }
+            guard FileManager.default.fileExists(atPath: legacyFileURL.path) else {
+                try database.markLegacyMigrationCompleted()
+                return
+            }
+
+            let data = try Data(contentsOf: legacyFileURL)
+            let decoded = try Self.makeDecoder().decode([TranslationHistoryEntry].self, from: data)
+            let imported = Self.mergeDuplicateImports(decoded.compactMap(Self.normalized))
+            let existing = try database.fetchAll()
+            let mergeResult = Self.merging(existingEntries: existing, importedEntries: imported)
+            try database.replaceAll(with: mergeResult.entries)
+            try database.markLegacyMigrationCompleted()
+            preserveLegacyFileAsBackup()
+            AppLog.debug("已迁移历史 JSON 到 SQLite entries=\(mergeResult.entries.count)")
+        } catch {
+            AppLog.error("迁移旧版历史 JSON 失败，将保留原文件稍后重试: \(error.localizedDescription)")
+        }
+    }
+
+    private func preserveLegacyFileAsBackup() {
+        let backupURL = legacyFileURL.appendingPathExtension("migrated-backup")
+        guard !FileManager.default.fileExists(atPath: backupURL.path) else { return }
+        do {
+            try FileManager.default.moveItem(at: legacyFileURL, to: backupURL)
+        } catch {
+            // 数据已经安全写入数据库；备份改名失败时保留原 JSON，不影响后续启动。
+            AppLog.error("旧版历史 JSON 备份改名失败: \(error.localizedDescription)")
         }
     }
 
@@ -372,6 +448,58 @@ final class TranslationHistoryStore: ObservableObject {
             kind: entry.kind.rawValue
         )
     }
+
+    private nonisolated static func merging(
+        existingEntries: [TranslationHistoryEntry],
+        importedEntries: [TranslationHistoryEntry]
+    ) -> HistoryMergeResult {
+        var mergedEntries = existingEntries
+        var existingIndexByIdentity: [HistoryEntryIdentity: Int] = [:]
+        for (index, entry) in mergedEntries.enumerated() {
+            existingIndexByIdentity[identity(for: entry)] = index
+        }
+        var usedIDs = Set(mergedEntries.map(\.id))
+        var addedCount = 0
+        var updatedCount = 0
+
+        for importedEntry in importedEntries {
+            let importedIdentity = identity(for: importedEntry)
+            if let index = existingIndexByIdentity[importedIdentity] {
+                let existingEntry = mergedEntries[index]
+                let mergedEntry = merged(existing: existingEntry, imported: importedEntry)
+                if mergedEntry != existingEntry {
+                    mergedEntries[index] = mergedEntry
+                    updatedCount += 1
+                }
+                continue
+            }
+
+            var entry = importedEntry
+            while usedIDs.contains(entry.id) {
+                entry = TranslationHistoryEntry(
+                    id: UUID(),
+                    sourceText: entry.sourceText,
+                    translatedText: entry.translatedText,
+                    sourceLanguage: entry.sourceLanguage,
+                    targetLanguage: entry.targetLanguage,
+                    backend: entry.backend,
+                    kind: entry.kind,
+                    createdAt: entry.createdAt,
+                    isFavorite: entry.isFavorite
+                )
+            }
+            usedIDs.insert(entry.id)
+            existingIndexByIdentity[importedIdentity] = mergedEntries.count
+            mergedEntries.append(entry)
+            addedCount += 1
+        }
+
+        return HistoryMergeResult(
+            entries: mergedEntries.sorted { $0.createdAt > $1.createdAt },
+            addedCount: addedCount,
+            updatedCount: updatedCount
+        )
+    }
 }
 
 private nonisolated struct HistoryEntryIdentity: Hashable {
@@ -382,61 +510,8 @@ private nonisolated struct HistoryEntryIdentity: Hashable {
     let kind: String
 }
 
-/// 后台串行历史写入器：合并去抖突发写入，把 JSON 编码与磁盘写入移出主线程。
-/// 待写快照在锁内更新，因此连续多次 schedule 只会写出最后一次；flush() 同步落盘。
-private final class HistoryFileWriter: @unchecked Sendable {
-    private let fileURL: URL
-    private let queue = DispatchQueue(label: "com.autotranslator.history-writer", qos: .utility)
-    private let lock = NSLock()
-    private var pendingSnapshot: [TranslationHistoryEntry]?
-    private var isWriteScheduled = false
-
-    init(fileURL: URL) {
-        self.fileURL = fileURL
-    }
-
-    /// 安排一次（去抖动的）写盘。debounce 期间到来的多次调用会合并为一次，只写最后一次快照。
-    func schedule(_ snapshot: [TranslationHistoryEntry], debounce: TimeInterval) {
-        lock.lock()
-        pendingSnapshot = snapshot
-        let needsSchedule = !isWriteScheduled
-        if needsSchedule { isWriteScheduled = true }
-        lock.unlock()
-
-        guard needsSchedule else { return }
-        if debounce <= 0 {
-            queue.async { [weak self] in self?.drain() }
-        } else {
-            queue.asyncAfter(deadline: .now() + debounce) { [weak self] in self?.drain() }
-        }
-    }
-
-    /// 同步写出当前待写快照（若有）。用于 App 退出与测试回读前确保已落盘。
-    func flush() {
-        queue.sync { drain() }
-    }
-
-    private func drain() {
-        lock.lock()
-        let snapshot = pendingSnapshot
-        pendingSnapshot = nil
-        isWriteScheduled = false
-        lock.unlock()
-
-        guard let snapshot else { return }
-        write(snapshot)
-    }
-
-    private func write(_ entries: [TranslationHistoryEntry]) {
-        do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let data = try TranslationHistoryStore.makeEncoder().encode(entries)
-            try data.write(to: fileURL, options: [.atomic])
-        } catch {
-            AppLog.error("保存翻译历史失败: \(error.localizedDescription)")
-        }
-    }
+private nonisolated struct HistoryMergeResult {
+    let entries: [TranslationHistoryEntry]
+    let addedCount: Int
+    let updatedCount: Int
 }

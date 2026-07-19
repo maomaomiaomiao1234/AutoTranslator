@@ -129,9 +129,9 @@ final class AppController: NSObject {
         mouseMonitor.shouldIgnoreMouseSequenceStartingAt = { [weak self] point in
             self?.shouldIgnoreSelectionSequence(startingAt: point) ?? false
         }
-        historyObservation = TranslationHistoryStore.shared.$entries.sink { [weak self] entries in
+        historyObservation = TranslationHistoryStore.shared.$revision.sink { [weak self] _ in
             guard let self, let id = self.currentHistoryEntryID else { return }
-            if let entry = entries.first(where: { $0.id == id }) {
+            if let entry = TranslationHistoryStore.shared.entry(id: id) {
                 self.window.setHistoryFavorite(entry.isFavorite, available: true)
             } else {
                 self.currentHistoryEntryID = nil

@@ -23,6 +23,7 @@ struct TranslationHistoryView: View {
     @State private var scope: HistoryScope = .all
     @State private var selectedID: UUID?
     @State private var showsClearConfirmation = false
+    @State private var showsExportSheet = false
     @State private var transferAlert: HistoryTransferAlert?
 
     var body: some View {
@@ -45,8 +46,17 @@ struct TranslationHistoryView: View {
         }
         .frame(minWidth: 760, minHeight: 500)
         .background(AppUI.panelBottom)
-        .onAppear(perform: selectFirstVisibleEntryIfNeeded)
-        .onChange(of: filteredEntries.map(\.id)) { _ in
+        .onAppear {
+            refreshQuery()
+            selectFirstVisibleEntryIfNeeded()
+        }
+        .onChange(of: searchText) { _ in
+            refreshQuery()
+        }
+        .onChange(of: scope) { _ in
+            refreshQuery()
+        }
+        .onChange(of: store.entries.map(\.id)) { _ in
             selectFirstVisibleEntryIfNeeded()
         }
         .alert("清空非收藏历史？", isPresented: $showsClearConfirmation) {
@@ -64,6 +74,20 @@ struct TranslationHistoryView: View {
         } message: {
             Text(transferAlert?.message ?? "")
         }
+        .sheet(isPresented: $showsExportSheet) {
+            HistoryExportSheet(
+                totalCount: store.totalEntryCount,
+                favoriteCount: store.favoriteEntryCount,
+                onConfirm: { favoritesOnly, format in
+                    showsExportSheet = false
+                    // 先让 sheet 收起，再弹模态保存面板，避免两者叠在一起。
+                    DispatchQueue.main.async {
+                        exportEntries(favoritesOnly: favoritesOnly, format: format)
+                    }
+                },
+                onCancel: { showsExportSheet = false }
+            )
+        }
     }
 
     private var header: some View {
@@ -79,7 +103,7 @@ struct TranslationHistoryView: View {
                 Text("翻译历史")
                     .font(.system(size: AppUI.FontSize.display, weight: .bold, design: .serif))
                     .foregroundStyle(AppUI.textPrimary)
-                Text("本地保存 · \(store.entries.count) 条记录 · \(favoriteCount) 条收藏")
+                Text("本地保存 · \(store.totalEntryCount) 条记录 · \(store.favoriteEntryCount) 条收藏")
                     .font(.system(size: AppUI.FontSize.small))
                     .foregroundStyle(AppUI.textSecondary)
             }
@@ -98,19 +122,13 @@ struct TranslationHistoryView: View {
             .pickerStyle(.segmented)
             .frame(width: 132)
 
-            Menu {
-                Button("导出全部历史") {
-                    exportEntries(favoritesOnly: false)
-                }
-                Button("仅导出收藏") {
-                    exportEntries(favoritesOnly: true)
-                }
-                .disabled(favoriteCount == 0)
+            Button {
+                showsExportSheet = true
             } label: {
                 Image(systemName: "square.and.arrow.up")
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: 32, height: 32)
+            .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 32))
+            .disabled(store.totalEntryCount == 0)
             .help("导出历史记录")
 
             Button {
@@ -127,7 +145,7 @@ struct TranslationHistoryView: View {
                 Image(systemName: "trash")
             }
             .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 32))
-            .disabled(!store.entries.contains(where: { !$0.isFavorite }))
+            .disabled(store.totalEntryCount == store.favoriteEntryCount)
             .help("清空非收藏历史")
         }
         .padding(.horizontal, AppUI.Space.xxl)
@@ -157,37 +175,77 @@ struct TranslationHistoryView: View {
         .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
     }
 
-    @ViewBuilder
     private var historyList: some View {
-        if filteredEntries.isEmpty {
-            historyEmptyState
-        } else {
-            List(filteredEntries, selection: $selectedID) { entry in
-                HistoryEntryRow(
-                    entry: entry,
-                    onToggleFavorite: { store.toggleFavorite(id: entry.id) }
-                )
-                .tag(entry.id)
-                .contextMenu {
-                    Button(entry.isFavorite ? "取消收藏" : "收藏") {
-                        store.toggleFavorite(id: entry.id)
-                    }
-                    Button("复制原文") {
-                        copyToPasteboard(entry.sourceText)
-                    }
-                    Button("复制译文") {
-                        copyToPasteboard(entry.translatedText)
-                    }
-                    Divider()
-                    Button("删除", role: .destructive) {
-                        store.delete(id: entry.id)
+        VStack(spacing: 0) {
+            if store.entries.isEmpty {
+                historyEmptyState
+            } else {
+                List(store.entries, selection: $selectedID) { entry in
+                    HistoryEntryRow(
+                        entry: entry,
+                        onToggleFavorite: { store.toggleFavorite(id: entry.id) }
+                    )
+                    .tag(entry.id)
+                    .contextMenu {
+                        Button(entry.isFavorite ? "取消收藏" : "收藏") {
+                            store.toggleFavorite(id: entry.id)
+                        }
+                        Button("复制原文") {
+                            copyToPasteboard(entry.sourceText)
+                        }
+                        Button("复制译文") {
+                            copyToPasteboard(entry.translatedText)
+                        }
+                        Divider()
+                        Button("删除", role: .destructive) {
+                            store.delete(id: entry.id)
+                        }
                     }
                 }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(AppUI.surfaceSoft)
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(AppUI.surfaceSoft)
+
+            if store.pageCount > 1 {
+                Rectangle()
+                    .fill(AppUI.cardBorder)
+                    .frame(height: 1)
+                paginationBar
+            }
         }
+    }
+
+    private var paginationBar: some View {
+        HStack(spacing: AppUI.Space.s) {
+            Button {
+                store.goToPreviousPage()
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!store.canGoToPreviousPage)
+            .help("上一页")
+
+            Spacer(minLength: AppUI.Space.xs)
+            Text("第 \(store.currentPage + 1) / \(store.pageCount) 页 · \(store.filteredEntryCount) 条")
+                .font(.system(size: AppUI.FontSize.micro, weight: .medium))
+                .foregroundStyle(AppUI.textMuted)
+                .lineLimit(1)
+            Spacer(minLength: AppUI.Space.xs)
+
+            Button {
+                store.goToNextPage()
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!store.canGoToNextPage)
+            .help("下一页")
+        }
+        .padding(.horizontal, AppUI.Space.m)
+        .frame(height: 36)
+        .background(AppUI.surface)
     }
 
     private var historyEmptyState: some View {
@@ -233,33 +291,9 @@ struct TranslationHistoryView: View {
         }
     }
 
-    private var filteredEntries: [TranslationHistoryEntry] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-
-        return store.entries.filter { entry in
-            if scope == .favorites, !entry.isFavorite { return false }
-            guard !query.isEmpty else { return true }
-
-            let searchableText = [
-                entry.sourceText,
-                entry.translatedText,
-                entry.languageDescription,
-                entry.backendDescription,
-                entry.kind.displayName,
-            ]
-                .joined(separator: " ")
-                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            return searchableText.contains(query)
-        }
-    }
-
     private var selectedEntry: TranslationHistoryEntry? {
-        store.entry(id: selectedID)
-    }
-
-    private var favoriteCount: Int {
-        store.entries.lazy.filter(\.isFavorite).count
+        guard let selectedID else { return nil }
+        return store.entries.first { $0.id == selectedID }
     }
 
     private var emptyStateTitle: String {
@@ -279,9 +313,16 @@ struct TranslationHistoryView: View {
     }
 
     private func selectFirstVisibleEntryIfNeeded() {
-        let visibleIDs = Set(filteredEntries.map(\.id))
+        let visibleIDs = Set(store.entries.map(\.id))
         if let selectedID, visibleIDs.contains(selectedID) { return }
-        selectedID = filteredEntries.first?.id
+        selectedID = store.entries.first?.id
+    }
+
+    private func refreshQuery() {
+        store.updateQuery(
+            searchText: searchText,
+            favoritesOnly: scope == .favorites
+        )
     }
 
     private func copyToPasteboard(_ text: String) {
@@ -302,20 +343,19 @@ struct TranslationHistoryView: View {
         )
     }
 
-    private func exportEntries(favoritesOnly: Bool) {
+    private func exportEntries(favoritesOnly: Bool, format: HistoryExportFormat) {
         let panel = NSSavePanel()
         panel.title = favoritesOnly ? "导出收藏记录" : "导出翻译历史"
         panel.canCreateDirectories = true
+        panel.allowedContentTypes = [format.contentType]
 
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
         let baseName = favoritesOnly ? "AutoTranslator-收藏" : "AutoTranslator-历史记录"
-        let formatPicker = HistoryExportFormatPicker(
-            panel: panel,
-            defaultBaseName: baseName,
-            initialFormat: .markdown
-        )
+        panel.nameFieldStringValue =
+            "\(baseName)-\(dateFormatter.string(from: Date())).\(format.fileExtension)"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let format = formatPicker.selectedFormat
         do {
             let count = try store.exportEntries(favoritesOnly: favoritesOnly, format: format, to: url)
             transferAlert = HistoryTransferAlert(
@@ -369,71 +409,181 @@ private struct HistoryTransferAlert {
     let message: String
 }
 
-/// 给 `NSSavePanel` 挂一个「格式：」下拉框（accessoryView），切换时同步
-/// 面板的 `allowedContentTypes` 与文件名扩展名。须在 `runModal()` 期间
-/// 保持强引用（`NSControl.target` 是弱引用）。
-@MainActor
-private final class HistoryExportFormatPicker: NSObject {
-    private let panel: NSSavePanel
-    private let defaultBaseName: String
+/// 导出选项弹窗：先选范围与格式（带用途说明），确认后再弹保存面板。
+/// 取代原来藏在 `NSSavePanel` accessoryView 里的格式下拉框。
+private struct HistoryExportSheet: View {
+    let totalCount: Int
+    let favoriteCount: Int
+    let onConfirm: (_ favoritesOnly: Bool, _ format: HistoryExportFormat) -> Void
+    let onCancel: () -> Void
 
-    private(set) var selectedFormat: HistoryExportFormat
+    @State private var favoritesOnly = false
+    @State private var format: HistoryExportFormat = .markdown
 
-    init(panel: NSSavePanel, defaultBaseName: String, initialFormat: HistoryExportFormat) {
-        self.panel = panel
-        self.defaultBaseName = defaultBaseName
-        self.selectedFormat = initialFormat
-        super.init()
+    private var exportCount: Int {
+        favoritesOnly ? favoriteCount : totalCount
+    }
 
-        let label = NSTextField(labelWithString: "格式：")
-        label.sizeToFit()
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppUI.Space.xl) {
+            HStack(spacing: AppUI.Space.m) {
+                SymbolBadge(
+                    symbol: "square.and.arrow.up",
+                    tint: AppUI.accent,
+                    background: AppUI.activeToolbar,
+                    size: 36
+                )
+                VStack(alignment: .leading, spacing: AppUI.Space.xxs) {
+                    Text("导出记录")
+                        .font(.system(size: AppUI.FontSize.title, weight: .bold, design: .serif))
+                        .foregroundStyle(AppUI.textPrimary)
+                    Text("选择导出范围与文件格式")
+                        .font(.system(size: AppUI.FontSize.small))
+                        .foregroundStyle(AppUI.textSecondary)
+                }
+            }
 
-        let popUp = NSPopUpButton(frame: .zero, pullsDown: false)
-        for format in HistoryExportFormat.allCases {
-            popUp.addItem(withTitle: format.displayName)
+            VStack(alignment: .leading, spacing: AppUI.Space.s) {
+                sectionLabel("导出范围")
+                HStack(spacing: AppUI.Space.m) {
+                    ExportScopeCard(
+                        title: "全部记录",
+                        count: totalCount,
+                        symbol: "clock.arrow.circlepath",
+                        isSelected: !favoritesOnly
+                    ) {
+                        favoritesOnly = false
+                    }
+                    ExportScopeCard(
+                        title: "仅收藏",
+                        count: favoriteCount,
+                        symbol: "star.fill",
+                        isSelected: favoritesOnly
+                    ) {
+                        favoritesOnly = true
+                    }
+                    .disabled(favoriteCount == 0)
+                    .opacity(favoriteCount == 0 ? 0.45 : 1)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: AppUI.Space.s) {
+                sectionLabel("文件格式")
+                VStack(spacing: AppUI.Space.s) {
+                    ForEach(HistoryExportFormat.allCases) { candidate in
+                        ExportFormatRow(
+                            format: candidate,
+                            isSelected: format == candidate
+                        ) {
+                            format = candidate
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: AppUI.Space.m) {
+                Text("将导出 \(exportCount) 条记录")
+                    .font(.system(size: AppUI.FontSize.small))
+                    .foregroundStyle(AppUI.textSecondary)
+                Spacer(minLength: AppUI.Space.m)
+                Button("取消", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("导出…") {
+                    onConfirm(favoritesOnly, format)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(exportCount == 0)
+            }
         }
-        popUp.selectItem(at: HistoryExportFormat.allCases.firstIndex(of: initialFormat) ?? 0)
-        popUp.target = self
-        popUp.action = #selector(formatChanged(_:))
-        popUp.sizeToFit()
-
-        let padding: CGFloat = 12
-        let spacing: CGFloat = 8
-        let contentWidth = label.frame.width + spacing + popUp.frame.width
-        let contentHeight = max(label.frame.height, popUp.frame.height)
-        let container = NSView(frame: NSRect(
-            x: 0, y: 0,
-            width: contentWidth + padding * 2,
-            height: contentHeight + padding * 2
-        ))
-        label.setFrameOrigin(NSPoint(
-            x: padding,
-            y: (container.frame.height - label.frame.height) / 2
-        ))
-        popUp.setFrameOrigin(NSPoint(
-            x: padding + label.frame.width + spacing,
-            y: (container.frame.height - popUp.frame.height) / 2
-        ))
-        container.addSubview(label)
-        container.addSubview(popUp)
-        panel.accessoryView = container
-
-        apply(initialFormat)
+        .padding(AppUI.Space.xxl)
+        .frame(width: 460)
+        .background(AppUI.panelBottom)
     }
 
-    @objc private func formatChanged(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        guard HistoryExportFormat.allCases.indices.contains(index) else { return }
-        selectedFormat = HistoryExportFormat.allCases[index]
-        apply(selectedFormat)
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: AppUI.FontSize.mini, weight: .semibold))
+            .foregroundStyle(AppUI.textMuted)
     }
+}
 
-    private func apply(_ format: HistoryExportFormat) {
-        panel.allowedContentTypes = [format.contentType]
-        // 保留用户已改的基名，仅替换扩展名。
-        let currentBase = (panel.nameFieldStringValue as NSString).deletingPathExtension
-        let base = currentBase.isEmpty ? defaultBaseName : currentBase
-        panel.nameFieldStringValue = "\(base).\(format.fileExtension)"
+private struct ExportScopeCard: View {
+    let title: String
+    let count: Int
+    let symbol: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: AppUI.Space.m) {
+                Image(systemName: symbol)
+                    .font(.system(size: AppUI.FontSize.base, weight: .medium))
+                    .foregroundStyle(isSelected ? AppUI.accent : AppUI.textMuted)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: AppUI.Space.xxs) {
+                    Text(title)
+                        .font(.system(size: AppUI.FontSize.base, weight: .semibold))
+                        .foregroundStyle(AppUI.textPrimary)
+                    Text("\(count) 条")
+                        .font(.system(size: AppUI.FontSize.small))
+                        .foregroundStyle(AppUI.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, AppUI.Space.m)
+            .padding(.vertical, AppUI.Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .appSurface(
+                background: isSelected ? AppUI.activeToolbar : AppUI.surfaceSoft,
+                radius: AppUI.controlRadius,
+                border: isSelected ? AppUI.activeToolbarBorder : AppUI.buttonBorder
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ExportFormatRow: View {
+    let format: HistoryExportFormat
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: AppUI.Space.m) {
+                SymbolBadge(
+                    symbol: format.symbolName,
+                    tint: isSelected ? AppUI.accent : AppUI.textSecondary,
+                    background: isSelected ? AppUI.activeToolbar : AppUI.surfaceSoft,
+                    size: 30
+                )
+                VStack(alignment: .leading, spacing: AppUI.Space.xxs) {
+                    Text(format.title)
+                        .font(.system(size: AppUI.FontSize.base, weight: .semibold))
+                        .foregroundStyle(AppUI.textPrimary)
+                    Text(format.caption)
+                        .font(.system(size: AppUI.FontSize.small))
+                        .foregroundStyle(AppUI.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: AppUI.FontSize.section, weight: .medium))
+                    .foregroundStyle(isSelected ? AppUI.accent : AppUI.textMuted)
+            }
+            .padding(.horizontal, AppUI.Space.m)
+            .padding(.vertical, AppUI.Space.s)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .appSurface(
+                background: isSelected ? AppUI.activeToolbar : AppUI.surfaceSoft,
+                radius: AppUI.controlRadius,
+                border: isSelected ? AppUI.activeToolbarBorder : AppUI.buttonBorder
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

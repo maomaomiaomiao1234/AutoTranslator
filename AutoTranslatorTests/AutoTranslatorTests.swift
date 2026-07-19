@@ -244,6 +244,146 @@ struct TranslationHistoryStoreTests {
     }
 
     @Test
+    func paginationKeepsOnlyOneBoundedPageInMemory() throws {
+        let fixture = try makeFixture(maxRecentItems: 20, pageSize: 2)
+        defer { fixture.cleanup() }
+
+        var ids: [UUID] = []
+        for index in 0..<5 {
+            let id = fixture.store.record(
+                sourceText: "source-\(index)",
+                translatedText: "translation-\(index)",
+                sourceLanguage: "en",
+                targetLanguage: "zh-CN",
+                backend: "llm",
+                kind: .translation,
+                at: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+            ids.append(try #require(id))
+        }
+
+        #expect(fixture.store.totalEntryCount == 5)
+        #expect(fixture.store.filteredEntryCount == 5)
+        #expect(fixture.store.entries.count == 2)
+        #expect(fixture.store.pageCount == 3)
+        let firstPageIDs = Set(fixture.store.entries.map(\.id))
+
+        fixture.store.goToNextPage()
+        #expect(fixture.store.currentPage == 1)
+        #expect(fixture.store.entries.count == 2)
+        #expect(firstPageIDs.isDisjoint(with: Set(fixture.store.entries.map(\.id))))
+
+        fixture.store.goToNextPage()
+        #expect(fixture.store.currentPage == 2)
+        #expect(fixture.store.entries.count == 1)
+        #expect(!fixture.store.canGoToNextPage)
+
+        for id in ids {
+            fixture.store.toggleFavorite(id: id)
+        }
+        fixture.store.updateQuery(searchText: "", favoritesOnly: true)
+        #expect(fixture.store.favoriteEntryCount == 5)
+        #expect(fixture.store.filteredEntryCount == 5)
+        #expect(fixture.store.entries.count == 2)
+        #expect(fixture.store.pageCount == 3)
+
+        fixture.store.updateQuery(searchText: "英语", favoritesOnly: false)
+        #expect(fixture.store.filteredEntryCount == 5)
+        #expect(fixture.store.entries.count == 2)
+        fixture.store.updateQuery(searchText: "source-3", favoritesOnly: false)
+        #expect(fixture.store.filteredEntryCount == 1)
+        #expect(fixture.store.entries.first?.sourceText == "source-3")
+
+        fixture.store.updateQuery(searchText: "", favoritesOnly: false)
+        fixture.store.deactivatePageLoading()
+        #expect(fixture.store.entries.isEmpty)
+        #expect(fixture.store.totalEntryCount == 5)
+        #expect(fixture.store.entry(id: ids[0]) != nil)
+        fixture.store.record(
+            sourceText: "source-5",
+            translatedText: "translation-5",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "llm",
+            kind: .translation
+        )
+        #expect(fixture.store.totalEntryCount == 6)
+        #expect(fixture.store.entries.isEmpty)
+        fixture.store.activatePageLoading()
+        #expect(fixture.store.entries.count == 2)
+    }
+
+    @Test
+    func legacyJSONMigratesOnceAndIsPreservedAsBackup() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoTranslatorHistoryMigrationTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let legacyURL = directoryURL.appendingPathComponent("history.json")
+        let entries = (0..<3).map { index in
+            TranslationHistoryEntry(
+                id: UUID(),
+                sourceText: "legacy-\(index)",
+                translatedText: "旧记录-\(index)",
+                sourceLanguage: "en",
+                targetLanguage: "zh-CN",
+                backend: "google",
+                kind: .translation,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                isFavorite: index == 0
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        try encoder.encode(entries).write(to: legacyURL)
+
+        let store = TranslationHistoryStore(fileURL: legacyURL, pageSize: 2)
+        #expect(store.totalEntryCount == 3)
+        #expect(store.favoriteEntryCount == 1)
+        #expect(store.entries.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path))
+        #expect(FileManager.default.fileExists(
+            atPath: legacyURL.appendingPathExtension("migrated-backup").path
+        ))
+
+        store.flush()
+        let reloaded = TranslationHistoryStore(fileURL: legacyURL, pageSize: 2)
+        #expect(reloaded.totalEntryCount == 3)
+        #expect(reloaded.entries.count == 2)
+        #expect(entries.allSatisfy { reloaded.entry(id: $0.id) != nil })
+    }
+
+    @Test
+    func exportReadsAllDatabaseRowsInsteadOfOnlyCurrentPage() throws {
+        let fixture = try makeFixture(maxRecentItems: 20, pageSize: 2)
+        defer { fixture.cleanup() }
+
+        for index in 0..<5 {
+            fixture.store.record(
+                sourceText: "export-\(index)",
+                translatedText: "导出-\(index)",
+                sourceLanguage: "en",
+                targetLanguage: "zh-CN",
+                backend: "google",
+                kind: .translation
+            )
+        }
+        #expect(fixture.store.entries.count == 2)
+
+        let exportURL = fixture.directoryURL.appendingPathComponent("all.json")
+        let count = try fixture.store.exportEntries(favoritesOnly: false, to: exportURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let exported = try decoder.decode(
+            [TranslationHistoryEntry].self,
+            from: Data(contentsOf: exportURL)
+        )
+        #expect(count == 5)
+        #expect(exported.count == 5)
+    }
+
+    @Test
     func clearingHistoryPreservesFavorites() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -441,13 +581,17 @@ struct TranslationHistoryStoreTests {
         #expect(data.starts(with: Array("%PDF".utf8)))
     }
 
-    private func makeFixture(maxRecentItems: Int = 500) throws -> HistoryStoreFixture {
+    private func makeFixture(maxRecentItems: Int = 500, pageSize: Int = 100) throws -> HistoryStoreFixture {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("AutoTranslatorHistoryTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let fileURL = directoryURL.appendingPathComponent("history.json")
         return HistoryStoreFixture(
-            store: TranslationHistoryStore(fileURL: fileURL, maxRecentItems: maxRecentItems),
+            store: TranslationHistoryStore(
+                fileURL: fileURL,
+                maxRecentItems: maxRecentItems,
+                pageSize: pageSize
+            ),
             fileURL: fileURL,
             directoryURL: directoryURL
         )

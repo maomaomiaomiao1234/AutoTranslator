@@ -1,10 +1,12 @@
 import AppKit
 import SwiftUI
 
-final class HistoryWindowController: NSWindowController {
+final class HistoryWindowController: NSWindowController, NSWindowDelegate {
     private let hostingView: NSHostingView<TranslationHistoryView>
+    private let store: TranslationHistoryStore
 
     init(store: TranslationHistoryStore) {
+        self.store = store
         let rootView = TranslationHistoryView(store: store)
         hostingView = NSHostingView(rootView: rootView)
 
@@ -22,6 +24,8 @@ final class HistoryWindowController: NSWindowController {
         window.center()
 
         super.init(window: window)
+        window.delegate = self
+        store.deactivatePageLoading()
     }
 
     required init?(coder: NSCoder) {
@@ -29,8 +33,13 @@ final class HistoryWindowController: NSWindowController {
     }
 
     func showAndFocus() {
+        store.activatePageLoading()
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        store.deactivatePageLoading()
     }
 }

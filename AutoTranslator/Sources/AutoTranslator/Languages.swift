@@ -2,7 +2,7 @@ import Foundation
 
 /// 支持的翻译语言。`(显示名, 语言代码)`，保持顺序以便 UI 展示。
 /// `auto` 仅在源语言中合法（自动检测），目标语言不应使用。
-enum Languages {
+nonisolated enum Languages {
 
     static let all: [(name: String, code: String)] = [
         ("自动检测", "auto"),

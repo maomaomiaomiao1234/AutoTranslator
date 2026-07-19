@@ -2,7 +2,7 @@ import Foundation
 
 /// 翻译后端的元数据映射。仅集中显示用文案与校验，不替换各处以 String 存储后端 id 的现状。
 /// 现支持：`llm`（大模型）、`google`（谷歌翻译）、`apple`（系统翻译，离线，macOS 15+）。
-enum TranslationBackend {
+nonisolated enum TranslationBackend {
     static let llm = "llm"
     static let google = "google"
     static let apple = "apple"

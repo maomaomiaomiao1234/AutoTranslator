@@ -15,7 +15,7 @@ AutoTranslator 是一款常驻 macOS 菜单栏的划词翻译工具。在任意�
 - **三种翻译后端**：支持 OpenAI 兼容的大模型接口、Google 翻译，以及 macOS 15+ 的 Apple 系统翻译。
 - **流式输出**：大模型后端支持流式返回，浮窗随内容自动调整高度。
 - **语音朗读**：通过 DashScope CosyVoice 朗读原文，可配置单词释义完成后自动播放。
-- **翻译历史**：本地保存结果，支持搜索、收藏、复制、删除以及 JSON 导入/导出。
+- **翻译历史**：本地保存结果，支持搜索、收藏、复制、删除与导入。导出提供范围（全部/仅收藏）与格式选择：Markdown、HTML、排版分页的 PDF（含页码），以及可再次导入的 JSON。
 - **结果缓存**：使用 LRU 缓存复用相同文本、语言和后端的翻译结果。
 - **浮窗定制**：支持固定窗口、切换语言、交换翻译方向、复制内容、重新翻译、标准/极简模式，以及跟随系统/浅色/深色主题。
 - **快捷控制**：使用全局快捷键 `⌃⌥E` 暂停或恢复划词监听。
@@ -117,13 +117,13 @@ xcodebuild test \
 ~/Library/Application Support/AutoTranslator/config.json
 ```
 
-API Key 不会以明文写入该文件，而是合并保存在 macOS Keychain 的 `AutoTranslatorSecrets` 条目中。翻译历史单独保存在：
+API Key 不会以明文写入该文件，而是合并保存在 macOS Keychain 的 `AutoTranslatorSecrets` 条目中。翻译历史使用 SQLite 分页存储在：
 
 ```text
-~/Library/Application Support/AutoTranslator/history.json
+~/Library/Application Support/AutoTranslator/history.sqlite3
 ```
 
-历史默认保留最近 500 条非收藏记录；收藏记录不受此上限影响。导入历史时会按照原文、语言、后端和记录类型合并重复项，并保留收藏状态。
+历史窗口每次只把当前页（默认 100 条）载入内存，窗口关闭后会释放这一页；收藏数量不会影响常驻内存。历史默认保留最近 500 条非收藏记录，收藏记录不受此上限影响。升级时旧版 `history.json` 会自动迁移，并改名为 `history.json.migrated-backup` 保留备份。导入历史时会按照原文、语言、后端和记录类型合并重复项，并保留收藏状态。
 
 ### 环境变量
 
@@ -162,7 +162,8 @@ AutoTranslator/
 │   ├── ScreenCaptureService.swift       交互式区域截图
 │   ├── OCRService.swift                 Vision OCR 与子进程调用
 │   ├── SpeechService.swift              CosyVoice 合成、播放与音频缓存
-│   ├── TranslationHistoryStore.swift    历史持久化、去重和导入导出
+│   ├── TranslationHistoryStore.swift    历史分页状态、迁移和导入导出
+│   ├── HistoryDatabase.swift            SQLite 历史持久化与分页查询
 │   ├── Translators/                     LLM、Google 与 Apple 翻译后端
 │   ├── UI/                              翻译浮窗、偏好设置和历史界面
 │   └── macOS/                           菜单栏、Keychain、配置、授权引导与窗口控制器

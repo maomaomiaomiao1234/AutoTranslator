@@ -13,6 +13,12 @@ enum HistoryExportError: LocalizedError {
     }
 }
 
+/// 一次导出的上下文信息，用于各格式的文档头（导出时间、范围说明）。
+nonisolated struct HistoryExportContext {
+    var favoritesOnly = false
+    var generatedAt = Date()
+}
+
 /// 翻译历史/收藏的导出格式。`json` 保留用于「导入」回填，其余为人类可读格式。
 enum HistoryExportFormat: String, CaseIterable, Identifiable {
     case markdown
@@ -22,13 +28,33 @@ enum HistoryExportFormat: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// 保存对话框下拉框展示的文案。
-    var displayName: String {
+    /// 导出对话框里展示的格式名。
+    var title: String {
         switch self {
-        case .markdown: return "Markdown（.md）"
-        case .html: return "网页（.html）"
-        case .pdf: return "PDF（.pdf）"
-        case .json: return "JSON（.json，可再次导入）"
+        case .markdown: return "Markdown"
+        case .html: return "网页（HTML）"
+        case .pdf: return "PDF 文档"
+        case .json: return "JSON 数据"
+        }
+    }
+
+    /// 导出对话框里的一行用途说明。
+    var caption: String {
+        switch self {
+        case .markdown: return "通用纯文本标记，适合 Obsidian、Typora 等笔记工具"
+        case .html: return "浏览器直接打开，保留卡片排版并支持深色模式"
+        case .pdf: return "固定版式、自动分页与页码，适合打印和分享"
+        case .json: return "完整数据备份，可再次导入 AutoTranslator"
+        }
+    }
+
+    /// 导出对话框里的 SF Symbol 图标名。
+    var symbolName: String {
+        switch self {
+        case .markdown: return "doc.plaintext"
+        case .html: return "globe"
+        case .pdf: return "doc.richtext"
+        case .json: return "curlybraces"
         }
     }
 
@@ -61,15 +87,24 @@ enum HistoryExportRenderer {
 
     // MARK: - Markdown
 
-    static func markdown(for entries: [TranslationHistoryEntry]) -> String {
+    static func markdown(for entries: [TranslationHistoryEntry],
+                         context: HistoryExportContext = HistoryExportContext()) -> String {
         let formatter = makeDateFormatter()
         var lines: [String] = []
         lines.append("# AutoTranslator 翻译历史")
         lines.append("")
-        lines.append("共 \(entries.count) 条记录。")
+        var summary = "共 \(entries.count) 条记录 · 导出于 \(formatter.string(from: context.generatedAt))"
+        if context.favoritesOnly {
+            summary += " · 仅收藏"
+        }
+        lines.append(summary)
         lines.append("")
 
         for (index, entry) in entries.enumerated() {
+            if index > 0 {
+                lines.append("---")
+                lines.append("")
+            }
             let translationTitle = entry.kind == .translation ? "译文" : "释义"
             lines.append("## \(index + 1). \(entry.languageDescription)")
             lines.append("")
@@ -97,8 +132,13 @@ enum HistoryExportRenderer {
 
     // MARK: - HTML
 
-    static func html(for entries: [TranslationHistoryEntry]) -> String {
+    static func html(for entries: [TranslationHistoryEntry],
+                     context: HistoryExportContext = HistoryExportContext()) -> String {
         let formatter = makeDateFormatter()
+        var summary = "共 \(entries.count) 条记录 · 导出于 \(formatter.string(from: context.generatedAt))"
+        if context.favoritesOnly {
+            summary += " · 仅收藏"
+        }
         var cards: [String] = []
 
         for (index, entry) in entries.enumerated() {
@@ -175,11 +215,15 @@ enum HistoryExportRenderer {
               .text { color: #f2f2f7; }
               .block h3 { color: #9a9aa0; }
             }
+            @media print {
+              body { margin: 0 auto; max-width: none; color: #1c1c1e; background: #ffffff; }
+              .card { break-inside: avoid; page-break-inside: avoid; background: #ffffff; }
+            }
             </style>
             </head>
             <body>
             <h1>AutoTranslator 翻译历史</h1>
-            <p class="summary">共 \(entries.count) 条记录。</p>
+            <p class="summary">\(escapeHTML(summary))</p>
             \(cards.joined(separator: "\n"))
             </body>
             </html>
@@ -188,69 +232,18 @@ enum HistoryExportRenderer {
 
     // MARK: - PDF
 
-    /// 由 HTML 渲染出 PDF，保证版式与 HTML 导出一致。
-    /// 走 AppKit 同步链路（`NSAttributedString(html:)` → 离屏 `NSTextView` → `NSPrintOperation`），
-    /// 不引入 WebKit。须在主线程调用（AppKit 文本组件要求）。
+    /// PDF 由 `HistoryPDFRenderer` 用 TextKit 直接分页排版（含页码、分隔线、
+    /// 续页页眉），不再经过 CSS 支持很有限的 `NSAttributedString(html:)`。
+    /// 须在主线程调用（AppKit 文本组件要求）。
     @MainActor
-    static func pdfData(for entries: [TranslationHistoryEntry]) throws -> Data {
-        let htmlString = html(for: entries)
-        guard let htmlData = htmlString.data(using: .utf8),
-              let attributed = NSAttributedString(
-                html: htmlData,
-                options: [.characterEncoding: String.Encoding.utf8.rawValue],
-                documentAttributes: nil
-              ) else {
-            throw HistoryExportError.pdfRenderingFailed
-        }
-
-        let printInfo = NSPrintInfo(dictionary: [:])
-        printInfo.paperSize = NSSize(width: 595, height: 842) // A4
-        printInfo.topMargin = 36
-        printInfo.bottomMargin = 36
-        printInfo.leftMargin = 36
-        printInfo.rightMargin = 36
-        printInfo.horizontalPagination = .fit
-        printInfo.verticalPagination = .automatic
-        printInfo.isHorizontallyCentered = false
-        printInfo.isVerticallyCentered = false
-
-        let contentWidth = printInfo.paperSize.width - printInfo.leftMargin - printInfo.rightMargin
-
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 100))
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textStorage?.setAttributedString(attributed)
-
-        // 强制排版，算出内容总高度后再定尺寸，供分页打印使用。
-        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
-            layoutManager.ensureLayout(for: container)
-            let used = layoutManager.usedRect(for: container)
-            textView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: ceil(used.height))
-        }
-
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("autotranslator-export-\(UUID().uuidString).pdf")
-
-        printInfo.jobDisposition = .save
-        printInfo.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL.rawValue] = tempURL
-
-        let operation = NSPrintOperation(view: textView, printInfo: printInfo)
-        operation.showsPrintPanel = false
-        operation.showsProgressPanel = false
-
-        guard operation.run() else {
-            throw HistoryExportError.pdfRenderingFailed
-        }
-
-        defer { try? FileManager.default.removeItem(at: tempURL) }
-        return try Data(contentsOf: tempURL)
+    static func pdfData(for entries: [TranslationHistoryEntry],
+                        context: HistoryExportContext = HistoryExportContext()) throws -> Data {
+        try HistoryPDFRenderer.render(entries: entries, context: context)
     }
 
     // MARK: - Helpers
 
-    private static func makeDateFormatter() -> DateFormatter {
+    static func makeDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
