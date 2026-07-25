@@ -2,7 +2,9 @@ import Foundation
 import CoreGraphics
 
 protocol MouseMonitorDelegate: AnyObject {
-    func onSelectionEvent(allowClipboardFallback: Bool, allowDeepAccessibilitySearch: Bool)
+    func onSelectionEvent(allowClipboardFallback: Bool,
+                          allowDeepAccessibilitySearch: Bool,
+                          selectionPoint: CGPoint)
 }
 
 final class MouseMonitor {
@@ -133,6 +135,7 @@ final class MouseMonitor {
             let clickCount = event.getIntegerValueField(.mouseEventClickState)
             let wasDragged = mouseDraggedSinceDown
             let isSelectionGesture = wasDragged || clickCount > 1
+            let selectionPoint = event.location
             let mouseUpDistanceSq = mouseUpDistanceSq(from: event.location)
             let observedDragEventCount = dragEventCount
             let observedMaxDragDistanceSq = maxDragDistanceSq
@@ -148,6 +151,7 @@ final class MouseMonitor {
                 scheduleSelectionEvent(
                     allowClipboardFallback: false,
                     allowDeepAccessibilitySearch: false,
+                    selectionPoint: selectionPoint,
                     delay: selectionProbeDispatchDelay
                 )
                 return
@@ -158,6 +162,7 @@ final class MouseMonitor {
             scheduleSelectionEvent(
                 allowClipboardFallback: true,
                 allowDeepAccessibilitySearch: true,
+                selectionPoint: selectionPoint,
                 delay: selectionDispatchDelay
             )
         default:
@@ -174,6 +179,7 @@ final class MouseMonitor {
 
     private func scheduleSelectionEvent(allowClipboardFallback: Bool,
                                         allowDeepAccessibilitySearch: Bool,
+                                        selectionPoint: CGPoint,
                                         delay: DispatchTimeInterval) {
         if pendingSelectionWorkItem != nil {
             AppLog.debug("SelectionMonitor replace pending dispatch")
@@ -184,7 +190,8 @@ final class MouseMonitor {
             AppLog.debug("SelectionMonitor dispatch selection event allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
             self?.delegate?.onSelectionEvent(
                 allowClipboardFallback: allowClipboardFallback,
-                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch,
+                selectionPoint: selectionPoint
             )
         }
 

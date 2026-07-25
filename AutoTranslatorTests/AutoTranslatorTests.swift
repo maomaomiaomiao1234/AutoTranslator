@@ -10,6 +10,38 @@ import Foundation
 import Testing
 @testable import AutoTranslator
 
+struct SelectionAccessibilityStrategyTests {
+    @Test
+    func explicitSelectionUsesFastLocalAXWhenClipboardFallbackIsAvailable() {
+        let strategy = SelectionAccessibilityStrategy.resolve(
+            allowClipboardFallback: true,
+            allowDeepAccessibilitySearch: true
+        )
+
+        #expect(strategy == .fastLocal)
+    }
+
+    @Test
+    func clipboardOptOutPreservesFullAXSearch() {
+        let strategy = SelectionAccessibilityStrategy.resolve(
+            allowClipboardFallback: false,
+            allowDeepAccessibilitySearch: true
+        )
+
+        #expect(strategy == .full)
+    }
+
+    @Test
+    func inconclusiveClickKeepsLightweightProbe() {
+        let strategy = SelectionAccessibilityStrategy.resolve(
+            allowClipboardFallback: false,
+            allowDeepAccessibilitySearch: false
+        )
+
+        #expect(strategy == .lightweight)
+    }
+}
+
 @MainActor
 struct DesignSystemColorTests {
     @Test

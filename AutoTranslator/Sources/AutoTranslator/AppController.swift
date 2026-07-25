@@ -4,6 +4,12 @@ import CoreGraphics
 import ApplicationServices
 import ImageIO
 
+private actor SelectionFocusLookupGate {
+    func perform(_ operation: @Sendable () -> Bool) -> Bool {
+        operation()
+    }
+}
+
 final class AppController: NSObject {
     private enum TranslationMode {
         case translation
@@ -52,6 +58,7 @@ final class AppController: NSObject {
     private let window: FloatingWindow
     private let textSelector = TextSelector()
     private let mouseMonitor = MouseMonitor()
+    private let selectionFocusLookupGate = SelectionFocusLookupGate()
     private let ocrService = OCRService()
     private let speechService = SpeechService()
 
@@ -760,7 +767,9 @@ final class AppController: NSObject {
     /// 应跳过划词翻译，避免干扰正常的文本编辑操作。
     /// 只做跨进程 AX 查询、不触碰 AppKit 主线程状态，可在后台线程执行——
     /// 系统里每次左键点击都会触发本检查，同步跑在主线程会造成可感知卡顿。
-    private static func isFocusedElementTextInput(pid: pid_t, bundleIdentifier: String?) -> Bool {
+    nonisolated private static func isFocusedElementTextInput(pid: pid_t,
+                                                              bundleIdentifier: String?) -> Bool {
+        guard !Task.isCancelled else { return false }
         let appRef = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appRef, 0.2)
 
@@ -769,6 +778,7 @@ final class AppController: NSObject {
         guard err == .success, let focusedElement = focused else {
             return false
         }
+        guard !Task.isCancelled else { return false }
 
         let element = focusedElement as! AXUIElement
 
@@ -1393,7 +1403,9 @@ final class AppController: NSObject {
 // MARK: - MouseMonitorDelegate
 
 extension AppController: MouseMonitorDelegate {
-    func onSelectionEvent(allowClipboardFallback: Bool, allowDeepAccessibilitySearch: Bool) {
+    func onSelectionEvent(allowClipboardFallback: Bool,
+                          allowDeepAccessibilitySearch: Bool,
+                          selectionPoint: CGPoint) {
         if selectionTask != nil {
             AppLog.debug("Selection event cancels previous selectionTask")
         }
@@ -1402,7 +1414,7 @@ extension AppController: MouseMonitorDelegate {
         let clipboardFallbackPermitted = allowClipboardFallback && Self.isClipboardFallbackEnabled()
         selectionTask = Task { @MainActor [weak self] in
             guard let self = self else { return }
-            AppLog.debug("Selection event handling begin allowClipboardFallback=\(clipboardFallbackPermitted) allowDeepAX=\(allowDeepAccessibilitySearch)")
+            AppLog.debug("Selection event handling begin allowClipboardFallback=\(clipboardFallbackPermitted) allowDeepAX=\(allowDeepAccessibilitySearch) point=\(Self.pointDescription(selectionPoint))")
             if let reason = Self.ignoredFrontmostApplicationReason() {
                 AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
                 return
@@ -1415,9 +1427,9 @@ extension AppController: MouseMonitorDelegate {
             let bundleID = frontApp.bundleIdentifier
             // AX 跨进程查询会阻塞调用线程（最坏 0.2s，见 messaging timeout）。放到后台线程执行，
             // 避免每次划选/单击探测都占用主 run loop。
-            let isTextInput = await Task.detached(priority: .userInitiated) {
+            let isTextInput = await self.selectionFocusLookupGate.perform {
                 Self.isFocusedElementTextInput(pid: pid, bundleIdentifier: bundleID)
-            }.value
+            }
             guard !Task.isCancelled else {
                 AppLog.debug("Selection event cancelled during focus check")
                 return
@@ -1428,7 +1440,8 @@ extension AppController: MouseMonitorDelegate {
             }
             let text = await self.textSelector.getSelectedText(
                 allowClipboardFallback: clipboardFallbackPermitted,
-                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch,
+                selectionPoint: selectionPoint
             )
             guard !Task.isCancelled else {
                 AppLog.debug("Selection event cancelled after text lookup")

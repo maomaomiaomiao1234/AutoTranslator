@@ -2,8 +2,26 @@ import Cocoa
 import ApplicationServices
 import CoreGraphics
 
+nonisolated enum SelectionAccessibilityStrategy: Equatable, Sendable {
+    case lightweight
+    case fastLocal
+    case full
+
+    static func resolve(allowClipboardFallback: Bool,
+                        allowDeepAccessibilitySearch: Bool) -> Self {
+        guard allowDeepAccessibilitySearch else { return .lightweight }
+        return allowClipboardFallback ? .fastLocal : .full
+    }
+}
+
+private actor AccessibilityLookupGate {
+    func perform(_ operation: @Sendable () -> String?) -> String? {
+        operation()
+    }
+}
+
 final class TextSelector {
-    private static let axChildAttributeNames: [CFString] = [
+    nonisolated private static let axChildAttributeNames: [CFString] = [
         "AXChildren" as CFString,
         "AXVisibleChildren" as CFString,
         "AXContents" as CFString,
@@ -14,6 +32,14 @@ final class TextSelector {
         "AXCells" as CFString,
         "AXVisibleCells" as CFString,
     ]
+    nonisolated private static let axLocalChildAttributeNames: [CFString] = [
+        kAXChildrenAttribute as CFString,
+        "AXVisibleChildren" as CFString,
+        "AXContents" as CFString,
+    ]
+    nonisolated private static let fastAccessibilityBudget: TimeInterval = 0.18
+    nonisolated private static let maxLocalAXSearchCount = 24
+    nonisolated private static let maxLocalAXAncestorCount = 8
 
     private struct PasteboardItemSnapshot {
         let dataByType: [NSPasteboard.PasteboardType: Data]
@@ -29,6 +55,7 @@ final class TextSelector {
     private let copyPollIntervalNs: UInt64
     private let maxCopyPollCount: Int
     private let maxAXDescendantSearchCount: Int
+    private let accessibilityLookupGate = AccessibilityLookupGate()
     private var lastCopyTime: TimeInterval = 0
 
     init(copyInterval: TimeInterval = 0.12,
@@ -47,7 +74,8 @@ final class TextSelector {
 
     @MainActor
     func getSelectedText(allowClipboardFallback: Bool = false,
-                         allowDeepAccessibilitySearch: Bool = true) async -> String? {
+                         allowDeepAccessibilitySearch: Bool = true,
+                         selectionPoint: CGPoint? = nil) async -> String? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             AppLog.debug("TextSelector failed: no frontmost application")
             return nil
@@ -56,14 +84,22 @@ final class TextSelector {
         let bundleID = frontApp.bundleIdentifier ?? "<unknown>"
         AppLog.debug("TextSelector begin app=\(bundleID) pid=\(pid) allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
 
-        // 尝试 Accessibility API。AX 为同步跨进程调用（目标 app 慢时逐条阻塞直至超时），
-        // 深度搜索还会遍历上百个元素，故放到后台线程执行，避免冻结主 run loop。
-        let axText = await Task.detached(priority: .userInitiated) { [self] in
-            getSelectedTextViaAccessibility(
+        let strategy = SelectionAccessibilityStrategy.resolve(
+            allowClipboardFallback: allowClipboardFallback,
+            allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+        )
+
+        // AX 为同步跨进程调用，放到独立 actor 串行执行：新一轮取词取消旧 Task 后，
+        // 旧查询会在当前 AX 调用返回时观察到取消并停止，不会因连续划词堆积多个深搜。
+        let maxDescendantSearchCount = maxAXDescendantSearchCount
+        let axText = await accessibilityLookupGate.perform {
+            Self.getSelectedTextViaAccessibility(
                 pid: pid,
-                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
+                selectionPoint: selectionPoint,
+                strategy: strategy,
+                maxDescendantSearchCount: maxDescendantSearchCount
             )
-        }.value
+        }
         if Task.isCancelled {
             AppLog.debug("TextSelector cancelled during AX lookup app=\(bundleID)")
             return nil
@@ -86,61 +122,166 @@ final class TextSelector {
         return text
     }
 
-    private func getSelectedTextViaAccessibility(pid: pid_t,
-                                                 allowDeepAccessibilitySearch: Bool) -> String? {
+    nonisolated private static func getSelectedTextViaAccessibility(
+        pid: pid_t,
+        selectionPoint: CGPoint?,
+        strategy: SelectionAccessibilityStrategy,
+        maxDescendantSearchCount: Int
+    ) -> String? {
         let appRef = AXUIElementCreateApplication(pid)
         // 目标应用无响应时，AX 调用默认可阻塞主线程达数秒；深度搜索会遍历上百个元素，
         // 极端情况下会连锁冻结取词流程。设置消息超时兜底，令单次跨进程查询快速失败。
         AXUIElementSetMessagingTimeout(appRef, 0.2)
+        let deadline: TimeInterval? = strategy == .fastLocal
+            ? ProcessInfo.processInfo.systemUptime + fastAccessibilityBudget
+            : nil
+
         let focusedResult = copyAXElementAttribute(appRef, kAXFocusedUIElementAttribute as CFString)
-        guard let focused = focusedResult.element else {
+        let focused = focusedResult.element
+        if focused == nil {
             AppLog.debug("TextSelector AX focused element unavailable err=\(focusedResult.error.rawValue)")
-            return getSelectedTextViaAccessibilityWindowSearch(
-                appRef: appRef,
-                allowDeepAccessibilitySearch: allowDeepAccessibilitySearch
-            )
         }
 
-        if let text = selectedText(from: focused) {
+        if let focused, let text = selectedText(from: focused) {
             return text
         }
         AppLog.debug("TextSelector AX focused selected text unavailable")
 
-        guard allowDeepAccessibilitySearch else {
-            AppLog.debug("TextSelector AX descendant search skipped for lightweight probe")
-            return getSelectedTextViaAccessibilityWindowSearch(
-                appRef: appRef,
-                allowDeepAccessibilitySearch: false
-            )
+        guard shouldContinue(until: deadline) else {
+            AppLog.debug("TextSelector AX lookup stopped before local search reason=\(stopReason(deadline: deadline))")
+            return nil
         }
 
-        if let text = findSelectedTextInAXDescendants(
-            startingAt: [focused],
-            context: "focusedElement"
-        ) {
+        if strategy != .lightweight,
+           let selectionPoint,
+           let text = selectedTextNearPoint(
+               selectionPoint,
+               appRef: appRef,
+               deadline: deadline
+           ) {
+            return text
+        }
+
+        guard shouldContinue(until: deadline) else {
+            AppLog.debug("TextSelector AX lookup stopped after local search reason=\(stopReason(deadline: deadline))")
+            return nil
+        }
+
+        if strategy == .lightweight {
+            AppLog.debug("TextSelector AX descendant search skipped for lightweight probe")
+            return selectedTextFromFocusedWindow(appRef: appRef)
+        }
+
+        if strategy == .fastLocal {
+            if let focused,
+               let text = findSelectedTextInAXDescendants(
+                   startingAt: [focused],
+                   context: "focusedElementLocal",
+                   maximumCount: maxLocalAXSearchCount,
+                   childAttributes: axLocalChildAttributeNames,
+                   deadline: deadline
+               ) {
+                return text
+            }
+
+            guard shouldContinue(until: deadline) else {
+                AppLog.debug("TextSelector AX fast lookup stopped reason=\(stopReason(deadline: deadline))")
+                return nil
+            }
+
+            if let text = selectedTextFromFocusedWindow(appRef: appRef) {
+                return text
+            }
+            AppLog.debug("TextSelector AX fast local lookup exhausted; using clipboard fallback")
+            return nil
+        }
+
+        if let focused,
+           let text = findSelectedTextInAXDescendants(
+               startingAt: [focused],
+               context: "focusedElement",
+               maximumCount: maxDescendantSearchCount,
+               childAttributes: axChildAttributeNames,
+               deadline: nil
+           ) {
             return text
         }
 
         return getSelectedTextViaAccessibilityWindowSearch(
             appRef: appRef,
-            allowDeepAccessibilitySearch: true
+            maxDescendantSearchCount: maxDescendantSearchCount
         )
     }
 
-    private func getSelectedTextViaAccessibilityWindowSearch(appRef: AXUIElement,
-                                                            allowDeepAccessibilitySearch: Bool) -> String? {
+    nonisolated private static func selectedTextNearPoint(_ point: CGPoint,
+                                                          appRef: AXUIElement,
+                                                          deadline: TimeInterval?) -> String? {
+        var hitElement: AXUIElement?
+        let hitError = AXUIElementCopyElementAtPosition(
+            appRef,
+            Float(point.x),
+            Float(point.y),
+            &hitElement
+        )
+        guard hitError == .success, let hitElement else {
+            AppLog.debug("TextSelector AX point lookup unavailable err=\(hitError.rawValue)")
+            return nil
+        }
+
+        if let text = selectedText(from: hitElement) {
+            AppLog.debug("TextSelector AX selected text found context=pointElement length=\(text.count)")
+            return text
+        }
+
+        var current = hitElement
+        for ancestorIndex in 1...maxLocalAXAncestorCount {
+            guard shouldContinue(until: deadline) else { break }
+            let parentResult = copyAXElementAttribute(current, kAXParentAttribute as CFString)
+            guard let parent = parentResult.element else { break }
+            if let text = selectedText(from: parent) {
+                AppLog.debug(
+                    "TextSelector AX selected text found context=pointAncestor depth=\(ancestorIndex) length=\(text.count)"
+                )
+                return text
+            }
+            current = parent
+        }
+
+        guard shouldContinue(until: deadline) else { return nil }
+        return findSelectedTextInAXDescendants(
+            startingAt: [hitElement],
+            context: "pointDescendants",
+            maximumCount: maxLocalAXSearchCount,
+            childAttributes: axLocalChildAttributeNames,
+            deadline: deadline
+        )
+    }
+
+    nonisolated private static func selectedTextFromFocusedWindow(appRef: AXUIElement) -> String? {
+        let windowResult = copyAXElementAttribute(appRef, kAXFocusedWindowAttribute as CFString)
+        guard let focusedWindow = windowResult.element else {
+            AppLog.debug("TextSelector AX focused window unavailable err=\(windowResult.error.rawValue)")
+            return nil
+        }
+        return selectedText(from: focusedWindow)
+    }
+
+    nonisolated private static func getSelectedTextViaAccessibilityWindowSearch(
+        appRef: AXUIElement,
+        maxDescendantSearchCount: Int
+    ) -> String? {
+        guard !Task.isCancelled else { return nil }
         let windowResult = copyAXElementAttribute(appRef, kAXFocusedWindowAttribute as CFString)
         if let focusedWindow = windowResult.element {
             if let text = selectedText(from: focusedWindow) {
                 return text
             }
-            guard allowDeepAccessibilitySearch else {
-                AppLog.debug("TextSelector AX focused window descendant search skipped for lightweight probe")
-                return nil
-            }
             if let text = findSelectedTextInAXDescendants(
                 startingAt: [focusedWindow],
-                context: "focusedWindow"
+                context: "focusedWindow",
+                maximumCount: maxDescendantSearchCount,
+                childAttributes: axChildAttributeNames,
+                deadline: nil
             ) {
                 return text
             }
@@ -148,7 +289,7 @@ final class TextSelector {
             AppLog.debug("TextSelector AX focused window unavailable err=\(windowResult.error.rawValue)")
         }
 
-        guard allowDeepAccessibilitySearch else { return nil }
+        guard !Task.isCancelled else { return nil }
 
         let windows = copyAXChildElements(from: appRef, attribute: kAXWindowsAttribute as CFString)
         guard !windows.isEmpty else {
@@ -158,11 +299,14 @@ final class TextSelector {
 
         return findSelectedTextInAXDescendants(
             startingAt: windows,
-            context: "windows"
+            context: "windows",
+            maximumCount: maxDescendantSearchCount,
+            childAttributes: axChildAttributeNames,
+            deadline: nil
         )
     }
 
-    private func selectedText(from element: AXUIElement) -> String? {
+    nonisolated private static func selectedText(from element: AXUIElement) -> String? {
         var selected: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(
             element,
@@ -189,14 +333,21 @@ final class TextSelector {
         return trimmed
     }
 
-    private func findSelectedTextInAXDescendants(startingAt roots: [AXUIElement],
-                                                context: String) -> String? {
+    nonisolated private static func findSelectedTextInAXDescendants(
+        startingAt roots: [AXUIElement],
+        context: String,
+        maximumCount: Int,
+        childAttributes: [CFString],
+        deadline: TimeInterval?
+    ) -> String? {
         var queue = roots
         var index = 0
         var inspectedCount = 0
         var visited = Set<CFHashCode>()
 
-        while index < queue.count, inspectedCount < maxAXDescendantSearchCount {
+        while index < queue.count,
+              inspectedCount < maximumCount,
+              shouldContinue(until: deadline) {
             let element = queue[index]
             index += 1
 
@@ -211,19 +362,34 @@ final class TextSelector {
                 return text
             }
 
-            for attribute in Self.axChildAttributeNames {
+            for attribute in childAttributes {
+                guard shouldContinue(until: deadline) else { break }
                 queue.append(contentsOf: copyAXChildElements(from: element, attribute: attribute))
             }
         }
 
         AppLog.debug(
-            "TextSelector AX descendant search exhausted context=\(context) inspected=\(inspectedCount)"
+            "TextSelector AX descendant search stopped context=\(context) inspected=\(inspectedCount) reason=\(stopReason(deadline: deadline))"
         )
         return nil
     }
 
-    private func copyAXElementAttribute(_ element: AXUIElement,
-                                        _ attribute: CFString) -> (error: AXError, element: AXUIElement?) {
+    nonisolated private static func shouldContinue(until deadline: TimeInterval?) -> Bool {
+        guard !Task.isCancelled else { return false }
+        guard let deadline else { return true }
+        return ProcessInfo.processInfo.systemUptime < deadline
+    }
+
+    nonisolated private static func stopReason(deadline: TimeInterval?) -> String {
+        if Task.isCancelled { return "cancelled" }
+        if let deadline, ProcessInfo.processInfo.systemUptime >= deadline { return "budgetExceeded" }
+        return "exhausted"
+    }
+
+    nonisolated private static func copyAXElementAttribute(
+        _ element: AXUIElement,
+        _ attribute: CFString
+    ) -> (error: AXError, element: AXUIElement?) {
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, attribute, &value)
         guard error == .success, let value else {
@@ -235,8 +401,8 @@ final class TextSelector {
         return (error, (value as! AXUIElement))
     }
 
-    private func copyAXChildElements(from element: AXUIElement,
-                                     attribute: CFString) -> [AXUIElement] {
+    nonisolated private static func copyAXChildElements(from element: AXUIElement,
+                                                        attribute: CFString) -> [AXUIElement] {
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, attribute, &value)
         guard error == .success, let value else {
