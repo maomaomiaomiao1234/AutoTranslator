@@ -744,3 +744,110 @@ struct LRUCacheTests {
         #expect(cache.value(forKey: "b") == 3)
     }
 }
+
+/// 全部使用唯一命名的私有 pasteboard，绝不触碰 NSPasteboard.general。
+@MainActor
+struct TextSelectorPasteboardTests {
+    private func makePasteboard() -> NSPasteboard {
+        NSPasteboard(name: NSPasteboard.Name("AutoTranslatorTests.\(UUID().uuidString)"))
+    }
+
+    @Test
+    func restorePutsOriginalDataOnFirstItemWithTransientMarker() throws {
+        let selector = TextSelector()
+        let pb = makePasteboard()
+        defer { pb.releaseGlobally() }
+        pb.clearContents()
+        pb.setString("原始内容", forType: .string)
+
+        let snapshot = try #require(selector.capturePasteboardSnapshot(pb))
+        pb.clearContents()
+        pb.setString("划词临时内容", forType: .string)
+        selector.restorePasteboardSnapshot(snapshot, to: pb)
+
+        // 回归：旧实现 declareTypes+writeObjects 会产生声明 .string 却无数据的 item 0，
+        // 按「第一个含该类型的 item」读取的程序会拿到空剪贴板。
+        let firstItem = try #require(pb.pasteboardItems?.first)
+        #expect(firstItem.string(forType: .string) == "原始内容")
+        #expect(firstItem.types.map(\.rawValue).contains("org.nspasteboard.TransientType"))
+        #expect(pb.string(forType: .string) == "原始内容")
+    }
+
+    @Test
+    func restorePreservesMultipleItemsInOrder() throws {
+        let selector = TextSelector()
+        let pb = makePasteboard()
+        defer { pb.releaseGlobally() }
+        pb.clearContents()
+        let first = NSPasteboardItem()
+        first.setString("第一项", forType: .string)
+        let second = NSPasteboardItem()
+        second.setString("第二项", forType: .string)
+        pb.writeObjects([first, second])
+
+        let snapshot = try #require(selector.capturePasteboardSnapshot(pb))
+        pb.clearContents()
+        selector.restorePasteboardSnapshot(snapshot, to: pb)
+
+        let strings = (pb.pasteboardItems ?? []).map { $0.string(forType: .string) }
+        #expect(strings == ["第一项", "第二项"])
+    }
+
+    @Test
+    func emptySnapshotRestoreLeavesPasteboardUntouched() {
+        let selector = TextSelector()
+        let pb = makePasteboard()
+        defer { pb.releaseGlobally() }
+        pb.clearContents()
+        pb.setString("不能被清掉", forType: .string)
+        let countBefore = pb.changeCount
+
+        // Deny 场景防线：读取被拒时快照为空，恢复决不能清空用户剪贴板。
+        let emptySnapshot = TextSelector.PasteboardSnapshot(
+            items: [],
+            fallbackString: nil,
+            hadContents: false
+        )
+        selector.restorePasteboardSnapshot(emptySnapshot, to: pb)
+
+        #expect(pb.changeCount == countBefore)
+        #expect(pb.string(forType: .string) == "不能被清掉")
+    }
+
+    @Test
+    func oversizedPasteboardAbortsSnapshot() {
+        let selector = TextSelector(maxSnapshotBytes: 8)
+        let pb = makePasteboard()
+        defer { pb.releaseGlobally() }
+        pb.clearContents()
+        pb.setString("0123456789ABCDEF", forType: .string) // 16 字节 > 8 字节预算
+
+        #expect(selector.capturePasteboardSnapshot(pb) == nil)
+    }
+
+    @Test
+    func concealedAndPromiseTypesBlockClipboardFallback() {
+        let concealed = makePasteboard()
+        defer { concealed.releaseGlobally() }
+        concealed.clearContents()
+        let secretItem = NSPasteboardItem()
+        secretItem.setString("secret", forType: .string)
+        secretItem.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        concealed.writeObjects([secretItem])
+        #expect(TextSelector.pasteboardHoldsUnrestorableContent(concealed))
+
+        let promise = makePasteboard()
+        defer { promise.releaseGlobally() }
+        promise.clearContents()
+        let promiseItem = NSPasteboardItem()
+        promiseItem.setData(Data(), forType: NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"))
+        promise.writeObjects([promiseItem])
+        #expect(TextSelector.pasteboardHoldsUnrestorableContent(promise))
+
+        let plain = makePasteboard()
+        defer { plain.releaseGlobally() }
+        plain.clearContents()
+        plain.setString("普通文本", forType: .string)
+        #expect(!TextSelector.pasteboardHoldsUnrestorableContent(plain))
+    }
+}

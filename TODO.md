@@ -188,7 +188,13 @@
 ### 取词改动（useSwift 工作区）完善
 
 - [ ] `.full` 策略（剪贴板回退关闭时）也加 deadline（如 2s）：`TextSelector.swift:135` 只给 fastLocal 设了 0.18s 预算，慢 app 深搜仍可数十秒并卡住 gate actor 队列。
-- [ ] 实测剪贴板恢复路径：`TextSelector.swift:509-517` declareTypes 后 writeObjects 会产生一个声明 .string 但无数据的 item 0，部分读取方可能取到空剪贴板；必要时改 writeObjects 后逐 item 补 transient 标记。
+- [x] 修复剪贴板恢复路径的空 item 0（2026-07-25）：恢复改为只 writeObjects 真实 item，transient 标记逐 item 附带；单测覆盖「首 item 可读原文」与「多 item 顺序保持」。
+- [x] 剪贴板回退 P0 加固（2026-07-25）：
+  - ⌘C 快速轮询超时后新增 ~1.5s 宽限观察：迟到的复制被识别后照常读取并恢复快照，不再出现「超时返回后剪贴板被选中文本永久替换」；期间若检测到用户按键/右键（CGEventSource 聚合时间戳查询，无键盘 tap）则判定归属不明，既不使用也不覆盖。
+  - macOS 15.4+「从其他应用粘贴」权限为拒绝时跳过整条回退并通知一次；快照「有内容但全部读不出」时同样跳过，杜绝恢复逻辑清空用户剪贴板的数据丢失路径。
+  - 空快照恢复不再 clearContents：宁可留下已复制的选中文本，也不销毁可能仍在的用户内容。
+  - 剪贴板含 org.nspasteboard.ConcealedType（密码）或文件承诺类型时不快照、不发 ⌘C。
+  - 快照累计超 64MB（init 可配）即放弃回退，避免主线程物化超大 flavor 造成卡顿。
 - [ ] 合并两个同形 gate actor（SelectionFocusLookupGate / AccessibilityLookupGate）为泛型 SerialGate；注释说明"阻塞式 AX 同步调用占用协作池线程"的权衡。
 
 ### 工程杂项
