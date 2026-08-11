@@ -57,6 +57,15 @@ final class LLMTranslator: TranslatorProtocol {
         return normalized
     }
 
+    nonisolated static func isOpenRouterBaseURL(_ value: String) -> Bool {
+        guard let host = URL(string: value)?.host?.lowercased() else { return false }
+        return host == "openrouter.ai" || host.hasSuffix(".openrouter.ai")
+    }
+
+    nonisolated static func isOfficialDeepSeekBaseURL(_ value: String) -> Bool {
+        URL(string: value)?.host?.lowercased() == "api.deepseek.com"
+    }
+
     private func completionsURL() throws -> URL {
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             throw RuntimeError("LLM Base URL 无效: \(baseURL)")
@@ -189,6 +198,15 @@ final class LLMTranslator: TranslatorProtocol {
         // OpenAI 等标准端点会对未知参数返回 400 Unrecognized argument，故仅对 DashScope 发送。
         if baseURL.lowercased().contains("dashscope") {
             body["enable_thinking"] = false
+        }
+        // OpenRouter 使用统一 reasoning 参数；effort=none 会在支持关闭推理的模型上禁用思考。
+        // 强制推理模型可能拒绝该设置，此时应由服务端返回明确错误，而不是静默产生推理费用。
+        if Self.isOpenRouterBaseURL(baseURL) {
+            body["reasoning"] = ["effort": "none"]
+        }
+        // DeepSeek 官方 OpenAI 兼容接口使用 thinking.type 控制双模式 V4 模型。
+        if Self.isOfficialDeepSeekBaseURL(baseURL) {
+            body["thinking"] = ["type": "disabled"]
         }
         if stream {
             body["stream"] = true

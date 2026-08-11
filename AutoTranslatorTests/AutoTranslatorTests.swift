@@ -10,6 +10,35 @@ import Foundation
 import Testing
 @testable import AutoTranslator
 
+struct LLMTranslatorEndpointTests {
+    @Test
+    func recognizesOpenRouterBaseURLs() {
+        #expect(LLMTranslator.isOpenRouterBaseURL("https://openrouter.ai/api/v1"))
+        #expect(LLMTranslator.isOpenRouterBaseURL("https://OPENROUTER.AI/api/v1/"))
+        #expect(LLMTranslator.isOpenRouterBaseURL("https://api.openrouter.ai/v1"))
+    }
+
+    @Test
+    func rejectsLookalikeOpenRouterHosts() {
+        #expect(!LLMTranslator.isOpenRouterBaseURL("https://openrouter.ai.example.com/api/v1"))
+        #expect(!LLMTranslator.isOpenRouterBaseURL("https://notopenrouter.ai/api/v1"))
+        #expect(!LLMTranslator.isOpenRouterBaseURL("not a URL"))
+    }
+
+    @Test
+    func recognizesOfficialDeepSeekBaseURLs() {
+        #expect(LLMTranslator.isOfficialDeepSeekBaseURL("https://api.deepseek.com"))
+        #expect(LLMTranslator.isOfficialDeepSeekBaseURL("https://API.DEEPSEEK.COM/v1/"))
+    }
+
+    @Test
+    func rejectsLookalikeDeepSeekHosts() {
+        #expect(!LLMTranslator.isOfficialDeepSeekBaseURL("https://api.deepseek.com.example.com"))
+        #expect(!LLMTranslator.isOfficialDeepSeekBaseURL("https://deepseek.com"))
+        #expect(!LLMTranslator.isOfficialDeepSeekBaseURL("not a URL"))
+    }
+}
+
 struct SelectionAccessibilityStrategyTests {
     @Test
     func explicitSelectionUsesFastLocalAXWhenClipboardFallbackIsAvailable() {
