@@ -3,7 +3,12 @@
 # Swift / SPM
 .build/
 .swiftpm/
-*.xcodeproj/
 Package.resolved
+
+# Xcode 工程：project.pbxproj 与共享 scheme 必须入库，否则裸 clone 无法重建工程
+# （全部构建设置只存在于 pbxproj，包括 SWIFT_DEFAULT_ACTOR_ISOLATION 这类影响全项目语义的开关）。
+# 只忽略随开发者机器变化的用户态数据。
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
 
 dist/
