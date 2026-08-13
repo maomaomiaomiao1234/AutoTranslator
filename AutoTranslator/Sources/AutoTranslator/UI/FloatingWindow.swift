@@ -223,6 +223,9 @@ final class FloatingWindow: NSObject {
     private var streamBuffer = ""
     private var streamBufferCount = 0
     private var streamPos = 0
+    /// 尚未渲染的尾部队列。每 tick 从头部摘 k 个字符增量追加到 currentDestText，
+    /// 替代按 streamPos 全量重建前缀（后者随译文变长成 O(n²)）。
+    private var streamPending = ""
     private var streamFinal: String?
     /// 上次为“流式增高”做全量文本测量时的译文字符数；用于按字符增量节流测量。
     private var lastStreamMeasuredCount = 0
@@ -587,6 +590,7 @@ final class FloatingWindow: NSObject {
         if streamTimer == nil { startStream() }
         streamBuffer += token
         streamBufferCount += token.count
+        streamPending += token
     }
 
     func streamFinish(_ finalText: String) {
@@ -594,6 +598,10 @@ final class FloatingWindow: NSObject {
         if streamBuffer != finalText {
             streamBuffer = finalText
             streamBufferCount = finalText.count
+            // 已渲染的部分保持不动，剩余待渲染队列按最终文本重算（一次性 O(n)）。
+            let rendered = min(streamPos, finalText.count)
+            streamPos = rendered
+            streamPending = String(finalText.dropFirst(rendered))
         }
         if streamPos >= streamBufferCount { finishStream() }
     }
@@ -603,6 +611,7 @@ final class FloatingWindow: NSObject {
         streamBuffer = ""
         streamBufferCount = 0
         streamPos = 0
+        streamPending = ""
         streamFinal = nil
         lastStreamMeasuredCount = 0
         currentDestText = ""
@@ -634,16 +643,18 @@ final class FloatingWindow: NSObject {
             charsPerTick = 3
         }
 
-        streamPos = min(streamPos + charsPerTick, streamBufferCount)
-        let displayed = String(streamBuffer.prefix(streamPos))
-
-        if displayed == currentDestText {
+        // 从队列头部摘增量追加：每 tick 成本 O(backlog)，与已渲染总长无关。
+        let advance = min(charsPerTick, streamPending.count)
+        let chunk = streamPending.prefix(advance)
+        streamPending.removeFirst(advance)
+        streamPos = min(streamPos + advance, streamBufferCount)
+        guard !chunk.isEmpty else {
             if streamFinal != nil, streamPos >= streamBufferCount { finishStream() }
             return
         }
 
-        currentDestText = displayed
-        setDestText(displayed)
+        currentDestText += chunk
+        setDestText(currentDestText)
         growWindowForStreamingIfNeeded()
 
         if streamFinal != nil, streamPos >= streamBufferCount { finishStream() }

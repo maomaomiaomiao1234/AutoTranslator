@@ -16,7 +16,7 @@ final class LLMTranslator: TranslatorProtocol {
     nonisolated static let defaultModel = "deepseek-v4-flash"
     nonisolated static let defaultBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    private static let sharedSession: URLSession = {
+    private nonisolated static let sharedSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         return URLSession(configuration: config)
@@ -233,9 +233,18 @@ final class LLMTranslator: TranslatorProtocol {
 
     private func completeStream(_ spec: ChatRequestSpec) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            // 请求在调用方线程装配（只读实例常量，成本一次性）；
+            // 字节流消费与逐 token JSON 解析放 detached 任务——工程默认
+            // MainActor 隔离下裸 Task {} 会继承主 actor，每个 token 都在主线程解析。
+            let request: URLRequest
+            do {
+                request = try makeRequest(spec, stream: true)
+            } catch {
+                continuation.finish(throwing: error)
+                return
+            }
+            let task = Task.detached(priority: .userInitiated) {
                 do {
-                    let request = try makeRequest(spec, stream: true)
                     let (bytes, response) = try await Self.sharedSession.bytes(for: request)
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         var bodyData = Data()
