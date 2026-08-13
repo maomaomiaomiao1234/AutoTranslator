@@ -327,6 +327,13 @@ final class TranslationHistoryStore: ObservableObject {
             entries = []
             return
         }
+        // 历史窗口关闭（分页停用）时跳过全部 COUNT 与分页查询：这些数值只有
+        // 历史窗口在读，划词高频写入路径不必每条译文多跑 4 条 SQL（其中搜索态
+        // COUNT 是 LIKE 全表扫描）。窗口重新打开时 activatePageLoading 会全量刷新。
+        guard isPageLoadingActive else {
+            if !entries.isEmpty { entries = [] }
+            return
+        }
         do {
             totalEntryCount = try database.count()
             favoriteEntryCount = try database.count(favoritesOnly: true)
@@ -336,16 +343,12 @@ final class TranslationHistoryStore: ObservableObject {
             )
             let lastPage = max(0, (filteredEntryCount - 1) / pageSize)
             currentPage = min(currentPage, lastPage)
-            if isPageLoadingActive {
-                entries = try database.fetchPage(
-                    searchText: searchText,
-                    favoritesOnly: favoritesOnly,
-                    limit: pageSize,
-                    offset: currentPage * pageSize
-                )
-            } else if !entries.isEmpty {
-                entries = []
-            }
+            entries = try database.fetchPage(
+                searchText: searchText,
+                favoritesOnly: favoritesOnly,
+                limit: pageSize,
+                offset: currentPage * pageSize
+            )
         } catch {
             AppLog.error("刷新历史分页失败: \(error.localizedDescription)")
         }

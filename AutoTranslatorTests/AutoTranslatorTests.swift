@@ -426,7 +426,6 @@ struct TranslationHistoryStoreTests {
         fixture.store.updateQuery(searchText: "", favoritesOnly: false)
         fixture.store.deactivatePageLoading()
         #expect(fixture.store.entries.isEmpty)
-        #expect(fixture.store.totalEntryCount == 5)
         #expect(fixture.store.entry(id: ids[0]) != nil)
         fixture.store.record(
             sourceText: "source-5",
@@ -436,9 +435,11 @@ struct TranslationHistoryStoreTests {
             backend: "llm",
             kind: .translation
         )
-        #expect(fixture.store.totalEntryCount == 6)
+        // 分页停用期间不再维护计数（历史窗口关闭时省掉每条记录 4 条 SQL），
+        // 计数在重新激活时一次性刷新。
         #expect(fixture.store.entries.isEmpty)
         fixture.store.activatePageLoading()
+        #expect(fixture.store.totalEntryCount == 6)
         #expect(fixture.store.entries.count == 2)
     }
 

@@ -7,6 +7,10 @@ final class HistoryDatabase {
     private static let transientDestructor = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     private var connection: OpaquePointer?
+    /// 按 SQL 文本缓存 prepared statement。高频语句（record 路径、导入循环的
+    /// save）此前每次现场 prepare，导入万条即万次解析同一句 SQL。
+    /// SQL 变体有限（查询 × 过滤组合），缓存天然有界。
+    private var cachedStatements: [String: OpaquePointer] = [:]
 
     init(fileURL: URL?) throws {
         if let fileURL {
@@ -46,6 +50,9 @@ final class HistoryDatabase {
     }
 
     deinit {
+        for statement in cachedStatements.values {
+            sqlite3_finalize(statement)
+        }
         if let connection {
             sqlite3_close(connection)
         }
@@ -53,7 +60,7 @@ final class HistoryDatabase {
 
     func hasCompletedLegacyMigration() throws -> Bool {
         let statement = try prepare("SELECT value FROM history_metadata WHERE key = ? LIMIT 1")
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind("legacy_json_migrated", at: 1, in: statement)
         guard sqlite3_step(statement) == SQLITE_ROW else { return false }
         return columnText(statement, at: 0) == "1"
@@ -66,7 +73,7 @@ final class HistoryDatabase {
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind("legacy_json_migrated", at: 1, in: statement)
         bind("1", at: 2, in: statement)
         try stepDone(statement)
@@ -80,7 +87,7 @@ final class HistoryDatabase {
             FROM history_entries WHERE id = ? LIMIT 1
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind(id.uuidString, at: 1, in: statement)
         guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
         return decodeEntry(statement)
@@ -101,7 +108,7 @@ final class HistoryDatabase {
             LIMIT 1
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         for (offset, value) in [
             sourceText,
             sourceLanguage,
@@ -130,7 +137,7 @@ final class HistoryDatabase {
             LIMIT ? OFFSET ?
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind(filter.bindings, in: statement)
         let nextIndex = Int32(filter.bindings.count + 1)
         sqlite3_bind_int64(statement, nextIndex, Int64(max(1, limit)))
@@ -149,14 +156,14 @@ final class HistoryDatabase {
             ORDER BY created_at DESC, rowid DESC
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         return try readEntries(statement)
     }
 
     func count(searchText: String = "", favoritesOnly: Bool = false) throws -> Int {
         let filter = makeFilter(searchText: searchText, favoritesOnly: favoritesOnly)
         let statement = try prepare("SELECT COUNT(*) FROM history_entries \(filter.clause)")
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind(filter.bindings, in: statement)
         guard sqlite3_step(statement) == SQLITE_ROW else {
             throw currentError()
@@ -178,7 +185,7 @@ final class HistoryDatabase {
                 is_favorite = excluded.is_favorite
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         let textValues = [
             entry.id.uuidString,
             entry.sourceText,
@@ -212,7 +219,7 @@ final class HistoryDatabase {
             WHERE id = ?
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind(id.uuidString, at: 1, in: statement)
         try stepDone(statement)
         return sqlite3_changes(connection) > 0
@@ -221,7 +228,7 @@ final class HistoryDatabase {
     @discardableResult
     func delete(id: UUID) throws -> Bool {
         let statement = try prepare("DELETE FROM history_entries WHERE id = ?")
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         bind(id.uuidString, at: 1, in: statement)
         try stepDone(statement)
         return sqlite3_changes(connection) > 0
@@ -245,7 +252,7 @@ final class HistoryDatabase {
             )
             """
         )
-        defer { sqlite3_finalize(statement) }
+        defer { reset(statement) }
         sqlite3_bind_int64(statement, 1, Int64(max(1, limit)))
         try stepDone(statement)
     }
@@ -415,12 +422,20 @@ final class HistoryDatabase {
 
     private func prepare(_ sql: String) throws -> OpaquePointer {
         guard let connection else { throw HistoryDatabaseError.sqlite("数据库连接已关闭") }
+        if let cached = cachedStatements[sql] { return cached }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK,
               let statement else {
             throw currentError()
         }
+        cachedStatements[sql] = statement
         return statement
+    }
+
+    /// 缓存语句用完必须复位（替代原先的 finalize），否则下次执行携带旧绑定与游标。
+    private func reset(_ statement: OpaquePointer) {
+        sqlite3_reset(statement)
+        sqlite3_clear_bindings(statement)
     }
 
     private func execute(_ sql: String) throws {

@@ -25,6 +25,7 @@ struct TranslationHistoryView: View {
     @State private var showsClearConfirmation = false
     @State private var showsExportSheet = false
     @State private var transferAlert: HistoryTransferAlert?
+    @State private var searchDebounceTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,9 +52,16 @@ struct TranslationHistoryView: View {
             selectFirstVisibleEntryIfNeeded()
         }
         .onChange(of: searchText) { _ in
-            refreshQuery()
+            // 每次按键都全量查询（含 LIKE 全表扫描的 COUNT）太重，防抖 200ms。
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
+                refreshQuery()
+            }
         }
         .onChange(of: scope) { _ in
+            searchDebounceTask?.cancel()
             refreshQuery()
         }
         .onChange(of: store.entries.map(\.id)) { _ in
