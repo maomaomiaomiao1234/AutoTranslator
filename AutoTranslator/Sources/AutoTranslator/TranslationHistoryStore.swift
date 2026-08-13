@@ -27,6 +27,7 @@ nonisolated struct TranslationHistoryImportResult: Equatable {
 nonisolated enum TranslationHistoryTransferError: LocalizedError {
     case invalidFile
     case noImportableEntries
+    case historyUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -34,6 +35,8 @@ nonisolated enum TranslationHistoryTransferError: LocalizedError {
             return "所选文件不是有效的 AutoTranslator 历史记录文件。"
         case .noImportableEntries:
             return "文件中没有可导入的历史记录。"
+        case .historyUnavailable:
+            return "历史数据库不可用，本次启动无法导入或导出历史记录。"
         }
     }
 }
@@ -79,7 +82,11 @@ final class TranslationHistoryStore: ObservableObject {
     @Published private(set) var revision = 0
 
     private let legacyFileURL: URL
-    private let database: HistoryDatabase
+    /// nil 表示连内存库都建不出来（SQLite 本身异常）：历史功能本会话整体停用，但应用不崩溃。
+    private let database: HistoryDatabase?
+    /// false = 磁盘库打开失败、当前会话跑在内存库（或完全停用）上，重启后本会话记录丢失。
+    /// 此时绝不能迁移/改名旧版 history.json，否则下次启动磁盘库恢复时旧历史被静默丢弃。
+    private(set) var isPersistent: Bool
     private let maxRecentItems: Int
     private let pageSize: Int
     private var searchText = ""
@@ -94,22 +101,31 @@ final class TranslationHistoryStore: ObservableObject {
         let databaseURL = resolvedLegacyURL
             .deletingPathExtension()
             .appendingPathExtension("sqlite3")
-        let resolvedDatabase: HistoryDatabase
+        var resolvedDatabase: HistoryDatabase?
+        var resolvedIsPersistent = false
         do {
             resolvedDatabase = try HistoryDatabase(fileURL: databaseURL)
+            resolvedIsPersistent = true
         } catch {
             AppLog.error("打开历史数据库失败，当前会话改用内存数据库: \(error.localizedDescription)")
-            resolvedDatabase = try! HistoryDatabase(fileURL: nil)
+            do {
+                resolvedDatabase = try HistoryDatabase(fileURL: nil)
+            } catch {
+                AppLog.error("创建内存历史数据库也失败，本会话历史功能停用: \(error.localizedDescription)")
+            }
         }
 
         self.legacyFileURL = resolvedLegacyURL
         self.database = resolvedDatabase
+        self.isPersistent = resolvedIsPersistent
         self.maxRecentItems = max(1, maxRecentItems)
         self.pageSize = max(1, pageSize)
 
-        migrateLegacyHistoryIfNeeded()
+        if isPersistent {
+            migrateLegacyHistoryIfNeeded()
+        }
         do {
-            try database.trimNonFavorites(keeping: self.maxRecentItems)
+            try database?.trimNonFavorites(keeping: self.maxRecentItems)
         } catch {
             AppLog.error("裁剪历史记录失败: \(error.localizedDescription)")
         }
@@ -170,6 +186,7 @@ final class TranslationHistoryStore: ObservableObject {
         guard !source.isEmpty, !translation.isEmpty else { return nil }
 
         do {
+            guard let database else { return nil }
             let previous = try database.entry(
                 sourceText: source,
                 sourceLanguage: sourceLanguage,
@@ -200,7 +217,7 @@ final class TranslationHistoryStore: ObservableObject {
 
     func toggleFavorite(id: UUID) {
         do {
-            guard try database.toggleFavorite(id: id) else { return }
+            guard let database, try database.toggleFavorite(id: id) else { return }
             try database.trimNonFavorites(keeping: maxRecentItems)
             refreshAfterMutation()
         } catch {
@@ -210,7 +227,7 @@ final class TranslationHistoryStore: ObservableObject {
 
     func delete(id: UUID) {
         do {
-            guard try database.delete(id: id) else { return }
+            guard let database, try database.delete(id: id) else { return }
             refreshAfterMutation()
         } catch {
             AppLog.error("删除历史记录失败: \(error.localizedDescription)")
@@ -219,7 +236,7 @@ final class TranslationHistoryStore: ObservableObject {
 
     func clearNonFavorites() {
         do {
-            guard try database.clearNonFavorites() else { return }
+            guard let database, try database.clearNonFavorites() else { return }
             currentPage = 0
             refreshAfterMutation()
         } catch {
@@ -234,6 +251,7 @@ final class TranslationHistoryStore: ObservableObject {
 
     @discardableResult
     func exportEntries(favoritesOnly: Bool, format: HistoryExportFormat, to url: URL) throws -> Int {
+        guard let database else { throw TranslationHistoryTransferError.historyUnavailable }
         // 导出是用户主动发起的一次性操作；只在此时临时读取完整结果集。
         let entriesToExport = try database.fetchAll(favoritesOnly: favoritesOnly)
         let context = HistoryExportContext(favoritesOnly: favoritesOnly)
@@ -254,6 +272,7 @@ final class TranslationHistoryStore: ObservableObject {
 
     @discardableResult
     func importEntries(from url: URL) throws -> TranslationHistoryImportResult {
+        guard let database else { throw TranslationHistoryTransferError.historyUnavailable }
         let data = try Data(contentsOf: url)
         let decodedEntries: [TranslationHistoryEntry]
         do {
@@ -284,7 +303,7 @@ final class TranslationHistoryStore: ObservableObject {
     }
 
     func entry(id: UUID?) -> TranslationHistoryEntry? {
-        guard let id else { return nil }
+        guard let id, let database else { return nil }
         do {
             return try database.entry(id: id)
         } catch {
@@ -295,7 +314,7 @@ final class TranslationHistoryStore: ObservableObject {
 
     /// SQLite 写入是事务性的，不再有待刷新的整份 JSON 快照；退出时只做 WAL checkpoint。
     func flush() {
-        database.checkpoint()
+        database?.checkpoint()
     }
 
     private func refreshAfterMutation() {
@@ -304,6 +323,10 @@ final class TranslationHistoryStore: ObservableObject {
     }
 
     private func refreshPage() {
+        guard let database else {
+            entries = []
+            return
+        }
         do {
             totalEntryCount = try database.count()
             favoriteEntryCount = try database.count(favoritesOnly: true)
@@ -329,6 +352,9 @@ final class TranslationHistoryStore: ObservableObject {
     }
 
     private func migrateLegacyHistoryIfNeeded() {
+        // 调用方已确保只在持久化磁盘库上执行。回退内存库时迁移等于把旧 JSON 灌进
+        // 一次性数据库再改名原文件，下次启动磁盘库恢复后旧历史就静默消失了。
+        guard isPersistent, let database else { return }
         do {
             guard try !database.hasCompletedLegacyMigration() else { return }
             guard FileManager.default.fileExists(atPath: legacyFileURL.path) else {

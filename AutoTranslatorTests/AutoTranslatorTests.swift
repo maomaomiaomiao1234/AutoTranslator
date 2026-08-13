@@ -416,6 +416,65 @@ struct TranslationHistoryStoreTests {
     }
 
     @Test
+    func diskDatabaseFailureFallsBackToMemoryWithoutConsumingLegacyJSON() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AutoTranslatorHistoryFallbackTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let legacyURL = directoryURL.appendingPathComponent("history.json")
+        let legacyEntry = TranslationHistoryEntry(
+            id: UUID(),
+            sourceText: "legacy",
+            translatedText: "旧记录",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "google",
+            kind: .translation,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            isFavorite: true
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        try encoder.encode([legacyEntry]).write(to: legacyURL)
+
+        // 用同名目录占住 history.sqlite3 路径，迫使磁盘库打开失败。
+        let databaseURL = directoryURL.appendingPathComponent("history.sqlite3")
+        try FileManager.default.createDirectory(at: databaseURL, withIntermediateDirectories: true)
+
+        let fallbackStore = TranslationHistoryStore(fileURL: legacyURL)
+        #expect(!fallbackStore.isPersistent)
+        // 回退会话不迁移：旧 JSON 原样保留、不得改名，否则磁盘库恢复后旧历史静默丢失。
+        #expect(FileManager.default.fileExists(atPath: legacyURL.path))
+        #expect(!FileManager.default.fileExists(
+            atPath: legacyURL.appendingPathExtension("migrated-backup").path
+        ))
+        #expect(fallbackStore.totalEntryCount == 0)
+
+        // 内存库在本会话内仍可正常读写。
+        let sessionID = fallbackStore.record(
+            sourceText: "session",
+            translatedText: "本会话",
+            sourceLanguage: "en",
+            targetLanguage: "zh-CN",
+            backend: "google",
+            kind: .translation
+        )
+        #expect(sessionID != nil)
+        #expect(fallbackStore.totalEntryCount == 1)
+
+        // 磁盘障碍消除后，下一次启动照常完成迁移，旧历史完整无缺。
+        try FileManager.default.removeItem(at: databaseURL)
+        let recoveredStore = TranslationHistoryStore(fileURL: legacyURL)
+        #expect(recoveredStore.isPersistent)
+        #expect(recoveredStore.totalEntryCount == 1)
+        #expect(recoveredStore.entry(id: legacyEntry.id)?.isFavorite == true)
+        #expect(FileManager.default.fileExists(
+            atPath: legacyURL.appendingPathExtension("migrated-backup").path
+        ))
+    }
+
+    @Test
     func exportReadsAllDatabaseRowsInsteadOfOnlyCurrentPage() throws {
         let fixture = try makeFixture(maxRecentItems: 20, pageSize: 2)
         defer { fixture.cleanup() }
