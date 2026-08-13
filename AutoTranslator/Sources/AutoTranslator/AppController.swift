@@ -359,9 +359,14 @@ final class AppController: NSObject {
                     backend: backend
                 ))
 
-                // 逐块取色。只读各块外沿+块内的有界像素区域（非整图），块数通常 <10，
-                // 直接在主 actor 上算，避免把 CGImage 送进 detached 任务引发 Sendable 警告。
-                let styles = blocks.map { PatchStyleSampler.style(for: $0.pxRect, in: baseImage) }
+                // 逐块取色两段式：主线程只做每块一次的位图提取（CGContext blit，
+                // 无逐像素循环），统计（子采样+直方图）放后台，防止大选区冻结主线程。
+                let regions = blocks.map {
+                    PatchStyleSampler.samplingRegion(for: $0.pxRect, in: baseImage)
+                }
+                let styles = await Task.detached(priority: .userInitiated) {
+                    regions.map { PatchStyleSampler.style(for: $0) }
+                }.value
                 guard self.isCurrentOverlay(version) else { return }
 
                 let skeletons = zip(blocks, styles).map { block, style in

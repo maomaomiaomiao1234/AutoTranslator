@@ -190,6 +190,40 @@ struct PatchStyleSamplerTests {
         #expect(text.redComponent > 0.6)
         #expect(text.greenComponent < 0.2)
     }
+
+    @Test
+    func largeBlockSubsamplingStillDetectsColors() throws {
+        // 1200×800 大块（96 万像素 >> 1 万样本上限），走网格子采样 + 直方图路径；
+        // 结果应与全量采样一致：白底、红字形。
+        let image = try #require(syntheticImage(
+            size: CGSize(width: 1280, height: 880),
+            background: (1, 1, 1),
+            glyphRect: CGRect(x: 340, y: 240, width: 600, height: 400),
+            glyph: (0.8, 0, 0)
+        ))
+        let style = PatchStyleSampler.style(
+            for: CGRect(x: 40, y: 40, width: 1200, height: 800),
+            in: image
+        )
+        let bg = style.background.usingColorSpace(.sRGB)!
+        let text = style.text.usingColorSpace(.sRGB)!
+        #expect(bg.redComponent > 0.9 && bg.greenComponent > 0.9 && bg.blueComponent > 0.9)
+        #expect(text.redComponent > 0.6)
+        #expect(text.greenComponent < 0.2)
+    }
+
+    @Test
+    func twoPhaseAPIMatchesConvenienceEntryPoint() throws {
+        let image = try #require(syntheticImage(
+            size: CGSize(width: 60, height: 30),
+            background: (0.1, 0.1, 0.1),
+            glyphRect: CGRect(x: 20, y: 10, width: 20, height: 10),
+            glyph: (1, 1, 0)
+        ))
+        let blockRect = CGRect(x: 16, y: 6, width: 28, height: 18)
+        let region = PatchStyleSampler.samplingRegion(for: blockRect, in: image)
+        #expect(PatchStyleSampler.style(for: region) == PatchStyleSampler.style(for: blockRect, in: image))
+    }
 }
 
 // MARK: - 字号适配与排版
