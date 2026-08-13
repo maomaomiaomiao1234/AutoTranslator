@@ -17,6 +17,8 @@ final class BorderlessWindow: NSPanel {
                    defer: false)
         level = .floating
         hidesOnDeactivate = false
+        // 不设置的话，全屏 app 前置时浮窗停留在原 Space，划词后看不到译文。
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
@@ -606,10 +608,13 @@ final class FloatingWindow: NSObject {
         currentDestText = ""
         setDestText("正在翻译...")
         setTranslationState(.loading)
-        let timer = Timer.scheduledTimer(withTimeInterval: STREAM_RENDER_INTERVAL, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: STREAM_RENDER_INTERVAL, repeats: true) { [weak self] _ in
             self?.streamTick()
         }
         timer.tolerance = STREAM_RENDER_TIMER_TOLERANCE
+        // 必须是 .common：只注册 default mode 的话，菜单弹出或拖拽窗口期间 runloop
+        // 切到 eventTracking，译文会冻结，交互结束后再爆发追帧。
+        RunLoop.main.add(timer, forMode: .common)
         streamTimer = timer
     }
 

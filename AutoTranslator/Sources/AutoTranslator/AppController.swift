@@ -1593,6 +1593,10 @@ extension AppController: OverlayTranslationControllerDelegate {
 
     func overlayDidClose() {
         overlayTask?.cancel()
+        // translateOverlayBlocks 里每块用的是非结构化 Task，不继承父任务取消；
+        // 必须 bump 版本号才能让 isCurrentOverlay 守卫拦住迟到结果，否则关闭后
+        // 剩余块照发请求、结果还会写进缓存并调用已关闭 overlay 的 revealBlock。
+        overlayVersion += 1
         overlayContext = nil
     }
 }
