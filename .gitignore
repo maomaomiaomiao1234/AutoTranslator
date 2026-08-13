@@ -12,3 +12,7 @@ Package.resolved
 *.xcodeproj/project.xcworkspace/xcuserdata/
 
 dist/
+
+# 本地产物
+default.profraw
+verify-tmp/
