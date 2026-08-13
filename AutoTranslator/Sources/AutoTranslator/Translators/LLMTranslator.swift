@@ -246,43 +246,75 @@ final class LLMTranslator: TranslatorProtocol {
                         let body = String(data: bodyData, encoding: .utf8) ?? ""
                         throw RuntimeError("LLM API HTTP \(http.statusCode): \(body.prefix(200))")
                     }
-                    var sawCompletion = false
-                    var yieldedAnyToken = false
+                    var parser = LLMStreamParser()
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
-                        guard line.hasPrefix("data: ") else { continue }
-                        if line.hasPrefix("data: [DONE]") {
-                            sawCompletion = true
-                            continue
+                        if let token = try parser.consume(line: line) {
+                            continuation.yield(token)
                         }
-                        let jsonStr = String(line.dropFirst(6))
-                        guard let jsonData = jsonStr.data(using: .utf8),
-                              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                              let choices = json["choices"] as? [[String: Any]] else { continue }
-                        if let finishReason = choices.first?["finish_reason"] as? String,
-                           finishReason == "stop" {
-                            sawCompletion = true
-                        }
-                        guard let delta = choices.first?["delta"] as? [String: Any],
-                              let token = delta["content"] as? String else { continue }
-                        yieldedAnyToken = true
-                        continuation.yield(token)
                     }
-                    // 网络中断时 SSE 字节流会「正常」结束而没有 [DONE]/finish_reason=stop，
-                    // 半截译文若按成功返回会被上层写入缓存，此后同一文本永远命中残缺结果。
-                    guard sawCompletion || !yieldedAnyToken else {
-                        throw RuntimeError("LLM 流式响应中断，译文不完整")
-                    }
-                    continuation.finish()
-                } catch is CancellationError {
+                    try parser.validateCompletion()
                     continuation.finish()
                 } catch {
+                    // 取消也必须以抛错结束：静默 finish() 会让消费端把半截译文
+                    // 当成功结果写进缓存和历史，此后同一文本永远命中残缺译文。
                     continuation.finish(throwing: error)
                 }
             }
             continuation.onTermination = { @Sendable _ in
                 task.cancel()
             }
+        }
+    }
+}
+
+/// OpenAI 兼容 SSE 流的逐行解析器。纯状态机、不做 IO，便于单元测试。
+///
+/// 完整性判定只认 `finish_reason == "stop"`：`data: [DONE]` 不构成证据——
+/// length 截断后端点照样发 [DONE]，把它当完成标记会让截断译文进缓存。
+nonisolated struct LLMStreamParser {
+    private var sawStopReason = false
+    private var truncationReason: String?
+    private var yieldedAnyToken = false
+
+    /// 处理一行 SSE，返回要透传给消费方的增量 token（无则 nil）。
+    /// 流中出现服务端错误对象（`{"error": …}` 行）时抛错，不再静默吞掉。
+    mutating func consume(line: String) throws -> String? {
+        guard line.hasPrefix("data:") else { return nil }
+        // 兼容 `data: {…}` 与 `data:{…}` 两种变体。
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        guard !payload.isEmpty, payload != "[DONE]" else { return nil }
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil // 无法解析的 chunk 跳过，完整性由 finish_reason 兜底
+        }
+        if let errorObject = json["error"] as? [String: Any] {
+            let message = (errorObject["message"] as? String) ?? "\(errorObject)"
+            throw RuntimeError("LLM 流式响应返回错误: \(message.prefix(200))")
+        }
+        guard let choice = (json["choices"] as? [[String: Any]])?.first else { return nil }
+        if let finishReason = choice["finish_reason"] as? String, !finishReason.isEmpty {
+            if finishReason == "stop" {
+                sawStopReason = true
+            } else {
+                truncationReason = finishReason
+            }
+        }
+        guard let delta = choice["delta"] as? [String: Any],
+              let token = delta["content"] as? String,
+              !token.isEmpty else { return nil }
+        yieldedAnyToken = true
+        return token
+    }
+
+    /// 字节流走完后调用：校验译文完整性，失败即抛错，阻止半截译文按成功返回。
+    func validateCompletion() throws {
+        if let truncationReason {
+            throw RuntimeError("LLM 输出被截断（finish_reason=\(truncationReason)），译文不完整")
+        }
+        // 网络中断时 SSE 字节流会「正常」结束而没有 finish_reason=stop。
+        if yieldedAnyToken && !sawStopReason {
+            throw RuntimeError("LLM 流式响应中断，译文不完整")
         }
     }
 }

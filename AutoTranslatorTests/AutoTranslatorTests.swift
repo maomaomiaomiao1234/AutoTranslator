@@ -39,6 +39,74 @@ struct LLMTranslatorEndpointTests {
     }
 }
 
+struct LLMStreamParserTests {
+    private func chunk(token: String? = nil, finishReason: String? = nil) -> String {
+        var choice: [String: Any] = ["delta": token.map { ["content": $0] } ?? [:]]
+        choice["finish_reason"] = finishReason ?? NSNull()
+        let data = try! JSONSerialization.data(withJSONObject: ["choices": [choice]])
+        return "data: " + String(data: data, encoding: .utf8)!
+    }
+
+    @Test
+    func normalStreamYieldsTokensAndValidates() throws {
+        var parser = LLMStreamParser()
+        #expect(try parser.consume(line: chunk(token: "你")) == "你")
+        #expect(try parser.consume(line: chunk(token: "好")) == "好")
+        #expect(try parser.consume(line: chunk(finishReason: "stop")) == nil)
+        #expect(try parser.consume(line: "data: [DONE]") == nil)
+        try parser.validateCompletion()
+    }
+
+    @Test
+    func doneMarkerAloneIsNotProofOfCompleteness() throws {
+        var parser = LLMStreamParser()
+        _ = try parser.consume(line: chunk(token: "半截"))
+        _ = try parser.consume(line: "data: [DONE]")
+        #expect(throws: (any Error).self) { try parser.validateCompletion() }
+    }
+
+    @Test
+    func lengthTruncationFailsEvenWithDoneMarker() throws {
+        var parser = LLMStreamParser()
+        _ = try parser.consume(line: chunk(token: "被截断的"))
+        _ = try parser.consume(line: chunk(finishReason: "length"))
+        _ = try parser.consume(line: "data: [DONE]")
+        #expect(throws: (any Error).self) { try parser.validateCompletion() }
+    }
+
+    @Test
+    func interruptedStreamWithoutCompletionFails() throws {
+        var parser = LLMStreamParser()
+        _ = try parser.consume(line: chunk(token: "网络中断前的内容"))
+        #expect(throws: (any Error).self) { try parser.validateCompletion() }
+    }
+
+    @Test
+    func emptyStreamWithoutTokensPassesValidation() throws {
+        let parser = LLMStreamParser()
+        try parser.validateCompletion()
+    }
+
+    @Test
+    func inlineErrorObjectThrowsInsteadOfBeingSwallowed() throws {
+        var parser = LLMStreamParser()
+        let line = #"data: {"error": {"message": "insufficient quota", "code": 402}}"#
+        #expect(throws: (any Error).self) { _ = try parser.consume(line: line) }
+    }
+
+    @Test
+    func toleratesDataPrefixWithoutSpaceAndSkipsMalformedChunks() throws {
+        var parser = LLMStreamParser()
+        let noSpace = #"data:{"choices":[{"delta":{"content":"紧凑"}}]}"#
+        #expect(try parser.consume(line: noSpace) == "紧凑")
+        #expect(try parser.consume(line: "data: {malformed json") == nil)
+        #expect(try parser.consume(line: ": keep-alive comment") == nil)
+        #expect(try parser.consume(line: "") == nil)
+        _ = try parser.consume(line: chunk(finishReason: "stop"))
+        try parser.validateCompletion()
+    }
+}
+
 struct SelectionAccessibilityStrategyTests {
     @Test
     func explicitSelectionUsesFastLocalAXWhenClipboardFallbackIsAvailable() {

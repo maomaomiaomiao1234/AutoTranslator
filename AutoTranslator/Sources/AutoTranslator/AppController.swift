@@ -1202,6 +1202,9 @@ final class AppController: NSObject {
             await appendTranslationStreamChunk(pendingDisplayChunk, for: request)
         }
 
+        // 兜底：若取消发生在流结束与返回之间，宁可丢弃也不能把可能截断的
+        // buffer 交给上层写缓存/历史（translator 实现不一定都以抛错响应取消）。
+        try Task.checkCancellation()
         return isCurrentTranslation(request.version) ? buffer : nil
     }
 
