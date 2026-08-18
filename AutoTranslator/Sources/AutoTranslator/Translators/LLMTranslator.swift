@@ -205,10 +205,12 @@ final class LLMTranslator: TranslatorProtocol {
         if baseURL.lowercased().contains("dashscope") {
             body["enable_thinking"] = false
         }
-        // OpenRouter 使用统一 reasoning 参数；effort=none 会在支持关闭推理的模型上禁用思考。
-        // 强制推理模型可能拒绝该设置，此时应由服务端返回明确错误，而不是静默产生推理费用。
+        // OpenRouter 统一 reasoning 参数的文档化关闭开关是 enabled=false。
+        // （effort 取值仅 high/medium/low，"none" 不在统一 schema 内，只是 OpenAI
+        // 个别新模型的私有取值，发给其他厂商模型可能被校验拒绝。）
+        // 强制推理模型可能拒绝关闭，此时应由服务端返回明确错误，而不是静默产生推理费用。
         if Self.isOpenRouterBaseURL(baseURL) {
-            body["reasoning"] = ["effort": "none"]
+            body["reasoning"] = ["enabled": false]
         }
         // DeepSeek 官方 OpenAI 兼容接口使用 thinking.type 控制双模式 V4 模型。
         if Self.isOfficialDeepSeekBaseURL(baseURL) {
