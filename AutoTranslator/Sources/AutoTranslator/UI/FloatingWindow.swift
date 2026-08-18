@@ -218,6 +218,10 @@ final class FloatingWindow: NSObject {
     private var currentState: TranslationState = .idle
     private var minimalAnchorPoint: NSPoint?
     private var dismissedMinimalSourceText: String?
+    /// 渐隐动画的代数。show()/hideImmediately() 都会自增，使在途 hide() 动画的
+    /// completion 过期作废——否则连续查词时，上一次隐藏的 completion 会把刚刚
+    /// 重新展示的窗口 orderOut 并卸载按键监视器（表现为窗口闪一下就消失）。
+    private var hideGeneration = 0
 
     private var streamTimer: Timer?
     private var streamBuffer = ""
@@ -431,6 +435,17 @@ final class FloatingWindow: NSObject {
         pendingSinkWorkItem = nil
         stopStream()
         let wasVisible = window.isVisible
+        // 作废在途的 hide() 渐隐：completion 一旦发现代数不符即不再 orderOut。
+        hideGeneration += 1
+        if wasVisible {
+            // 同时打断正在进行的 alpha 渐隐动画（零时长动画组替换同属性旧动画），
+            // 否则窗口会继续淡出到全透明。
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0
+                window.animator().alphaValue = 1
+            }
+            window.alphaValue = 1
+        }
         let isNewSourceText = srcText != currentSourceText
 
         if isMinimalWindowMode,
@@ -710,10 +725,13 @@ final class FloatingWindow: NSObject {
             savedOrigin = window.frame.origin
         }
 
+        hideGeneration += 1
+        let generation = hideGeneration
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
             window.animator().alphaValue = 0
-        } completionHandler: {
+        } completionHandler: { [weak self] in
+            guard let self, self.hideGeneration == generation else { return }
             self.window.orderOut(nil)
             self.window.alphaValue = 1
             self.removeGlobalClickMonitor()
@@ -731,6 +749,8 @@ final class FloatingWindow: NSObject {
         } else if window.isVisible, !isPinned {
             savedOrigin = window.frame.origin
         }
+        // 同步隐藏已完成全部收尾；作废可能在途的 hide() 渐隐 completion。
+        hideGeneration += 1
         window.alphaValue = 1
         window.orderOut(nil)
         removeGlobalClickMonitor()
