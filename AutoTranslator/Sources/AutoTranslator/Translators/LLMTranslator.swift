@@ -184,6 +184,12 @@ final class LLMTranslator: TranslatorProtocol {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        // sharedSession 的 30s 是「无数据到达」闲置超时：流式下 token 持续到达，够用；
+        // 非流式要等服务端生成完整响应才有首字节，长文本轻松超过 30s（贴图翻译走的
+        // 就是非流式路径），单独放宽到 120s。
+        if !stream {
+            request.timeoutInterval = 120
+        }
 
         var body: [String: Any] = [
             "model": model,
