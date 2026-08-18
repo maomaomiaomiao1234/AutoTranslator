@@ -14,10 +14,16 @@ final class AppleTranslationBridge {
 
     static let shared = AppleTranslationBridge()
 
-    /// 等待 session 的一次性包装：保证 continuation 只被恢复一次（deliver 与超时二选一）。
+    /// 等待 session 的一次性包装：保证 continuation 只被恢复一次
+    /// （deliver、超时、配置变更、任务取消四选一）。
     private final class Waiter {
+        /// 该 waiter 等待的语言对配置。deliver 只恢复配置匹配的 waiter，
+        /// 防止并发换语言时拿到错误语言对的 session、错译按原 key 永久入缓存。
+        let configuration: TranslationSession.Configuration
         private var continuation: CheckedContinuation<TranslationSession, Error>?
-        init(_ continuation: CheckedContinuation<TranslationSession, Error>) {
+        init(configuration: TranslationSession.Configuration,
+             _ continuation: CheckedContinuation<TranslationSession, Error>) {
+            self.configuration = configuration
             self.continuation = continuation
         }
         func resume(_ session: TranslationSession) {
@@ -37,11 +43,27 @@ final class AppleTranslationBridge {
         var currentSession: TranslationSession?
         var waiters: [Waiter] = []
 
-        func deliver(_ session: TranslationSession) {
+        /// 收下 translationTask 回送的 session。`config` 是回送闭包创建时捕获的配置：
+        /// 配置已被并发更换时（迟到的旧 session）直接丢弃，绝不交给新配置的 waiter。
+        func deliver(_ session: TranslationSession, for config: TranslationSession.Configuration?) {
+            guard config == configuration else { return }
             currentSession = session
             let pending = waiters
             waiters.removeAll()
-            pending.forEach { $0.resume(session) }
+            pending.forEach {
+                if $0.configuration == config {
+                    $0.resume(session)
+                } else {
+                    // 理论上换配置时已被 fail 清场；兜底防错配对。
+                    $0.fail(RuntimeError("翻译语言配置已变更，请重试"))
+                }
+            }
+        }
+
+        func removeWaiter(_ waiter: Waiter) {
+            if let index = waiters.firstIndex(where: { $0 === waiter }) {
+                waiters.remove(at: index)
+            }
         }
     }
 
@@ -100,18 +122,44 @@ final class AppleTranslationBridge {
         if model.configuration == config, let existing = model.currentSession {
             return existing
         }
+        // 语言对变更：旧配置的 waiter 已不可能等到匹配的 session，
+        // 立刻失败让调用方重试，而不是白等 8 秒超时。
+        if model.configuration != config {
+            let superseded = model.waiters
+            model.waiters.removeAll()
+            superseded.forEach { $0.fail(RuntimeError("翻译语言配置已变更，请重试")) }
+        }
         // 改变配置会触发宿主视图的 translationTask 回送新 session。
         model.currentSession = nil
         model.configuration = config
-        return try await withCheckedThrowingContinuation { continuation in
-            let waiter = Waiter(continuation)
-            model.waiters.append(waiter)
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
-                if let index = model.waiters.firstIndex(where: { $0 === waiter }) {
-                    model.waiters.remove(at: index)
+
+        // waiter 的引用桥接进取消回调；@unchecked Sendable 成立的前提是
+        // 两处访问（continuation 体与 onCancel 内的 Task）都跑在 MainActor 上。
+        final class WaiterRef: @unchecked Sendable { var waiter: Waiter? }
+        let ref = WaiterRef()
+        let model = self.model
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let waiter = Waiter(configuration: config, continuation)
+                ref.waiter = waiter
+                model.waiters.append(waiter)
+                if Task.isCancelled {
+                    // 进入等待前已被取消：立即收场，不留 8 秒空等。
+                    model.removeWaiter(waiter)
+                    waiter.fail(CancellationError())
+                    return
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    model.removeWaiter(waiter)
                     waiter.fail(RuntimeError("系统翻译初始化超时，请确认已下载对应语言模型"))
                 }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                guard let waiter = ref.waiter else { return }
+                model.removeWaiter(waiter)
+                waiter.fail(CancellationError())
             }
         }
     }
@@ -176,7 +224,10 @@ final class AppleTranslationBridge {
     private struct HostView: View {
         @ObservedObject var model: Model
         var body: some View {
-            Group {
+            // 在 body 求值时固定当前配置：回送闭包捕获的是创建它的那份配置，
+            // 迟到的旧任务回送旧 session 时 deliver 能识别并丢弃。
+            let config = model.configuration
+            return Group {
                 if model.isDownloadPresentation {
                     VStack(spacing: 12) {
                         ProgressView()
@@ -195,8 +246,8 @@ final class AppleTranslationBridge {
                         .frame(width: 1, height: 1)
                 }
             }
-            .translationTask(model.configuration) { session in
-                await MainActor.run { model.deliver(session) }
+            .translationTask(config) { session in
+                await MainActor.run { model.deliver(session, for: config) }
             }
         }
     }
