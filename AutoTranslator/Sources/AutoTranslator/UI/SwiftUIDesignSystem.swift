@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum AppUI {
@@ -145,6 +146,32 @@ struct SymbolBadge: View {
                 RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous)
                     .stroke(AppUI.buttonBorder, lineWidth: 1)
             }
+    }
+}
+
+/// 窗口拖动热区：透明 NSView，按下即发起窗口拖动。
+///
+/// 浮窗是 .borderless 面板，本来指望 `isMovableByWindowBackground` 拖动，但那套逻辑在
+/// `NSWindow.mouseDown(with:)` 里，而 NSHostingView 覆盖整个内容区并吞掉 mouseDown，
+/// 事件到不了窗口——表现为窗口任何位置都拖不动。改用 `performDrag(with:)` 自己发起拖动。
+///
+/// 用法：`.background(WindowDragArea())`。放在内容之下，SwiftUI 的命中测试仍会让按钮、
+/// 输入框、可选中文本优先拿到点击；只有它们不认领的留白才落到这里。纯装饰的文字/徽标
+/// 默认也会认领点击，需要拖动的话给它们加 `.allowsHitTesting(false)`。
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragSurface() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragSurface: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+
+        /// 面板是 .nonactivatingPanel，本 App 不在前台时首次点击也要能直接拖动。
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
     }
 }
 

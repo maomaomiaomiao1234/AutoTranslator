@@ -267,6 +267,7 @@ struct FloatingWindowView: View {
             if !model.isAwaitingTranslation {
                 MinimalEngineDot(tint: model.destinationTint)
                     .accessibilityLabel(model.destinationTitle)
+                    .allowsHitTesting(false)
             }
 
             Spacer(minLength: AppUI.Space.s)
@@ -311,6 +312,8 @@ struct FloatingWindowView: View {
         }
         .frame(height: MINIMAL_TOOLBAR_HEIGHT)
         .animation(.easeInOut(duration: 0.16), value: model.speechState)
+        // 极简模式没有标题栏，这条工具栏的留白就是它的拖动区。
+        .background(WindowDragArea())
     }
 
     private var minimalDestinationContent: some View {
@@ -357,11 +360,16 @@ struct FloatingWindowView: View {
     }
 
     private var panelBackground: some View {
-        LinearGradient(
-            colors: [AppUI.panelTop, AppUI.panelBottom],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        ZStack {
+            LinearGradient(
+                colors: [AppUI.panelTop, AppUI.panelBottom],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            // 面板留白与卡片之间的空隙上没有任何控件，整块用来拖动窗口。
+            WindowDragArea()
+        }
     }
 
     private var header: some View {
@@ -388,6 +396,7 @@ struct FloatingWindowView: View {
                         .foregroundStyle(AppUI.textSecondary)
                         .lineLimit(1)
                 }
+                .allowsHitTesting(false)
 
                 Spacer(minLength: 8)
 
@@ -431,7 +440,10 @@ struct FloatingWindowView: View {
             Rectangle()
                 .fill(Color(nsColor: PANEL_HAIRLINE))
                 .frame(height: 1)
+                .allowsHitTesting(false)
         }
+        // 充当标题栏：标题、副标题、留白都能拖动窗口，按钮仍照常响应点击。
+        .background(WindowDragArea())
     }
 
     private var sourceCard: some View {
@@ -443,16 +455,20 @@ struct FloatingWindowView: View {
                     .frame(width: 22, height: 22)
                     .background(AppUI.activeToolbar)
                     .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous))
+                    .allowsHitTesting(false)
 
                 Text("原文")
                     .font(.system(size: AppUI.FontSize.mini, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
+                    .allowsHitTesting(false)
 
                 Chip(text: model.sourceMeta)
+                    .allowsHitTesting(false)
 
                 if model.speechState.isVisible {
                     SpeechStatusChip(state: model.speechState)
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .allowsHitTesting(false)
                 }
 
                 Spacer(minLength: 8)
@@ -462,6 +478,7 @@ struct FloatingWindowView: View {
                     foreground: model.selectedSource == "自动检测" ? AppUI.textSecondary : AppUI.blue,
                     background: model.selectedSource == "自动检测" ? AppUI.surfaceSoft : AppUI.chipBlue
                 )
+                .allowsHitTesting(false)
 
                 Button { model.onCopySource?() } label: {
                     Image(systemName: "doc.on.doc")
@@ -499,6 +516,7 @@ struct FloatingWindowView: View {
                 .help("翻译输入的原文（⌘↩）")
             }
             .animation(.easeInOut(duration: 0.16), value: model.speechState)
+            .background(WindowDragArea())
 
             ZStack(alignment: .topLeading) {
                 if model.sourceText.isEmpty {
@@ -703,6 +721,7 @@ struct FloatingWindowView: View {
         }
         .padding(.horizontal, AppUI.Space.l)
         .frame(height: LANG_BAR_HEIGHT)
+        .background(WindowDragArea())
         .appSurface(background: Color(nsColor: LANG_BAR_BG))
     }
 
@@ -715,14 +734,17 @@ struct FloatingWindowView: View {
                     .frame(width: 24, height: 24)
                     .background(model.destinationTint)
                     .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.chip, style: .continuous))
+                    .allowsHitTesting(false)
 
                 Text(model.destinationTitle)
                     .font(.system(size: AppUI.FontSize.base, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
+                    .allowsHitTesting(false)
 
                 Spacer()
 
                 stateChip
+                    .allowsHitTesting(false)
 
                 if model.canToggleBackend {
                     Button { model.onToggleBackend?() } label: {
@@ -732,6 +754,7 @@ struct FloatingWindowView: View {
                     .help("切换翻译后端")
                 }
             }
+            .background(WindowDragArea())
 
             ScrollView {
                 destinationContent

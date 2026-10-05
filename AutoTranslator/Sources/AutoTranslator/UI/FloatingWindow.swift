@@ -23,11 +23,11 @@ final class BorderlessWindow: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         isReleasedWhenClosed = false
+        // 只能兜住内容视图没有认领的点击：这套逻辑位于 NSWindow.mouseDown(with:)，
+        // 而 NSHostingView 会吞掉整个 SwiftUI 内容区的 mouseDown，事件根本到不了窗口。
+        // 所以内容区的拖动由 WindowDragArea（performDrag(with:)）负责，
+        // 同时本类不能覆写 mouseDown(with:)——空实现会把这条兜底路径也一起堵死。
         isMovableByWindowBackground = true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        // Window background dragging is handled by isMovableByWindowBackground.
     }
 
     override func keyDown(with event: NSEvent) {
@@ -409,8 +409,11 @@ final class FloatingWindow: NSObject {
     }
 
     func containsScreenPoint(_ point: CGPoint) -> Bool {
-        guard window.isVisible, !isMinimalWindowMode, !window.ignoresMouseEvents else { return false }
-        return window.frame.contains(NSPoint(x: point.x, y: point.y))
+        guard window.isVisible, !window.ignoresMouseEvents,
+              window.frame.contains(point) else { return false }
+        // 沉到其他窗口后 isVisible 仍为 true。只有实际接收点击的窗口才应拦截划词，
+        // 否则浮窗背后的旧 frame 会成为网页上的取词盲区；极简模式也需同样过滤。
+        return NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == window.windowNumber
     }
 
     func setLanguages(_ languages: [String: String], source: String, target: String) {
@@ -1178,6 +1181,8 @@ final class FloatingWindow: NSObject {
 
     private func updateMouseEventPolicy() {
         // 极简模式需要响应收藏与模式切换；窗口内点击由极简工具栏和文本选择处理。
+        // 注意：拖动窗口实际由 SwiftUI 里的 WindowDragArea 负责，下面这个开关只影响
+        // AppKit 那条兜底路径（点击落在 NSHostingView 之外时才用得上）。
         window.ignoresMouseEvents = false
         rootView.allowsScrollOnlyMouseInteraction = false
         if isMinimalWindowMode {

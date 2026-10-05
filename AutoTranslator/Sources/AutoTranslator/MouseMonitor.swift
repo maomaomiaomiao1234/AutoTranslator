@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 
 protocol MouseMonitorDelegate: AnyObject {
+    func onSelectionInvalidated()
     func onSelectionEvent(allowClipboardFallback: Bool,
                           allowDeepAccessibilitySearch: Bool,
                           selectionPoint: CGPoint)
@@ -13,6 +14,7 @@ final class MouseMonitor {
     private let selectionProbeDispatchDelay: DispatchTimeInterval = .milliseconds(120)
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var monitoringRunLoop: CFRunLoop?
     private var mouseDownPoint: CGPoint?
     private var mouseDraggedSinceDown = false
     private var dragEventCount = 0
@@ -63,7 +65,9 @@ final class MouseMonitor {
         eventTap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        let runLoop = CFRunLoopGetMain()
+        monitoringRunLoop = runLoop
+        CFRunLoopAddSource(runLoop, source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         AppLog.debug("SelectionMonitor started")
     }
@@ -72,24 +76,26 @@ final class MouseMonitor {
         if pendingSelectionWorkItem != nil {
             AppLog.debug("SelectionMonitor cancel pending dispatch on stop")
         }
-        pendingSelectionWorkItem?.cancel()
-        pendingSelectionWorkItem = nil
+        invalidateSelection()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
         }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+        if let source = runLoopSource, let runLoop = monitoringRunLoop {
+            CFRunLoopRemoveSource(runLoop, source, .commonModes)
             runLoopSource = nil
         }
+        monitoringRunLoop = nil
         eventTap = nil
         AppLog.debug("SelectionMonitor stopped")
     }
 
-    private func handleEvent(type: CGEventType, event: CGEvent) {
+    func handleEvent(type: CGEventType, event: CGEvent) {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             // 系统在高负载或用户输入抢占时会主动禁用 listen-only tap，
             // 必须重新启用，否则划词会静默失效直到 App 重启。
+            invalidateSelection()
             guard let tap = eventTap else { return }
             CGEvent.tapEnable(tap: tap, enable: true)
             AppLog.error("EventTap 被系统禁用 (type=\(type.rawValue))，已重新启用")
@@ -97,8 +103,7 @@ final class MouseMonitor {
             if pendingSelectionWorkItem != nil {
                 AppLog.debug("SelectionMonitor cancel pending dispatch on new mouseDown")
             }
-            pendingSelectionWorkItem?.cancel()
-            pendingSelectionWorkItem = nil
+            invalidateSelection()
             mouseDownPoint = event.location
             mouseDraggedSinceDown = false
             dragEventCount = 0
@@ -133,10 +138,12 @@ final class MouseMonitor {
                 return
             }
             let clickCount = event.getIntegerValueField(.mouseEventClickState)
-            let wasDragged = mouseDraggedSinceDown
+            // 高频输入/主 run loop 繁忙时可能漏掉中间的 dragged 事件；
+            // down/up 的净位移同样能证明发生了划选，不能降级成 AX-only 单击探测。
+            let mouseUpDistanceSq = mouseUpDistanceSq(from: event.location)
+            let wasDragged = mouseDraggedSinceDown || mouseUpDistanceSq >= dragThresholdSq
             let isSelectionGesture = wasDragged || clickCount > 1
             let selectionPoint = event.location
-            let mouseUpDistanceSq = mouseUpDistanceSq(from: event.location)
             let observedDragEventCount = dragEventCount
             let observedMaxDragDistanceSq = maxDragDistanceSq
             mouseDownPoint = nil
@@ -177,6 +184,17 @@ final class MouseMonitor {
         return dx * dx + dy * dy
     }
 
+    private func invalidateSelection() {
+        pendingSelectionWorkItem?.cancel()
+        pendingSelectionWorkItem = nil
+        mouseDownPoint = nil
+        mouseDraggedSinceDown = false
+        dragEventCount = 0
+        maxDragDistanceSq = 0
+        ignoresCurrentMouseSequence = false
+        delegate?.onSelectionInvalidated()
+    }
+
     private func scheduleSelectionEvent(allowClipboardFallback: Bool,
                                         allowDeepAccessibilitySearch: Bool,
                                         selectionPoint: CGPoint,
@@ -187,8 +205,10 @@ final class MouseMonitor {
         pendingSelectionWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingSelectionWorkItem = nil
             AppLog.debug("SelectionMonitor dispatch selection event allowClipboardFallback=\(allowClipboardFallback) allowDeepAX=\(allowDeepAccessibilitySearch)")
-            self?.delegate?.onSelectionEvent(
+            self.delegate?.onSelectionEvent(
                 allowClipboardFallback: allowClipboardFallback,
                 allowDeepAccessibilitySearch: allowDeepAccessibilitySearch,
                 selectionPoint: selectionPoint

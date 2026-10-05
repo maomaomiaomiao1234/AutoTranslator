@@ -735,13 +735,17 @@ final class AppController: NSObject {
 
     private func selectionIgnoreReason(startingAt point: CGPoint) -> String? {
         if isMonitoringPaused { return "monitoringPaused" }
-        if window.containsScreenPoint(point) { return "insideFloatingWindow" }
-        if Self.isSystemChromePoint(point) { return "systemChrome" }
-        // 注意：这里只做廉价的几何/前台应用判断。聚焦元素是否为文本输入框需要一次
-        // 同步 AX 跨进程查询（最坏阻塞 0.2s），而本方法运行在 CGEventTap 回调（主 run loop）
-        // 的 mouseDown 阶段——对系统中每一次左键点击都执行会拖慢 tap 甚至触发系统禁用。
-        // 该判断改由 mouseUp 后的 onSelectionEvent 统一执行（见 isFocusedElementTextInput 调用处）。
-        return Self.ignoredFrontmostApplicationReason()
+        if let primaryScreenFrame = NSScreen.screens.first?.frame {
+            let screenPoint = SelectionScreenGeometry.appKitPoint(
+                fromQuartz: point, primaryScreenFrame: primaryScreenFrame
+            )
+            if window.containsScreenPoint(screenPoint) { return "insideFloatingWindow" }
+            if Self.isSystemChromePoint(screenPoint) { return "systemChrome" }
+        }
+        // mouseDown 在目标应用收到点击并激活之前到达。此时 NSApp.isActive /
+        // frontmostApplication 可能仍指向刚操作过的浮窗、菜单或 Finder；
+        // 用它们拦截整个序列会吞掉切回网页的第一次划词。前台/输入框过滤留到 mouseUp 后。
+        return nil
     }
 
     private static func isSystemChromePoint(_ point: CGPoint) -> Bool {
@@ -1411,18 +1415,28 @@ final class AppController: NSObject {
 // MARK: - MouseMonitorDelegate
 
 extension AppController: MouseMonitorDelegate {
+    func onSelectionInvalidated() {
+        // 在下一次 mouseDown 就取消，避免旧取词在新选区尚未完成时弹窗或发出 ⌘C。
+        selectionTask?.cancel()
+    }
+
     func onSelectionEvent(allowClipboardFallback: Bool,
                           allowDeepAccessibilitySearch: Bool,
                           selectionPoint: CGPoint) {
         if selectionTask != nil {
             AppLog.debug("Selection event cancels previous selectionTask")
         }
-        selectionTask?.cancel()
+        let previousTask = selectionTask
+        previousTask?.cancel()
         // 手势层面的回退许可还要过用户开关：关闭后绝不模拟 ⌘C、不触碰剪贴板。
         let clipboardFallbackPermitted = allowClipboardFallback && Self.isClipboardFallbackEnabled()
         selectionTask = Task { @MainActor [weak self] in
+            // 等待旧取词（包括剪贴板恢复 defer）收尾，避免两个快照/复制事务交错。
+            await previousTask?.value
+            guard !Task.isCancelled else { return }
             guard let self = self else { return }
             AppLog.debug("Selection event handling begin allowClipboardFallback=\(clipboardFallbackPermitted) allowDeepAX=\(allowDeepAccessibilitySearch) point=\(Self.pointDescription(selectionPoint))")
+            guard !self.isMonitoringPaused else { return }
             if let reason = Self.ignoredFrontmostApplicationReason() {
                 AppLog.debug("Selection event dropped before text lookup: reason=\(reason)")
                 return
@@ -1442,6 +1456,7 @@ extension AppController: MouseMonitorDelegate {
                 AppLog.debug("Selection event cancelled during focus check")
                 return
             }
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
             if isTextInput {
                 AppLog.debug("Selection event dropped: focused text input")
                 return
@@ -1455,6 +1470,7 @@ extension AppController: MouseMonitorDelegate {
                 AppLog.debug("Selection event cancelled after text lookup")
                 return
             }
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
             guard let text = text, !text.isEmpty else {
                 AppLog.debug("Selection event dropped: no selected text")
                 return

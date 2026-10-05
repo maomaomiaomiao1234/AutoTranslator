@@ -88,6 +88,7 @@ final class TextSelector {
     func getSelectedText(allowClipboardFallback: Bool = false,
                          allowDeepAccessibilitySearch: Bool = true,
                          selectionPoint: CGPoint? = nil) async -> String? {
+        guard !Task.isCancelled else { return nil }
         guard let frontApp = NSWorkspace.shared.frontmostApplication else {
             AppLog.debug("TextSelector failed: no frontmost application")
             return nil
@@ -116,6 +117,10 @@ final class TextSelector {
             AppLog.debug("TextSelector cancelled during AX lookup app=\(bundleID)")
             return nil
         }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+            AppLog.debug("TextSelector discarded: frontmost application changed during AX lookup")
+            return nil
+        }
         if let text = axText {
             AppLog.debug("TextSelector success via AX length=\(text.count) app=\(bundleID)")
             return text
@@ -125,7 +130,9 @@ final class TextSelector {
             AppLog.debug("TextSelector failed: AX unavailable and clipboard fallback disabled app=\(bundleID)")
             return nil
         }
-        let text = await getByClipboard()
+        let text = await getByClipboard(isSourceCurrent: {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        })
         if let text {
             AppLog.debug("TextSelector success via clipboard length=\(text.count) app=\(bundleID)")
         } else {
@@ -140,6 +147,7 @@ final class TextSelector {
         strategy: SelectionAccessibilityStrategy,
         maxDescendantSearchCount: Int
     ) -> String? {
+        guard !Task.isCancelled else { return nil }
         let appRef = AXUIElementCreateApplication(pid)
         // 目标应用无响应时，AX 调用默认可阻塞主线程达数秒；深度搜索会遍历上百个元素，
         // 极端情况下会连锁冻结取词流程。设置消息超时兜底，令单次跨进程查询快速失败。
@@ -430,15 +438,23 @@ final class TextSelector {
     }
 
     @MainActor
-    private func getByClipboard() async -> String? {
+    func getByClipboard(from pb: NSPasteboard = .general,
+                        isSourceCurrent: () -> Bool = { true },
+                        copy: (() -> Void)? = nil) async -> String? {
+        guard !Task.isCancelled, isSourceCurrent() else { return nil }
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = now - lastCopyTime
         if elapsed < copyInterval {
-            AppLog.debug("TextSelector clipboard skipped: rate limited elapsed=\(Self.seconds(elapsed))s")
-            return nil
+            // 连续划词应等到复制间隔满足，而不是把这一轮直接丢掉。
+            // 等待可取消，下一次 mouseDown 会作废这轮取词。
+            do {
+                try await Task.sleep(nanoseconds: UInt64((copyInterval - elapsed) * 1_000_000_000))
+            } catch {
+                return nil
+            }
         }
+        guard !Task.isCancelled, isSourceCurrent() else { return nil }
 
-        let pb = NSPasteboard.general
         guard pasteboardAccessPermitted(pb) else { return nil }
         guard !Self.pasteboardHoldsUnrestorableContent(pb) else { return nil }
         guard let snapshot = capturePasteboardSnapshot(pb) else { return nil }
@@ -475,7 +491,11 @@ final class TextSelector {
 
         AppLog.debug("TextSelector clipboard copy requested oldChangeCount=\(oldCount) hadContents=\(snapshot.hadContents)")
         let postUptime = ProcessInfo.processInfo.systemUptime
-        simulateCmdC()
+        if let copy {
+            copy()
+        } else {
+            simulateCmdC()
+        }
 
         var newText: String? = nil
         var pollIndex = 0
