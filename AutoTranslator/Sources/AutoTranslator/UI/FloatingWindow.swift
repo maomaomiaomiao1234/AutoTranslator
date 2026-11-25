@@ -182,6 +182,7 @@ protocol FloatingWindowDelegate: AnyObject {
     func languageChanged(srcName: String, destName: String)
     func swapLanguages()
     func toggleTranslator()
+    func selectTranslatorBackend(_ backend: String)
     func speakCurrentSource()
     func screenshotTranslation()
     func overlayTranslation()
@@ -787,6 +788,10 @@ final class FloatingWindow: NSObject {
         delegate?.toggleTranslator()
     }
 
+    private func handleSelectBackend(_ backend: String) {
+        delegate?.selectTranslatorBackend(backend)
+    }
+
     private func handleSpeakSource() {
         delegate?.speakCurrentSource()
     }
@@ -962,7 +967,7 @@ final class FloatingWindow: NSObject {
                                                  width: textMeasureWidth(for: width),
                                                  fontSize: SOURCE_FONT_SIZE,
                                                  minimum: SOURCE_TEXT_MIN_HEIGHT)
-        let neededTextHeight = min(sourceTextHeight, SOURCE_TEXT_MAX_HEIGHT)
+        let neededTextHeight = min(sourceTextHeight, SOURCE_TEXT_AUTO_MAX_HEIGHT)
         return min(SRC_MAX_CARD_HEIGHT,
                    max(SOURCE_CARD_MIN_HEIGHT, neededTextHeight + SOURCE_CARD_CHROME_HEIGHT))
     }
@@ -990,8 +995,8 @@ final class FloatingWindow: NSObject {
     }
 
     private var windowChromeHeight: CGFloat {
-        OUTER_PADDING + HEADER_HEIGHT + SECTION_GAP + SECTION_GAP
-            + LANG_BAR_HEIGHT + SECTION_GAP + OUTER_PADDING
+        PANEL_TOP_PADDING + HEADER_HEIGHT + SECTION_GAP
+            + SOURCE_RESIZE_HANDLE_HEIGHT + LANG_BAR_HEIGHT + 1 + PANEL_BOTTOM_PADDING
     }
 
     private var minimumNonSourceHeight: CGFloat {
@@ -1198,6 +1203,7 @@ final class FloatingWindow: NSObject {
         viewModel.onCopyDest = { [weak self] in self?.handleCopyDest() }
         viewModel.onSpeakSource = { [weak self] in self?.handleSpeakSource() }
         viewModel.onToggleBackend = { [weak self] in self?.handleBackendToggle() }
+        viewModel.onSelectBackend = { [weak self] backend in self?.handleSelectBackend(backend) }
         viewModel.onScreenshotTranslation = { [weak self] in self?.handleScreenshotTranslation() }
         viewModel.onOverlayTranslation = { [weak self] in self?.handleOverlayTranslation() }
         viewModel.onHide = { [weak self] in self?.handleHide() }
@@ -1232,7 +1238,8 @@ final class FloatingWindow: NSObject {
         guard localKeyMonitor == nil, globalKeyMonitor == nil else { return }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53 else { return event }
-            if self.window.isVisible, NSPointInRect(NSEvent.mouseLocation, self.window.frame) {
+            let isHovered = NSPointInRect(NSEvent.mouseLocation, self.window.frame)
+            if self.window.isVisible, (self.window.isKeyWindow || isHovered) {
                 self.hide()
                 return nil
             }
@@ -1240,7 +1247,8 @@ final class FloatingWindow: NSObject {
         }
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53 else { return }
-            if self.window.isVisible, NSPointInRect(NSEvent.mouseLocation, self.window.frame) {
+            let isHovered = NSPointInRect(NSEvent.mouseLocation, self.window.frame)
+            if self.window.isVisible, (self.window.isKeyWindow || isHovered) {
                 self.hide()
             }
         }

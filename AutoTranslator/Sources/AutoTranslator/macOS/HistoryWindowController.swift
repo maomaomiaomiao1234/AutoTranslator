@@ -20,6 +20,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 760, height: 500)
+        window.setFrameAutosaveName("AutoTranslatorHistoryWindow")
         window.contentView = hostingView
         window.center()
 

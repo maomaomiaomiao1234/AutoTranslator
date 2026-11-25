@@ -166,7 +166,9 @@ struct PreferencesView: View {
         HStack(spacing: AppUI.Space.xs) {
             ForEach(PreferencesPane.allCases) { pane in
                 Button {
-                    selectedPane = pane
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        selectedPane = pane
+                    }
                 } label: {
                     HStack(spacing: AppUI.Space.s) {
                         Image(systemName: pane.icon)
@@ -200,6 +202,7 @@ struct PreferencesView: View {
         }
         .padding(AppUI.Space.xs)
         .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+        .animation(.easeInOut(duration: 0.18), value: selectedPane)
     }
 
     @ViewBuilder
@@ -359,15 +362,30 @@ struct PreferencesView: View {
                         Label(statusText, systemImage: "checkmark.circle.fill")
                             .font(.system(size: AppUI.FontSize.micro, weight: .medium))
                             .foregroundStyle(AppUI.teal)
+                            .transition(.scale.combined(with: .opacity))
                     }
                 }
-                Text(configPath)
-                    .font(.system(size: AppUI.FontSize.micro, design: .monospaced))
-                    .foregroundStyle(AppUI.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .help(configPath)
+                HStack(spacing: AppUI.Space.xs) {
+                    Text(configPath)
+                        .font(.system(size: AppUI.FontSize.micro, design: .monospaced))
+                        .foregroundStyle(AppUI.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .help(configPath)
+
+                    Button {
+                        let url = URL(fileURLWithPath: configPath)
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppUI.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .help("在访达中显示配置文件")
+                    .accessibilityLabel("在访达中显示配置文件")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -384,6 +402,7 @@ struct PreferencesView: View {
                 Button("保存") {
                     save()
                 }
+                .keyboardShortcut("s", modifiers: .command)
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -430,7 +449,9 @@ struct PreferencesView: View {
             floatingWindowMode: floatingWindowMode,
             clipboardFallback: clipboardFallback
         ))
-        statusText = "已保存 \(timestamp())"
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+            statusText = "已保存 \(timestamp())"
+        }
     }
 
     private func timestamp() -> String {

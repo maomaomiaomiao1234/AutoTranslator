@@ -1008,3 +1008,53 @@ struct TextSelectorPasteboardTests {
         #expect(!TextSelector.pasteboardHoldsUnrestorableContent(plain))
     }
 }
+
+@MainActor
+struct FloatingWindowViewModelTests {
+    @Test
+    func awaitingPlaceholderPreventsCopyingLoadingText() {
+        let model = FloatingWindowViewModel()
+        model.state = .loading
+        model.destText = "正在翻译..."
+        #expect(model.isAwaitingTranslation)
+        #expect(!model.canCopyDest)
+
+        model.destText = "流式译文"
+        #expect(!model.isAwaitingTranslation)
+        #expect(model.canCopyDest)
+    }
+
+    @Test
+    func dictionaryCopyableTextUsesFormattedMeasurementText() {
+        let model = FloatingWindowViewModel()
+        model.presentation = .systemDictionary
+        model.sourceText = "concise"
+        model.destText = "concise | /kənˈsaɪs/ | ① 简明的"
+        model.state = .done
+
+        #expect(model.isDictionaryResult)
+        #expect(!model.copyableDestText.contains(" | "))
+        #expect(model.copyableDestText.contains("concise"))
+        #expect(model.copyableDestText.contains("/kənˈsaɪs/"))
+        #expect(model.copyableDestText.contains("① 简明的"))
+    }
+
+    @Test
+    func sourceVisibleLineCountStaysWithinBounds() {
+        let model = FloatingWindowViewModel()
+        model.sourceCardHeight = SOURCE_CARD_MIN_HEIGHT
+        #expect(model.sourceVisibleLineCount == model.minSourceLineCount)
+
+        model.sourceCardHeight = SRC_MAX_CARD_HEIGHT
+        #expect(model.sourceVisibleLineCount == model.maxSourceLineCount)
+    }
+
+    @Test
+    func availableBackendsMatchesPlatformCapabilities() {
+        let model = FloatingWindowViewModel()
+        let ids = model.availableBackends.map(\.id)
+        #expect(ids.contains(TranslationBackend.llm))
+        #expect(ids.contains(TranslationBackend.google))
+        #expect(ids.contains(TranslationBackend.apple) == TranslationBackend.isAppleAvailable)
+    }
+}

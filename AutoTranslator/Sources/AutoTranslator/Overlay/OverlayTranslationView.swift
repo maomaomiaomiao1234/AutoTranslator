@@ -78,6 +78,7 @@ final class OverlayTranslationViewModel: ObservableObject {
 
 struct OverlayTranslationView: View {
     @ObservedObject var model: OverlayTranslationViewModel
+    @State private var hasCopiedImage = false
 
     var body: some View {
         let _ = model.appearanceVersion
@@ -260,12 +261,24 @@ struct OverlayTranslationView: View {
 
     private var actionButtons: some View {
         HStack(spacing: AppUI.Space.s) {
-            Button { model.onCopyImage?() } label: {
-                Image(systemName: "doc.on.doc")
+            Button {
+                model.onCopyImage?()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    hasCopiedImage = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        hasCopiedImage = false
+                    }
+                }
+            } label: {
+                Image(systemName: hasCopiedImage ? "checkmark" : "doc.on.doc")
+                    .foregroundStyle(hasCopiedImage ? AppUI.teal : AppUI.textSecondary)
             }
             .buttonStyle(IconButtonStyle(size: 28))
             .disabled(!model.hasExportableResult)
-            .help("复制贴图图片")
+            .help(hasCopiedImage ? "已复制图片" : "复制贴图图片")
+            .accessibilityLabel(hasCopiedImage ? "已复制图片" : "复制贴图图片")
 
             Button { model.onSave?() } label: {
                 Image(systemName: "square.and.arrow.down")
@@ -273,6 +286,7 @@ struct OverlayTranslationView: View {
             .buttonStyle(IconButtonStyle(size: 28))
             .disabled(!model.hasExportableResult)
             .help("保存贴图图片…")
+            .accessibilityLabel("保存贴图图片")
 
             if model.phase == .done {
                 Button { model.onOpenInWindow?() } label: {
@@ -280,6 +294,7 @@ struct OverlayTranslationView: View {
                 }
                 .buttonStyle(IconButtonStyle(size: 28))
                 .help("在浮窗中查看原文与译文")
+                .accessibilityLabel("在浮窗中查看原文与译文")
             }
         }
     }
@@ -301,6 +316,7 @@ struct OverlayTranslationView: View {
         }
         .buttonStyle(.plain)
         .help("重新翻译失败的块")
+        .accessibilityLabel("重新翻译失败的块")
     }
 
     private var closeButton: some View {
@@ -309,6 +325,7 @@ struct OverlayTranslationView: View {
         }
         .buttonStyle(IconButtonStyle(size: 28))
         .help("关闭贴图 (Esc)")
+        .accessibilityLabel("关闭贴图")
     }
 
     /// 与极简浮窗同配方：磨砂玻璃 + 暖色薄膜 + 细描边（胶囊形）。

@@ -1525,6 +1525,17 @@ extension AppController: FloatingWindowDelegate {
         switchTranslatorBackend()
     }
 
+    func selectTranslatorBackend(_ backend: String) {
+        guard TranslationBackend.isValid(backend), backend != translatorBackend else { return }
+        translateTask?.cancel()
+        speechTask?.cancel()
+        translatorBackend = backend
+        translator = createTranslator()
+        window.setBackendLabel(translatorBackend)
+        AppLog.debug("翻译后端切换为: \(translatorBackend)")
+        retranslateLast()
+    }
+
     func speakCurrentSource() {
         playPronunciation(for: window.currentSourceText, isAutomatic: false)
     }

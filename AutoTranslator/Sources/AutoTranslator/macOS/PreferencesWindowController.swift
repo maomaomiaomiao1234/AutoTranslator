@@ -34,6 +34,7 @@ final class PreferencesWindowController: NSWindowController {
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 640, height: 620)
+        window.setFrameAutosaveName("AutoTranslatorPreferencesWindow")
         window.center()
 
         hostingView = NSHostingView(rootView: PreferencesWindowController.makeView(

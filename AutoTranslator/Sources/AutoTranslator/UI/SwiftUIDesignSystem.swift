@@ -44,7 +44,7 @@ enum AppUI {
         static let small: CGFloat = 12    // 辅助说明 / 等宽输入 / 状态
         static let base: CGFloat = 13     // 行标题 / 项值 / 原文正文
         static let section: CGFloat = 15  // 设置分区标题
-        static let body: CGFloat = 16     // 译文正文
+        static let body: CGFloat = 15     // 译文正文
         static let title: CGFloat = 18    // 浮窗标题
         static let display: CGFloat = 24  // 偏好页标题
     }
@@ -68,14 +68,16 @@ enum AppUI {
     }
 }
 
-extension View {
-    func appSurface(
-        background: Color = AppUI.surface,
-        radius: CGFloat = AppUI.radius,
-        border: Color = AppUI.cardBorder,
-        shadow: Bool = false
-    ) -> some View {
-        self
+private struct AppSurfaceModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var background: Color
+    var radius: CGFloat
+    var border: Color
+    var shadow: Bool
+
+    func body(content: Content) -> some View {
+        content
             .background(background)
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
@@ -83,11 +85,31 @@ extension View {
                     .stroke(border, lineWidth: 1)
             }
             .shadow(
-                color: shadow ? Color.black.opacity(isDarkMode ? 0.22 : 0.065) : .clear,
-                radius: shadow ? 14 : 0,
+                color: shadow ? Color.black.opacity(colorScheme == .dark ? 0.26 : 0.07) : .clear,
+                radius: shadow ? 12 : 0,
                 x: 0,
-                y: shadow ? 5 : 0
+                y: shadow ? 4 : 0
             )
+    }
+}
+
+extension View {
+    func appSurface(
+        background: Color = AppUI.surface,
+        radius: CGFloat = AppUI.radius,
+        border: Color = AppUI.cardBorder,
+        shadow: Bool = false
+    ) -> some View {
+        modifier(AppSurfaceModifier(
+            background: background,
+            radius: radius,
+            border: border,
+            shadow: shadow
+        ))
+    }
+
+    func hoverHighlight(radius: CGFloat = AppUI.controlRadius) -> some View {
+        modifier(HoverHighlightModifier(cornerRadius: radius))
     }
 }
 
@@ -99,16 +121,177 @@ struct IconButtonStyle: ButtonStyle {
     var pillWidth: CGFloat?
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: max(11, size * 0.42), weight: .medium))
-            .foregroundStyle(tint)
-            .frame(width: pillWidth ?? size, height: size)
-            .background(background.opacity(configuration.isPressed ? 0.78 : 1))
-            .clipShape(Capsule())
-            .overlay {
-                Capsule().stroke(border, lineWidth: 1)
+        IconButtonBody(
+            configuration: configuration,
+            tint: tint,
+            background: background,
+            border: border,
+            size: size,
+            pillWidth: pillWidth
+        )
+    }
+
+    private struct IconButtonBody: View {
+        let configuration: Configuration
+        let tint: Color
+        let background: Color
+        let border: Color
+        let size: CGFloat
+        let pillWidth: CGFloat?
+
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: max(11, size * 0.42), weight: .medium))
+                .foregroundStyle(isHovered ? tint : tint.opacity(0.88))
+                .frame(width: pillWidth ?? size, height: size)
+                .background {
+                    Capsule()
+                        .fill(background)
+                        .opacity(configuration.isPressed ? 0.72 : (isHovered ? 1.0 : 0.86))
+                }
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(isHovered ? border.opacity(0.85) : border.opacity(0.60), lineWidth: 1)
+                }
+                .scaleEffect(configuration.isPressed ? 0.94 : (isHovered ? 1.02 : 1.0))
+                .animation(.spring(response: 0.22, dampingFraction: 0.75), value: configuration.isPressed)
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
+                .onHover { isHovered = $0 }
+        }
+    }
+}
+
+struct HoverHighlightModifier: ViewModifier {
+    @State private var isHovered = false
+    var cornerRadius: CGFloat = AppUI.controlRadius
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if isHovered {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(Color.primary.opacity(0.04))
+                }
             }
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// 无边框轻量图标按钮：静止时融入背景，悬停或激活时才显露柔润胶囊底色，用于划词浮窗的极简工具栏。
+struct GhostIconButtonStyle: ButtonStyle {
+    var tint: Color = AppUI.textSecondary
+    var activeBackground: Color = .clear
+    var size: CGFloat = TOOLBAR_BUTTON_SIZE
+    var isActive: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        GhostIconButtonBody(
+            configuration: configuration,
+            tint: tint,
+            activeBackground: activeBackground,
+            size: size,
+            isActive: isActive
+        )
+    }
+
+    private struct GhostIconButtonBody: View {
+        let configuration: Configuration
+        let tint: Color
+        let activeBackground: Color
+        let size: CGFloat
+        let isActive: Bool
+
+        @State private var isHovered = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: max(11, size * 0.48), weight: .medium))
+                .foregroundStyle(isHovered || isActive ? tint : tint.opacity(0.82))
+                .frame(width: size, height: size)
+                .background {
+                    Circle()
+                        .fill(pillFill)
+                }
+                .contentShape(Circle())
+                .scaleEffect(configuration.isPressed ? 0.90 : 1.0)
+                .animation(.spring(response: 0.20, dampingFraction: 0.78), value: configuration.isPressed)
+                .animation(.easeInOut(duration: 0.12), value: isHovered)
+                .onHover { isHovered = $0 }
+        }
+
+        private var pillFill: Color {
+            if isActive {
+                return activeBackground
+            }
+            if configuration.isPressed {
+                return Color.primary.opacity(0.10)
+            }
+            if isHovered {
+                return Color.primary.opacity(0.065)
+            }
+            return .clear
+        }
+    }
+}
+
+struct CopyFeedbackButton: View {
+    let textToCopy: () -> String
+    var size: CGFloat = 24
+    var helpText: String = "复制"
+    var ghost: Bool = false
+
+    @State private var hasCopied = false
+
+    var body: some View {
+        Button {
+            let text = textToCopy()
+            guard !text.isEmpty else { return }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                hasCopied = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    hasCopied = false
+                }
+            }
+        } label: {
+            Image(systemName: hasCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: max(10, size * 0.46), weight: hasCopied ? .semibold : .medium))
+        }
+        .modifier(CopyButtonStyleModifier(hasCopied: hasCopied, size: size, ghost: ghost))
+        .help(hasCopied ? "已复制到剪贴板" : helpText)
+        .accessibilityLabel(hasCopied ? "已复制到剪贴板" : helpText)
+    }
+}
+
+private struct CopyButtonStyleModifier: ViewModifier {
+    let hasCopied: Bool
+    let size: CGFloat
+    let ghost: Bool
+
+    func body(content: Content) -> some View {
+        if ghost {
+            content.buttonStyle(GhostIconButtonStyle(
+                tint: hasCopied ? AppUI.teal : AppUI.textSecondary,
+                activeBackground: AppUI.chipTeal,
+                size: size,
+                isActive: hasCopied
+            ))
+        } else {
+            content.buttonStyle(IconButtonStyle(
+                tint: hasCopied ? AppUI.teal : AppUI.textSecondary,
+                background: hasCopied ? AppUI.chipTeal : AppUI.toolbarGhost,
+                border: hasCopied ? AppUI.teal.opacity(0.4) : AppUI.buttonBorder,
+                size: size
+            ))
+        }
     }
 }
 
@@ -176,6 +359,8 @@ struct WindowDragArea: NSViewRepresentable {
 }
 
 struct ResizeGrip: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             gripLine(offset: 0, length: 4)
@@ -183,7 +368,7 @@ struct ResizeGrip: View {
             gripLine(offset: 10, length: 14)
         }
         .frame(width: RESIZE_GRIP_SIZE, height: RESIZE_GRIP_SIZE)
-        .opacity(isDarkMode ? 0.52 : 0.44)
+        .opacity(colorScheme == .dark ? 0.54 : 0.42)
         .accessibilityHidden(true)
     }
 

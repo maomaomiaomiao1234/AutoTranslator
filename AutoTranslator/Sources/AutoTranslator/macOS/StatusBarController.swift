@@ -122,6 +122,16 @@ final class StatusBarController: NSObject {
             )
             item.target = self
             item.representedObject = theme.rawValue
+            if #available(macOS 11.0, *) {
+                switch theme {
+                case .system:
+                    item.image = NSImage(systemSymbolName: "circle.lefthalf.filled", accessibilityDescription: nil)
+                case .light:
+                    item.image = NSImage(systemSymbolName: "sun.max", accessibilityDescription: nil)
+                case .dark:
+                    item.image = NSImage(systemSymbolName: "moon", accessibilityDescription: nil)
+                }
+            }
             themeSubmenu.addItem(item)
             themeItems[theme] = item
         }
@@ -135,6 +145,21 @@ final class StatusBarController: NSObject {
 
         quitItem.target = self
         menu.addItem(quitItem)
+
+        if #available(macOS 11.0, *) {
+            accessibilityItem.image = NSImage(systemSymbolName: "hand.raised", accessibilityDescription: nil)
+            backendLLMItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
+            backendGoogleItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+            backendAppleItem.image = NSImage(systemSymbolName: "apple.logo", accessibilityDescription: nil)
+            manualInputItem.image = NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: nil)
+            screenshotItem.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil)
+            overlayItem.image = NSImage(systemSymbolName: "photo.on.rectangle.angled", accessibilityDescription: nil)
+            historyItem.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
+            pauseItem.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: nil)
+            themeMenuItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: nil)
+            prefsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+            quitItem.image = NSImage(systemSymbolName: "power", accessibilityDescription: nil)
+        }
 
         menu.delegate = self
         statusItem.menu = menu
@@ -158,6 +183,12 @@ final class StatusBarController: NSObject {
         pauseItem.title = paused
             ? "恢复监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
             : "暂停监听 (\(GlobalHotKeyManager.monitoringShortcutLabel))"
+        if #available(macOS 11.0, *) {
+            pauseItem.image = NSImage(
+                systemSymbolName: paused ? "play.circle" : "pause.circle",
+                accessibilityDescription: nil
+            )
+        }
 
         let accessibilityGranted = delegate.isAccessibilityGranted
         accessibilityItem.isHidden = accessibilityGranted

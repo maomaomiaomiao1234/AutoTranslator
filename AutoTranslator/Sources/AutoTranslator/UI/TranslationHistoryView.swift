@@ -26,6 +26,7 @@ struct TranslationHistoryView: View {
     @State private var showsExportSheet = false
     @State private var transferAlert: HistoryTransferAlert?
     @State private var searchDebounceTask: Task<Void, Never>?
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -123,12 +124,13 @@ struct TranslationHistoryView: View {
 
             Picker("", selection: $scope) {
                 ForEach(HistoryScope.allCases) { value in
-                    Text(value.displayName).tag(value)
+                    Text(value == .all ? "全部 (\(store.totalEntryCount))" : "收藏 (\(store.favoriteEntryCount))")
+                        .tag(value)
                 }
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 132)
+            .frame(width: 156)
 
             Button {
                 showsExportSheet = true
@@ -138,6 +140,7 @@ struct TranslationHistoryView: View {
             .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 32))
             .disabled(store.totalEntryCount == 0)
             .help("导出历史记录")
+            .accessibilityLabel("导出历史记录")
 
             Button {
                 importEntries()
@@ -146,6 +149,7 @@ struct TranslationHistoryView: View {
             }
             .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 32))
             .help("导入历史记录")
+            .accessibilityLabel("导入历史记录")
 
             Button {
                 showsClearConfirmation = true
@@ -155,6 +159,7 @@ struct TranslationHistoryView: View {
             .buttonStyle(IconButtonStyle(tint: AppUI.textSecondary, size: 32))
             .disabled(store.totalEntryCount == store.favoriteEntryCount)
             .help("清空非收藏历史")
+            .accessibilityLabel("清空非收藏历史")
         }
         .padding(.horizontal, AppUI.Space.xxl)
         .padding(.vertical, AppUI.Space.l)
@@ -167,6 +172,7 @@ struct TranslationHistoryView: View {
                 .foregroundStyle(AppUI.textMuted)
             TextField("搜索原文或译文", text: $searchText)
                 .textFieldStyle(.plain)
+                .focused($isSearchFocused)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
@@ -176,11 +182,18 @@ struct TranslationHistoryView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(AppUI.textMuted)
                 .help("清除搜索")
+                .accessibilityLabel("清除搜索")
             }
         }
         .padding(.horizontal, AppUI.Space.m)
         .frame(height: 34)
         .appSurface(background: AppUI.surfaceSoft, radius: AppUI.controlRadius, border: AppUI.buttonBorder)
+        .overlay {
+            if isSearchFocused {
+                RoundedRectangle(cornerRadius: AppUI.controlRadius, style: .continuous)
+                    .stroke(AppUI.accent.opacity(0.45), lineWidth: 1)
+            }
+        }
     }
 
     private var historyList: some View {
@@ -599,6 +612,8 @@ private struct HistoryEntryRow: View {
     let entry: TranslationHistoryEntry
     let onToggleFavorite: () -> Void
 
+    @State private var starScale: CGFloat = 1.0
+
     var body: some View {
         HStack(alignment: .top, spacing: AppUI.Space.m) {
             VStack(alignment: .leading, spacing: AppUI.Space.s) {
@@ -623,13 +638,25 @@ private struct HistoryEntryRow: View {
 
             Spacer(minLength: 0)
 
-            Button(action: onToggleFavorite) {
+            Button {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) {
+                    starScale = 1.3
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                        starScale = 1.0
+                    }
+                }
+                onToggleFavorite()
+            } label: {
                 Image(systemName: entry.isFavorite ? "star.fill" : "star")
                     .foregroundStyle(entry.isFavorite ? AppUI.amber : AppUI.textMuted)
+                    .scaleEffect(starScale)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .help(entry.isFavorite ? "取消收藏" : "收藏")
+            .accessibilityLabel(entry.isFavorite ? "取消收藏" : "收藏")
         }
         .padding(.vertical, AppUI.Space.s)
         .contentShape(Rectangle())
@@ -650,14 +677,12 @@ private struct HistoryEntryDetail: View {
                 textSection(
                     title: "原文",
                     symbol: "text.alignleft",
-                    text: entry.sourceText,
-                    copyAction: onCopySource
+                    text: entry.sourceText
                 )
                 textSection(
                     title: entry.kind == .translation ? "译文" : "释义",
                     symbol: entry.kind == .translation ? "character.book.closed" : "book.closed",
-                    text: entry.translatedText,
-                    copyAction: onCopyTranslation
+                    text: entry.translatedText
                 )
             }
             .padding(AppUI.Space.xxl)
@@ -695,19 +720,20 @@ private struct HistoryEntryDetail: View {
             }
             .buttonStyle(.bordered)
             .tint(entry.isFavorite ? AppUI.amber : AppUI.textSecondary)
+            .accessibilityLabel(entry.isFavorite ? "已收藏" : "收藏")
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
             }
             .buttonStyle(.bordered)
             .help("删除这条记录")
+            .accessibilityLabel("删除这条记录")
         }
     }
 
     private func textSection(title: String,
                              symbol: String,
-                             text: String,
-                             copyAction: @escaping () -> Void) -> some View {
+                             text: String) -> some View {
         VStack(alignment: .leading, spacing: AppUI.Space.m) {
             HStack(spacing: AppUI.Space.s) {
                 Image(systemName: symbol)
@@ -717,11 +743,7 @@ private struct HistoryEntryDetail: View {
                     .font(.system(size: AppUI.FontSize.section, weight: .bold))
                     .foregroundStyle(AppUI.textPrimary)
                 Spacer()
-                Button(action: copyAction) {
-                    Label("复制", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(AppUI.textSecondary)
+                CopyFeedbackButton(textToCopy: { text }, size: 26, helpText: "复制\(title)")
             }
 
             Text(text)
